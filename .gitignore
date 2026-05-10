@@ -17,3 +17,7 @@ frontend/.env.local
 Thumbs.db
 .vscode/
 .idea/
+
+.claude/
+.omc/
+debug_crops/

@@ -1,75 +1,44 @@
-import re
-
-import cv2
-import numpy as np
-import pytesseract
-
-from app.config import get_settings
-from app.schemas import DetectedScore, UploadResult
+from app.schemas import CornerGuessResult, ExtractionResult, ManualCorner, PlayerData, RectifiedPreview
+from app.services.ocr_image import ImagePreprocessor
 
 
-SCORE_PATTERN = re.compile(r"^(?P<name>[A-Za-z0-9 ._\-]{2,})\s+(?P<score>\d{1,3})$")
-
-
-def _preprocess_image(file_bytes: bytes) -> np.ndarray:
-    image_array = np.frombuffer(file_bytes, dtype=np.uint8)
-    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-    if image is None:
-        raise ValueError("Das Bild konnte nicht verarbeitet werden.")
-
-    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(grayscale, (5, 5), 0)
-    _, thresholded = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresholded
-
-
-def _parse_score_lines(raw_text: str) -> list[DetectedScore]:
-    detections: list[DetectedScore] = []
-    for line in raw_text.splitlines():
-        candidate = " ".join(line.split())
-        if not candidate:
-            continue
-
-        match = SCORE_PATTERN.match(candidate)
-        if not match:
-            continue
-
-        total_score = int(match.group("score"))
-        if total_score > 300:
-            continue
-
-        detections.append(
-            DetectedScore(
-                player_name=match.group("name").strip(),
-                total_score=total_score,
-                frames=[],
-            )
-        )
-    return detections
-
-
-def extract_scorecard(file_bytes: bytes, filename: str) -> UploadResult:
-    settings = get_settings()
-    if settings.tesseract_cmd:
-        pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
-
-    processed_image = _preprocess_image(file_bytes)
-    raw_text = pytesseract.image_to_string(processed_image, config="--psm 6")
-    detections = _parse_score_lines(raw_text)
-
+def guess_scorecard_corners(file_bytes: bytes, filename: str) -> CornerGuessResult:
+    image = ImagePreprocessor.decode_image(file_bytes)
+    guessed_corners = ImagePreprocessor.guess_monitor_corners(image)
     warnings: list[str] = []
-    if not detections:
-        warnings.append(
-            "Keine eindeutigen Namens-/Score-Zeilen erkannt. Bitte Daten im Frontend kontrollieren oder manuell erfassen."
-        )
+    if guessed_corners:
+        warnings.append("Automatisch erkannte Monitor-Ecken wurden vorgeschlagen. Bitte prüfen und bei Bedarf korrigieren.")
+    else:
+        warnings.append("Es konnten keine sicheren Monitor-Ecken erkannt werden. Bitte die vier Ecken manuell setzen.")
 
-    warnings.append(
-        "Frame-Details werden in V1 noch nicht sicher aus OCR extrahiert und sollten bei Bedarf manuell ergänzt werden."
-    )
+    return CornerGuessResult(filename=filename, guessed_corners=guessed_corners, warnings=warnings)
 
-    return UploadResult(
+
+def build_rectified_preview(
+    file_bytes: bytes,
+    filename: str,
+    manual_corners: list[ManualCorner],
+) -> RectifiedPreview:
+    bw_image = ImagePreprocessor.prepare_image(file_bytes, manual_corners)
+    warnings = ["Bitte prüfe die Bildverarbeitung Schritt für Schritt."]
+    return RectifiedPreview(
         filename=filename,
-        raw_text=raw_text.strip(),
-        detected_scores=detections,
+        bw_image_data_url=ImagePreprocessor.encode_image_data_url(bw_image),
+        edge_debug_image_data_url=ImagePreprocessor.encode_image_data_url(ImagePreprocessor.build_edge_debug_image(bw_image)),
         warnings=warnings,
     )
+
+
+def extract_scorecard(
+    file_bytes: bytes,
+    filename: str,
+    manual_corners: list[ManualCorner],
+    bw_threshold: int | None = None,
+) -> ExtractionResult:
+    bw_image = ImagePreprocessor.prepare_image(file_bytes, manual_corners)
+    raw_players = ImagePreprocessor.extract_table_data(bw_image, bw_threshold=bw_threshold)
+    players = [PlayerData(**p) for p in raw_players]
+    warnings: list[str] = []
+    if not players:
+        warnings.append("Keine Spieler erkannt. Bitte prüfe die Monitor-Ecken und versuche es erneut.")
+    return ExtractionResult(filename=filename, players=players, warnings=warnings)

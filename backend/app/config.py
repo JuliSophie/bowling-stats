@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     app_name: str = "Bowling Stats API"
     environment: str = "development"
     database_url: str = Field(default_factory=lambda: f"sqlite:///{DEFAULT_DB_PATH.as_posix()}")
-    cors_origins_raw: str = "http://localhost:3001,http://127.0.0.1:3001"
+    cors_origins: str = "http://localhost:3001,http://127.0.0.1:3001"
     tesseract_cmd: str | None = None
     temp_dir: Path = DEFAULT_TEMP_DIR
 
@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     )
 
     @property
-    def cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     def ensure_runtime_paths(self) -> None:
         self.temp_dir.mkdir(parents=True, exist_ok=True)

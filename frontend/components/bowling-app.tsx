@@ -1,53 +1,274 @@
 'use client';
 
-import { startTransition, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { fetchStats, saveGame, uploadScorecard } from '@/lib/api';
-import StatsDashboard from '@/components/stats-dashboard';
-import type { DetectedScore, GameDraft, StatsResponse, UploadResult } from '@/types';
+import { extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
+import type { ExtractionResult, FrameData, ManualCorner, RectifiedPreview } from '@/types';
 
 
-function todayIsoString() {
-  return new Date().toISOString().split('T')[0];
+const CORNER_LABELS = ['Oben links', 'Oben rechts', 'Unten rechts', 'Unten links'];
+
+const PIPELINE_STEPS = [
+  { title: 'Monitor finden' },
+  { title: 'Tabelle finden' },
+  { title: 'Bereiche gruppieren' },
+  { title: 'Text erkennen' },
+];
+
+type TableSubView = 'bw' | 'lines';
+
+const TABLE_SUB_VIEWS: { key: TableSubView; label: string }[] = [
+  { key: 'bw', label: 'Schwarz/Weiß' },
+  { key: 'lines', label: 'Linien' },
+];
+
+
+function parseThrowValue(value: string): number | null {
+  const v = value.trim();
+  if (!v) return null;
+  if (v === '-') return 0;
+  if (v.toLowerCase() === 'x') return 10;
+  const n = parseInt(v, 10);
+  return isNaN(n) || n < 0 || n > 10 ? null : n;
+}
+
+function isStrikeFrame(frame: FrameData): boolean {
+  return frame.throw1.trim().toLowerCase() === 'x' || frame.throw2.trim().toLowerCase() === 'x';
+}
+
+function isSpareFrame(frame: FrameData): boolean {
+  return frame.throw2.trim() === '/';
+}
+
+function validateBowlingScores(players: { name: string; frames: FrameData[] }[]): Set<string> {
+  const errors = new Set<string>();
+
+  for (let p = 0; p < players.length; p++) {
+    const frames = players[p].frames;
+    if (frames.length < 10) continue;
+
+    const throws: (number | null)[] = [];
+
+    for (let f = 0; f < 10; f++) {
+      const frame = frames[f];
+
+      if (f === 9) {
+        const t1 = parseThrowValue(frame.throw1);
+        throws.push(t1);
+        if (frame.throw2.trim() === '/') {
+          throws.push(t1 !== null ? 10 - t1 : null);
+        } else {
+          throws.push(parseThrowValue(frame.throw2));
+        }
+        if (frame.throw3.trim() === '/') {
+          const prev = parseThrowValue(frame.throw2);
+          throws.push(prev !== null ? 10 - prev : null);
+        } else {
+          throws.push(parseThrowValue(frame.throw3));
+        }
+      } else if (isStrikeFrame(frame)) {
+        throws.push(10);
+      } else if (isSpareFrame(frame)) {
+        const t1 = parseThrowValue(frame.throw1);
+        throws.push(t1);
+        throws.push(t1 !== null ? 10 - t1 : null);
+      } else {
+        const t1 = parseThrowValue(frame.throw1);
+        const t2 = parseThrowValue(frame.throw2);
+        throws.push(t1);
+        throws.push(t2);
+        if (t1 !== null && t2 !== null && t1 + t2 > 10) {
+          errors.add(`${p}-${f}-throw1`);
+          errors.add(`${p}-${f}-throw2`);
+        }
+      }
+    }
+
+    let cum = 0;
+    let ti = 0;
+
+    for (let f = 0; f < 10; f++) {
+      let score: number | null = null;
+
+      if (f === 9) {
+        const t1 = throws[ti];
+        const t2 = throws[ti + 1];
+        const t3 = throws[ti + 2];
+        if (t1 !== null && t2 !== null) {
+          score = t1 + t2 + (t3 ?? 0);
+        }
+        ti += 3;
+      } else if (isStrikeFrame(frames[f])) {
+        const b1 = throws[ti + 1];
+        const b2 = throws[ti + 2];
+        if (b1 !== null && b2 !== null) {
+          score = 10 + b1 + b2;
+        }
+        ti += 1;
+      } else if (isSpareFrame(frames[f])) {
+        const bonus = throws[ti + 2];
+        if (bonus !== null) {
+          score = 10 + bonus;
+        }
+        ti += 2;
+      } else {
+        const t1 = throws[ti];
+        const t2 = throws[ti + 1];
+        if (t1 !== null && t2 !== null) {
+          score = t1 + t2;
+        }
+        ti += 2;
+      }
+
+      if (score !== null) {
+        cum += score;
+        const ocrCum = parseInt(frames[f].cumulative.trim(), 10);
+        if (!isNaN(ocrCum) && ocrCum !== cum) {
+          errors.add(`${p}-${f}-cumulative`);
+          errors.add(`${p}-${f}-throw1`);
+          errors.add(`${p}-${f}-throw2`);
+          if (f === 9) errors.add(`${p}-${f}-throw3`);
+        }
+      }
+    }
+  }
+
+  return errors;
+}
+
+function polygonPoints(points: ManualCorner[]): string {
+  return points.map((point) => `${point.x * 100},${point.y * 100}`).join(' ');
 }
 
 
-function emptyDraft(): GameDraft {
-  return {
-    played_at: todayIsoString(),
-    location: 'Squash-House',
-    mode: '10-Pin',
-    scores: [],
-  };
+function findNearestCornerIndex(corners: ManualCorner[], target: ManualCorner): number {
+  let nearestIndex = 0;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  corners.forEach((corner, index) => {
+    const distance = Math.hypot(corner.x - target.x, corner.y - target.y);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  return nearestIndex;
 }
 
 
 export default function BowlingApp() {
-  const [stats, setStats] = useState<StatsResponse | null>(null);
-  const [draft, setDraft] = useState<GameDraft>(emptyDraft);
-  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
-  const [statsLoading, setStatsLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [manualCorners, setManualCorners] = useState<ManualCorner[]>([]);
+  const [activeCornerIndex, setActiveCornerIndex] = useState<number | null>(null);
+  const [draggingCornerIndex, setDraggingCornerIndex] = useState<number | null>(null);
+  const [rectifiedPreview, setRectifiedPreview] = useState<RectifiedPreview | null>(null);
+  const [step, setStep] = useState(1);
+  const [tableSubView, setTableSubView] = useState<TableSubView>('lines');
+  const [cornerWarnings, setCornerWarnings] = useState<string[]>([]);
+  const [guessingCorners, setGuessingCorners] = useState(false);
+  const [rectifying, setRectifying] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [bwThreshold, setBwThreshold] = useState(75);
+  const cornerImageRef = useRef<HTMLImageElement | null>(null);
+  const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
+  const edgeBaseImageRef = useRef<HTMLImageElement | null>(null);
 
-  async function refreshStats() {
-    setStatsLoading(true);
-    try {
-      const data = await fetchStats();
-      startTransition(() => {
-        setStats(data);
-      });
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Statistiken konnten nicht geladen werden.');
-    } finally {
-      setStatsLoading(false);
+  const applyThresholdToCanvas = useCallback(() => {
+    const canvas = bwCanvasRef.current;
+    const img = bwBaseImageRef.current;
+    if (!canvas || !img) return;
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const pixels = imageData.data;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const val = pixels[i] > bwThreshold ? 255 : 0;
+      pixels[i] = val;
+      pixels[i + 1] = val;
+      pixels[i + 2] = val;
     }
-  }
+
+    const edgeImg = edgeBaseImageRef.current;
+    if (edgeImg) {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tempCtx = tempCanvas.getContext('2d');
+      if (tempCtx) {
+        tempCtx.drawImage(edgeImg, 0, 0, canvas.width, canvas.height);
+        const edgeData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < edgeData.data.length; i += 4) {
+          const r = edgeData.data[i];
+          const g = edgeData.data[i + 1];
+          const b = edgeData.data[i + 2];
+          const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
+          if (maxDiff > 30) {
+            pixels[i] = r;
+            pixels[i + 1] = g;
+            pixels[i + 2] = b;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }, [bwThreshold]);
 
   useEffect(() => {
-    void refreshStats();
-  }, []);
+    if (!rectifiedPreview?.bw_image_data_url) return;
+    const img = new Image();
+    img.onload = () => {
+      bwBaseImageRef.current = img;
+      applyThresholdToCanvas();
+    };
+    img.src = rectifiedPreview.bw_image_data_url;
+  }, [rectifiedPreview?.bw_image_data_url, applyThresholdToCanvas]);
+
+  useEffect(() => {
+    if (!rectifiedPreview?.edge_debug_image_data_url) return;
+    const img = new Image();
+    img.onload = () => {
+      edgeBaseImageRef.current = img;
+      applyThresholdToCanvas();
+    };
+    img.src = rectifiedPreview.edge_debug_image_data_url;
+  }, [rectifiedPreview?.edge_debug_image_data_url, applyThresholdToCanvas]);
+
+  useEffect(() => {
+    applyThresholdToCanvas();
+  }, [bwThreshold, applyThresholdToCanvas]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  function getNormalizedPoint(event: React.MouseEvent<HTMLDivElement>, imageElement: HTMLImageElement | null): ManualCorner | null {
+    if (!imageElement) {
+      return null;
+    }
+
+    const bounds = imageElement.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+
+    return {
+      x: Math.min(1, Math.max(0, x)),
+      y: Math.min(1, Math.max(0, y)),
+    };
+  }
 
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -55,222 +276,504 @@ export default function BowlingApp() {
       return;
     }
 
-    setUploading(true);
-    setStatusMessage('OCR läuft...');
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
 
+    setErrorMessage('');
+    setStatusMessage('Monitor-Ecken werden gesucht...');
+    setUploadedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    setManualCorners([]);
+    setActiveCornerIndex(null);
+    setDraggingCornerIndex(null);
+    setRectifiedPreview(null);
+    setStep(1);
+    setTableSubView('bw');
+    setCornerWarnings([]);
+
+    setGuessingCorners(true);
     try {
-      const result = await uploadScorecard(file);
-      setUploadResult(result);
-      setDraft((current) => ({
-        ...current,
-        scores: result.detected_scores.length
-          ? result.detected_scores
-          : [{ player_name: '', total_score: 0, frames: [] }],
-      }));
-      setStatusMessage('OCR-Entwurf geladen. Bitte Namen und Scores kontrollieren.');
+      const guessResult = await guessScorecardCorners(file);
+      setManualCorners(guessResult.guessed_corners);
+      setCornerWarnings(guessResult.warnings);
+      setStatusMessage(
+        guessResult.guessed_corners.length === 4
+          ? 'Monitor-Ecken erkannt. Bitte prüfen und bei Bedarf korrigieren.'
+          : 'Bitte die vier Monitor-Ecken manuell setzen.'
+      );
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Upload fehlgeschlagen.');
+      setErrorMessage(error instanceof Error ? error.message : 'Monitor-Ecken konnten nicht erkannt werden.');
+      setStatusMessage('');
     } finally {
-      setUploading(false);
+      setGuessingCorners(false);
       event.target.value = '';
     }
   }
 
-  function updateScore(index: number, patch: Partial<DetectedScore>) {
-    setDraft((current) => ({
-      ...current,
-      scores: current.scores.map((score, scoreIndex) => (scoreIndex === index ? { ...score, ...patch } : score)),
-    }));
-  }
-
-  function addScoreRow() {
-    setDraft((current) => ({
-      ...current,
-      scores: [...current.scores, { player_name: '', total_score: 0, frames: [] }],
-    }));
-  }
-
-  async function handleSave() {
-    if (!draft.scores.length) {
-      setStatusMessage('Bitte zuerst OCR-Daten laden oder mindestens einen Score erfassen.');
+  function handleCornerPreviewClick(event: React.MouseEvent<HTMLDivElement>) {
+    const point = getNormalizedPoint(event, cornerImageRef.current);
+    if (!point) {
       return;
     }
 
-    setSaving(true);
-    setStatusMessage('Spiel wird gespeichert...');
+    setErrorMessage('');
+    setManualCorners((current) => {
+      if (current.length < 4) {
+        return [...current, point];
+      }
 
-    try {
-      await saveGame(draft);
-      setUploadResult(null);
-      setDraft(emptyDraft());
-      setStatusMessage('Spiel gespeichert. Dashboard wird aktualisiert.');
-      await refreshStats();
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Speichern fehlgeschlagen.');
-    } finally {
-      setSaving(false);
+      const nextCorners = [...current];
+      const targetIndex = activeCornerIndex ?? findNearestCornerIndex(current, point);
+      nextCorners[targetIndex] = point;
+      return nextCorners;
+    });
+    setActiveCornerIndex(null);
+  }
+
+  function handleCornerPreviewMouseMove(event: React.MouseEvent<HTMLDivElement>) {
+    if (draggingCornerIndex === null) {
+      return;
+    }
+
+    const point = getNormalizedPoint(event, cornerImageRef.current);
+    if (!point) {
+      return;
+    }
+
+    setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? point : corner)));
+  }
+
+  function stopCornerDrag() {
+    if (draggingCornerIndex !== null) {
+      setDraggingCornerIndex(null);
     }
   }
 
+  async function handleConfirmCorners() {
+    if (!uploadedFile || manualCorners.length !== 4) {
+      setErrorMessage('Bitte genau vier Monitor-Eckpunkte setzen.');
+      return;
+    }
+
+    setRectifying(true);
+    setErrorMessage('');
+    setStatusMessage('Bild wird entzerrt und Tabelle wird gesucht...');
+
+    try {
+      const preview = await rectifyScorecard(uploadedFile, manualCorners);
+      setRectifiedPreview(preview);
+      setStep(2);
+      setTableSubView('bw');
+      setStatusMessage('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Verarbeitung fehlgeschlagen.');
+      setStatusMessage('');
+    } finally {
+      setRectifying(false);
+    }
+  }
+
+  function goToStep(targetStep: number) {
+    if (targetStep < 1 || targetStep > 4) {
+      return;
+    }
+    if (targetStep >= 2 && !rectifiedPreview) {
+      return;
+    }
+    if (targetStep >= 3) {
+      return;
+    }
+    setStep(targetStep);
+    setErrorMessage('');
+    setStatusMessage('');
+  }
+
+  async function handleExtract() {
+    if (!uploadedFile || manualCorners.length !== 4) {
+      return;
+    }
+
+    setExtracting(true);
+    setErrorMessage('');
+
+    try {
+      const result = await extractScorecard(uploadedFile, manualCorners, bwThreshold);
+      setExtractionResult(result);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'OCR-Extraktion fehlgeschlagen.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  function updatePlayerName(playerIdx: number, name: string) {
+    setExtractionResult((prev) => {
+      if (!prev) return prev;
+      const players = [...prev.players];
+      players[playerIdx] = { ...players[playerIdx], name };
+      return { ...prev, players };
+    });
+  }
+
+  function updateFrame(playerIdx: number, frameIdx: number, field: keyof FrameData, value: string) {
+    setExtractionResult((prev) => {
+      if (!prev) return prev;
+      const players = [...prev.players];
+      const frames = [...players[playerIdx].frames];
+      frames[frameIdx] = { ...frames[frameIdx], [field]: value };
+      players[playerIdx] = { ...players[playerIdx], frames };
+      return { ...prev, players };
+    });
+  }
+
+  const scoreErrors = extractionResult ? validateBowlingScores(extractionResult.players) : new Set<string>();
+
+  const currentWarnings = step === 1 ? cornerWarnings : rectifiedPreview?.warnings ?? [];
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
       <section className="panel overflow-hidden rounded-[2.4rem] border border-lane-200/60 p-6 sm:p-8">
-        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
-          <div>
-            <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
-            <h1 className="mt-4 max-w-3xl text-4xl font-semibold leading-tight text-lane-900 sm:text-5xl">
-              Bowling-Runden vom Monitorfoto direkt ins Statistik-Dashboard.
-            </h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-lane-700 sm:text-lg">
-              Mobile-first Upload, OCR-Prüfung vor dem Speichern und ein Dashboard mit Verlauf, Durchschnitt und Hall of Fame.
-            </p>
-          </div>
-          <div className="grid gap-3 rounded-[2rem] bg-[rgba(41,24,9,0.92)] p-5 text-white">
-            <span className="text-xs uppercase tracking-[0.3em] text-lane-200">Workflow</span>
-            <div className="grid gap-2 text-sm text-lane-50/90 sm:grid-cols-3 sm:text-base">
-              <div className="rounded-2xl bg-white/10 p-3">1. Foto hochladen</div>
-              <div className="rounded-2xl bg-white/10 p-3">2. OCR prüfen</div>
-              <div className="rounded-2xl bg-white/10 p-3">3. Spiel speichern</div>
-            </div>
-          </div>
-        </div>
+        <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
+        <h1 className="mt-3 text-3xl font-semibold leading-tight text-lane-900 sm:text-4xl">
+          Bowling-Monitor Erkennung
+        </h1>
       </section>
 
-      <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]">
-        <div className="panel rounded-[2rem] p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-lane-500">OCR Upload</p>
-              <h2 className="mt-2 text-2xl font-semibold text-lane-800">Scorecard einlesen</h2>
-            </div>
-            <span className="rounded-full bg-mint px-3 py-1 text-sm font-medium text-lane-800">
-              {uploading ? 'Verarbeite...' : 'Bereit'}
-            </span>
-          </div>
+      <nav className="flex items-center gap-1.5 rounded-[2rem] bg-[rgba(41,24,9,0.92)] p-2.5 text-white sm:gap-2 sm:p-3">
+        {PIPELINE_STEPS.map(({ title }, index) => {
+          const number = index + 1;
+          const isActive = step === number;
+          const isReachable = number === 1 || (number === 2 && !!rectifiedPreview);
+          const isFuture = number >= 3;
 
-          <label className="mt-6 flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-lane-300 bg-white/50 px-4 py-10 text-center transition hover:border-lane-500 hover:bg-white/70">
+          return (
+            <button
+              key={number}
+              type="button"
+              className={`flex-1 rounded-2xl px-2 py-2.5 text-center text-xs font-medium transition sm:px-3 sm:text-sm ${
+                isActive
+                  ? 'bg-white/20 text-white'
+                  : isFuture
+                    ? 'cursor-not-allowed text-lane-600'
+                    : isReachable
+                      ? 'text-lane-200 hover:bg-white/10'
+                      : 'cursor-not-allowed text-lane-500'
+              }`}
+              onClick={() => isReachable && goToStep(number)}
+              disabled={!isReachable || isFuture}
+            >
+              {number}. {title}
+            </button>
+          );
+        })}
+      </nav>
+
+      <section className="panel rounded-[2rem] p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Schritt {step} von 4</p>
+            <h2 className="mt-1.5 text-xl font-semibold text-lane-800 sm:text-2xl">{PIPELINE_STEPS[step - 1].title}</h2>
+          </div>
+          {step === 1 && (
+            <span className="rounded-full bg-lane-100 px-3 py-1 text-sm font-medium text-lane-700">
+              {guessingCorners ? 'Suche...' : manualCorners.length === 4 ? '4 Ecken gesetzt' : `${manualCorners.length}/4 Ecken`}
+            </span>
+          )}
+        </div>
+
+        {errorMessage ? (
+          <div className="mb-4 rounded-[1.3rem] border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold">Fehler</p>
+                <p className="mt-1 whitespace-pre-wrap">{errorMessage}</p>
+              </div>
+              <button
+                className="rounded-full border border-red-200 px-3 py-1 text-xs font-medium text-red-700 transition hover:bg-white"
+                type="button"
+                onClick={() => setErrorMessage('')}
+              >
+                Schließen
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {statusMessage ? (
+          <div className="mb-4 rounded-[1.3rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-700">
+            {statusMessage}
+          </div>
+        ) : null}
+
+        {currentWarnings.length > 0 ? (
+          <ul className="mb-4 grid gap-2">
+            {currentWarnings.map((warning) => (
+              <li key={warning} className="rounded-[1.2rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-800">
+                {warning}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {step === 1 && !previewUrl ? (
+          <label className="flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-lane-300 bg-white/50 px-4 py-14 text-center transition hover:border-lane-500 hover:bg-white/70">
             <span className="text-lg font-medium text-lane-800">Bild auswählen</span>
             <span className="mt-2 text-sm text-lane-600">PNG oder JPG direkt vom Bowling-Monitor</span>
             <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
           </label>
+        ) : null}
 
-          <div className="mt-5 rounded-[1.5rem] bg-white/60 p-4 text-sm text-lane-700">
-            <p className="font-medium text-lane-800">Hinweis</p>
-            <p className="mt-2">Uploads werden nur für die OCR-Verarbeitung verwendet und in der Zielarchitektur nicht dauerhaft gespeichert.</p>
-          </div>
-
-          {statusMessage ? (
-            <div className="mt-4 rounded-[1.3rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-700">
-              {statusMessage}
-            </div>
-          ) : null}
-
-          {uploadResult?.warnings.length ? (
-            <ul className="mt-4 grid gap-2">
-              {uploadResult.warnings.map((warning) => (
-                <li key={warning} className="rounded-[1.2rem] border border-coral/30 bg-coral/10 px-4 py-3 text-sm text-lane-800">
-                  {warning}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          {uploadResult ? (
-            <div className="mt-5 rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-lane-500">OCR Rohtext</p>
-              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-[1.2rem] bg-lane-900 px-4 py-3 text-sm text-lane-50">
-                {uploadResult.raw_text || 'Kein Rohtext erkannt.'}
-              </pre>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="panel rounded-[2rem] p-5 sm:p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Verification</p>
-              <h2 className="mt-2 text-2xl font-semibold text-lane-800">Erkannten Spielstand bestätigen</h2>
-            </div>
-            <button
-              className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700"
-              onClick={addScoreRow}
-              type="button"
-            >
-              Spieler hinzufügen
-            </button>
-          </div>
-
-          <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <label className="grid gap-2 text-sm text-lane-700">
-              Datum
-              <input
-                className="rounded-2xl border border-lane-200 bg-white/70 px-4 py-3"
-                type="date"
-                value={draft.played_at}
-                onChange={(event) => setDraft((current) => ({ ...current, played_at: event.target.value }))}
-              />
-            </label>
-            <label className="grid gap-2 text-sm text-lane-700">
-              Modus
-              <input
-                className="rounded-2xl border border-lane-200 bg-white/70 px-4 py-3"
-                value={draft.mode}
-                onChange={(event) => setDraft((current) => ({ ...current, mode: event.target.value }))}
-              />
-            </label>
-            <label className="grid gap-2 text-sm text-lane-700 sm:col-span-2">
-              Ort
-              <input
-                className="rounded-2xl border border-lane-200 bg-white/70 px-4 py-3"
-                value={draft.location}
-                onChange={(event) => setDraft((current) => ({ ...current, location: event.target.value }))}
-              />
-            </label>
-          </div>
-
-          <div className="mt-6 grid gap-3">
-            {draft.scores.map((score, index) => (
-              <div key={`${index}-${score.player_name}`} className="rounded-[1.5rem] border border-lane-200 bg-white/70 p-4">
-                <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
-                  <label className="grid gap-2 text-sm text-lane-700">
-                    Spielername
-                    <input
-                      className="rounded-2xl border border-lane-200 bg-white px-4 py-3"
-                      value={score.player_name}
-                      onChange={(event) => updateScore(index, { player_name: event.target.value })}
-                    />
-                  </label>
-                  <label className="grid gap-2 text-sm text-lane-700">
-                    Score
-                    <input
-                      className="rounded-2xl border border-lane-200 bg-white px-4 py-3"
-                      type="number"
-                      min={0}
-                      max={300}
-                      value={score.total_score}
-                      onChange={(event) => updateScore(index, { total_score: Number(event.target.value) })}
-                    />
-                  </label>
-                </div>
+        {step === 1 && previewUrl ? (
+          <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                {CORNER_LABELS.map((label, index) => (
+                  <button
+                    key={label}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                      activeCornerIndex === index ? 'bg-lane-800 text-white' : 'border border-lane-300 bg-white/80 text-lane-700'
+                    }`}
+                    type="button"
+                    onClick={() => setActiveCornerIndex(index)}
+                  >
+                    {index + 1}. {label}
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
+              <label className="rounded-full border border-lane-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-lane-700 cursor-pointer transition hover:bg-white">
+                Neues Bild
+                <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
+              </label>
+            </div>
 
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            <button
-              className="rounded-full bg-coral px-5 py-3 text-sm font-semibold text-lane-900 transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={handleSave}
-              type="button"
-              disabled={saving}
+            <div
+              className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
+              onClick={handleCornerPreviewClick}
+              onMouseMove={handleCornerPreviewMouseMove}
+              onMouseUp={stopCornerDrag}
+              onMouseLeave={stopCornerDrag}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                }
+              }}
             >
-              {saving ? 'Speichere...' : 'Spiel speichern'}
-            </button>
-            <span className="text-sm text-lane-600">Speichert erst nach manueller Bestätigung.</span>
-          </div>
-        </div>
-      </section>
+              <img
+                ref={cornerImageRef}
+                alt="Bowling-Monitor Farbvorschau"
+                className="block max-h-[40rem] w-full object-contain"
+                src={previewUrl}
+              />
+              {manualCorners.length >= 2 ? (
+                <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+                  {manualCorners.length === 4 ? (
+                    <polygon fill="rgba(31,111,235,0.10)" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />
+                  ) : (
+                    <polyline fill="none" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />
+                  )}
+                </svg>
+              ) : null}
+              {manualCorners.map((corner, index) => (
+                <button
+                  key={`${corner.x}-${corner.y}-${index}`}
+                  className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-xs font-semibold shadow-lg ${
+                    activeCornerIndex === index ? 'bg-lane-800 text-white' : 'bg-blue-600 text-white'
+                  }`}
+                  style={{ left: `${corner.x * 100}%`, top: `${corner.y * 100}%` }}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDraggingCornerIndex(index);
+                    setActiveCornerIndex(index);
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setActiveCornerIndex(index);
+                  }}
+                >
+                  {index + 1}
+                </button>
+              ))}
+            </div>
 
-      <StatsDashboard data={stats} loading={statsLoading} />
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={handleConfirmCorners}
+                disabled={manualCorners.length !== 4 || rectifying}
+              >
+                {rectifying ? 'Verarbeite...' : 'Ecken bestätigen →'}
+              </button>
+              <button
+                className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+                type="button"
+                onClick={() => {
+                  setManualCorners([]);
+                  setActiveCornerIndex(null);
+                  setDraggingCornerIndex(null);
+                }}
+              >
+                Zurücksetzen
+              </button>
+              <button
+                className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={() => {
+                  setManualCorners((current) => current.slice(0, -1));
+                  setActiveCornerIndex(null);
+                  setDraggingCornerIndex(null);
+                }}
+                disabled={!manualCorners.length}
+              >
+                Letzten Punkt entfernen
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === 2 && rectifiedPreview ? (
+          <div className="grid gap-4">
+            <div className="flex items-center gap-2 rounded-full border border-lane-200 bg-white/90 p-1 self-start">
+              {TABLE_SUB_VIEWS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                    tableSubView === key ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'
+                  }`}
+                  type="button"
+                  onClick={() => setTableSubView(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {tableSubView === 'bw' && (
+              <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
+                <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">
+                  S/W Schwelle
+                </label>
+                <input
+                  id="bw-threshold"
+                  type="range"
+                  min={10}
+                  max={240}
+                  step={1}
+                  value={bwThreshold}
+                  onChange={(e) => setBwThreshold(Number(e.target.value))}
+                  className="flex-1"
+                />
+                <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white">
+              {tableSubView === 'bw' ? (
+                <canvas
+                  ref={bwCanvasRef}
+                  className="block max-h-[42rem] w-full object-contain"
+                />
+              ) : (
+                <img
+                  alt="Tabelle finden: Linien"
+                  className="block max-h-[42rem] w-full object-contain"
+                  src={rectifiedPreview?.edge_debug_image_data_url ?? ''}
+                />
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+                type="button"
+                onClick={() => goToStep(1)}
+              >
+                ← Zurück zu Monitor
+              </button>
+              <button
+                className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={handleExtract}
+                disabled={extracting}
+              >
+                {extracting ? 'Extrahiere...' : 'Text extrahieren'}
+              </button>
+            </div>
+
+            {extractionResult ? (
+              <div className="mt-4 overflow-x-auto rounded-[1.3rem] border border-lane-200 bg-white/80 p-4">
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr>
+                      <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
+                      {Array.from({ length: 10 }, (_, i) => (
+                        <th key={i} className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">
+                          {i + 1}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extractionResult.players.map((player, pIdx) => (
+                      <tr key={pIdx}>
+                        <td className="border border-lane-200 px-1 py-1">
+                          <input
+                            className="w-full min-w-[80px] rounded bg-transparent px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400"
+                            value={player.name}
+                            onChange={(e) => updatePlayerName(pIdx, e.target.value)}
+                          />
+                        </td>
+                        {player.frames.map((frame, fIdx) => {
+                          const errClass = (field: string) =>
+                            scoreErrors.has(`${pIdx}-${fIdx}-${field}`) ? 'bg-red-100' : 'bg-transparent';
+
+                          return (
+                            <td key={fIdx} className="border border-lane-200 px-0 py-0">
+                              <div className="flex border-b border-lane-100">
+                                <input
+                                  className={`w-1/2 border-r border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw1')}`}
+                                  value={frame.throw1}
+                                  onChange={(e) => updateFrame(pIdx, fIdx, 'throw1', e.target.value)}
+                                  placeholder="nA"
+                                />
+                                <input
+                                  className={`w-1/2 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw2')}`}
+                                  value={frame.throw2}
+                                  onChange={(e) => updateFrame(pIdx, fIdx, 'throw2', e.target.value)}
+                                  placeholder="nA"
+                                />
+                                {fIdx === 9 ? (
+                                  <input
+                                    className={`w-1/2 border-l border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw3')}`}
+                                    value={frame.throw3}
+                                    onChange={(e) => updateFrame(pIdx, fIdx, 'throw3', e.target.value)}
+                                    placeholder="nA"
+                                  />
+                                ) : null}
+                              </div>
+                              <input
+                                className={`w-full px-1 py-0.5 text-center text-lane-600 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('cumulative')}`}
+                                value={frame.cumulative}
+                                onChange={(e) => updateFrame(pIdx, fIdx, 'cumulative', e.target.value)}
+                                placeholder="nA"
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
     </main>
   );
 }

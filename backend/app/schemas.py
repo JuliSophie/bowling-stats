@@ -3,16 +3,39 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 
-class DetectedScore(BaseModel):
-    player_name: str = Field(min_length=1, max_length=120)
-    total_score: int = Field(ge=0, le=300)
-    frames: list[int | dict[str, int | str]] = Field(default_factory=list)
+class ManualCorner(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
 
 
-class UploadResult(BaseModel):
+class CornerGuessResult(BaseModel):
     filename: str
-    raw_text: str
-    detected_scores: list[DetectedScore] = Field(default_factory=list)
+    guessed_corners: list[ManualCorner] = Field(default_factory=list, min_length=0, max_length=4)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RectifiedPreview(BaseModel):
+    filename: str
+    bw_image_data_url: str | None = None
+    edge_debug_image_data_url: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FrameData(BaseModel):
+    throw1: str = ""
+    throw2: str = ""
+    throw3: str = ""
+    cumulative: str = ""
+
+
+class PlayerData(BaseModel):
+    name: str = ""
+    frames: list[FrameData] = Field(default_factory=list)
+
+
+class ExtractionResult(BaseModel):
+    filename: str
+    players: list[PlayerData] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 
