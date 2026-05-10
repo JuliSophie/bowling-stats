@@ -445,12 +445,13 @@ class ImagePreprocessor:
         return text
 
     @staticmethod
-    def extract_table_data(bw_image: np.ndarray, bw_threshold: int | None = None) -> list[dict]:
+    def extract_table_data(bw_image: np.ndarray, bw_threshold: int | None = None) -> tuple[list[dict], int]:
         from app.schemas import FrameData, PlayerData
 
         sorted_h, sorted_v = ImagePreprocessor._detect_table_lines(bw_image)
+        num_columns = max(0, len(sorted_v) - 1)
         if len(sorted_h) < 3 or len(sorted_v) < 3:
-            return []
+            return [], num_columns
 
         if bw_threshold is not None:
             ocr_img = cv2.threshold(bw_image, bw_threshold, 255, cv2.THRESH_BINARY)[1]
@@ -472,6 +473,10 @@ class ImagePreprocessor:
                 continue
             name_crop = ocr_img[cell_top + m:cell_bottom - m, sorted_v[0][0] + m:sorted_v[1][0] - m]
             name = ImagePreprocessor._ocr_crop(name_crop)
+
+            player_index = len(players) + 1
+            if name.rstrip().endswith(str(player_index)):
+                name = ""
 
             frames: list[dict] = []
             for col_idx in range(1, len(sorted_v) - 1):
@@ -510,7 +515,7 @@ class ImagePreprocessor:
 
             players.append(PlayerData(name=name, frames=[FrameData(**f) for f in frames[:10]]).model_dump())
 
-        return players
+        return players, num_columns
 
     @staticmethod
     def prepare_image(file_bytes: bytes, manual_corners: list[ManualCorner]) -> np.ndarray:

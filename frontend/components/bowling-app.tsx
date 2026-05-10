@@ -244,7 +244,8 @@ export default function BowlingApp() {
   }, [rectifiedPreview?.edge_debug_image_data_url, applyThresholdToCanvas]);
 
   useEffect(() => {
-    applyThresholdToCanvas();
+    const timer = setTimeout(() => applyThresholdToCanvas(), 250);
+    return () => clearTimeout(timer);
   }, [bwThreshold, applyThresholdToCanvas]);
 
   useEffect(() => {
@@ -723,9 +724,10 @@ export default function BowlingApp() {
                       <tr key={pIdx}>
                         <td className="border border-lane-200 px-1 py-1">
                           <input
-                            className="w-full min-w-[80px] rounded bg-transparent px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400"
+                            className={`w-full min-w-[80px] rounded px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${player.name.trim() ? 'bg-transparent' : 'bg-red-100'}`}
                             value={player.name}
                             onChange={(e) => updatePlayerName(pIdx, e.target.value)}
+                            placeholder="Name fehlt"
                           />
                         </td>
                         {player.frames.map((frame, fIdx) => {

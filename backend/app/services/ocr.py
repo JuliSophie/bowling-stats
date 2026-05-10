@@ -36,9 +36,11 @@ def extract_scorecard(
     bw_threshold: int | None = None,
 ) -> ExtractionResult:
     bw_image = ImagePreprocessor.prepare_image(file_bytes, manual_corners)
-    raw_players = ImagePreprocessor.extract_table_data(bw_image, bw_threshold=bw_threshold)
+    raw_players, num_columns = ImagePreprocessor.extract_table_data(bw_image, bw_threshold=bw_threshold)
     players = [PlayerData(**p) for p in raw_players]
     warnings: list[str] = []
     if not players:
         warnings.append("Keine Spieler erkannt. Bitte prüfe die Monitor-Ecken und versuche es erneut.")
+    if num_columns < 11:
+        warnings.append(f"Nur {num_columns} von 11 Spalten erkannt. Möglicherweise fehlen Frames — bitte prüfe die Ecken und den Schwellenwert.")
     return ExtractionResult(filename=filename, players=players, warnings=warnings)
