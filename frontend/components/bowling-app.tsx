@@ -557,6 +557,8 @@ export default function BowlingApp() {
     if (draggingCornerIndex !== null) {
       setDraggingCornerIndex(null);
     }
+    // hide magnifier when drag stops
+    setMagnifierPos(null);
   }
 
   async function handleConfirmCorners() {
