@@ -1,9 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-import { extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
-import type { ExtractionResult, FrameData, ManualCorner, RectifiedPreview } from '@/types';
+import { createGame, extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
+import type { ExtractionResult, FrameData, GameRead, ManualCorner, RectifiedPreview } from '@/types';
+import StatsView from './stats-view';
+
+type AppTab = 'upload' | 'stats';
 
 const PIPELINE_STEPS = [
   { title: 'Monitor finden' },
@@ -19,6 +23,60 @@ const TABLE_SUB_VIEWS: { key: TableSubView; label: string }[] = [
 
 const MAGNIFIER_SIZE = 140;
 const MAGNIFIER_ZOOM = 4;
+
+const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
+
+type FrameType = 'strike' | 'spare' | 'normal';
+
+function getFrameType(frame: FrameData): FrameType {
+  if (frame.throw1.trim().toLowerCase() === 'x' || frame.throw2.trim().toLowerCase() === 'x') return 'strike';
+  if (frame.throw2.trim() === '/') return 'spare';
+  return 'normal';
+}
+
+function buildCumulativeChartData(scores: GameRead['scores']): Record<string, string | number>[] {
+  const frameCount = Math.max(...scores.map((s) => s.frames.length), 0);
+  const data: Record<string, string | number>[] = [];
+
+  for (let f = 0; f < frameCount; f++) {
+    const point: Record<string, string | number> = { frame: `${f + 1}` };
+    for (const score of scores) {
+      if (f < score.frames.length) {
+        const cum = parseInt(String(score.frames[f].cumulative ?? ''), 10);
+        if (!isNaN(cum)) {
+          point[score.player_name] = cum;
+          point[`${score.player_name}_type`] = getFrameType(score.frames[f]);
+        }
+      }
+    }
+    data.push(point);
+  }
+
+  return data;
+}
+
+function FrameDot({ cx, cy, payload, dataKey, stroke }: {
+  cx?: number; cy?: number; payload?: Record<string, string | number>; dataKey?: string; stroke?: string;
+}) {
+  if (cx == null || cy == null || !payload || !dataKey) return null;
+  const frameType = payload[`${dataKey}_type`] as FrameType | undefined;
+
+  if (frameType === 'strike') {
+    const s = 6;
+    return (
+      <g>
+        <line x1={cx - s} y1={cy - s} x2={cx + s} y2={cy + s} stroke={stroke} strokeWidth={2.5} />
+        <line x1={cx + s} y1={cy - s} x2={cx - s} y2={cy + s} stroke={stroke} strokeWidth={2.5} />
+      </g>
+    );
+  }
+
+  if (frameType === 'spare') {
+    return <rect x={cx - 5} y={cy - 5} width={10} height={10} fill={stroke} rx={2} />;
+  }
+
+  return <circle cx={cx} cy={cy} r={4} fill={stroke} />;
+}
 
 
 function parseThrowValue(value: string): number | null {
@@ -156,6 +214,7 @@ function findNearestCornerIndex(corners: ManualCorner[], target: ManualCorner): 
 
 
 export default function BowlingApp() {
+  const [appTab, setAppTab] = useState<AppTab>('upload');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [manualCorners, setManualCorners] = useState<ManualCorner[]>([]);
@@ -172,6 +231,11 @@ export default function BowlingApp() {
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [bwThreshold, setBwThreshold] = useState(75);
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const [saveDate, setSaveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saveLocation, setSaveLocation] = useState('Squash House');
+  const [saving, setSaving] = useState(false);
+  const [savedGame, setSavedGame] = useState<GameRead | null>(null);
   const cornerImageRef = useRef<HTMLImageElement | null>(null);
   const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
@@ -459,6 +523,39 @@ export default function BowlingApp() {
     });
   }
 
+  function computeTotalScore(frames: FrameData[]): number {
+    if (frames.length === 10) {
+      const last = parseInt(frames[9].cumulative.trim(), 10);
+      if (!isNaN(last)) return last;
+    }
+    return 0;
+  }
+
+  async function handleSaveGame() {
+    if (!extractionResult || !saveLocation.trim() || !saveDate) return;
+
+    setSaving(true);
+    setErrorMessage('');
+
+    try {
+      const game = await createGame({
+        played_at: saveDate,
+        location: saveLocation.trim(),
+        scores: extractionResult.players.map((player) => ({
+          player_name: player.name.trim(),
+          total_score: computeTotalScore(player.frames),
+          frames: player.frames,
+        })),
+      });
+      setSavedGame(game);
+      setShowSaveForm(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Speichern fehlgeschlagen.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const scoreErrors = extractionResult ? validateBowlingScores(extractionResult.players) : new Set<string>();
 
 
@@ -470,10 +567,33 @@ export default function BowlingApp() {
       <section className="panel overflow-hidden rounded-[2.4rem] border border-lane-200/60 p-6 sm:p-8">
         <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
         <h1 className="mt-3 text-3xl font-semibold leading-tight text-lane-900 sm:text-4xl">
-          Bowling-Monitor Erkennung
+          Bowling Stats
         </h1>
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+              appTab === 'upload' ? 'bg-lane-800 text-white' : 'border border-lane-300 text-lane-700 hover:bg-white/70'
+            }`}
+            onClick={() => setAppTab('upload')}
+          >
+            Upload
+          </button>
+          <button
+            type="button"
+            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+              appTab === 'stats' ? 'bg-lane-800 text-white' : 'border border-lane-300 text-lane-700 hover:bg-white/70'
+            }`}
+            onClick={() => setAppTab('stats')}
+          >
+            Statistiken
+          </button>
+        </div>
       </section>
 
+      {appTab === 'stats' && <StatsView />}
+
+      {appTab === 'upload' && <>
       <nav className="flex items-center gap-1.5 rounded-[2rem] bg-[rgba(41,24,9,0.92)] p-2.5 text-white sm:gap-2 sm:p-3">
         {PIPELINE_STEPS.map(({ title }, index) => {
           const number = index + 1;
@@ -660,10 +780,10 @@ export default function BowlingApp() {
               >
                 Letzten Punkt entfernen
               </button>
-              <button className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
+              <label className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
                 Neues Bild
                 <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
-              </button>
+              </label>
             </div>
           </div>
         ) : null}
@@ -738,8 +858,8 @@ export default function BowlingApp() {
             </div>
 
             {extractionResult ? (
-              <div className={`mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80`}>
-                <table className="w-full border-collapse text-xs">
+              <div className="mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80 -mx-1 sm:mx-0">
+                <table className="min-w-[700px] w-full border-collapse text-xs">
                   <thead>
                     <tr>
                       <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
@@ -805,21 +925,119 @@ export default function BowlingApp() {
               </div>
             ) : null}
 
-            {extractionResult && extractionResult.players.length > 0 ? (
-              <div className="flex justify-end">
-                <button
-                  className="rounded-full bg-lane-800 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
-                  type="button"
-                  disabled={extractionResult.players.some((p) => !p.name.trim())}
-                  onClick={() => {}}
-                >
-                  Ergebnis speichern
-                </button>
+            {extractionResult && extractionResult.players.length > 0 && !savedGame ? (
+              <div className="mt-2">
+                {!showSaveForm ? (
+                  <div className="flex justify-end">
+                    <button
+                      className="rounded-full bg-lane-800 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      type="button"
+                      disabled={extractionResult.players.some((p) => !p.name.trim()) || scoreErrors.size > 0}
+                      onClick={() => setShowSaveForm(true)}
+                    >
+                      Ergebnis speichern
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+                    <h3 className="mb-3 text-sm font-semibold text-lane-800">Spieldetails ergänzen</h3>
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label htmlFor="save-date" className="text-xs font-medium text-lane-600">Datum</label>
+                        <input
+                          id="save-date"
+                          type="date"
+                          value={saveDate}
+                          onChange={(e) => setSaveDate(e.target.value)}
+                          className="rounded-lg border border-lane-200 px-3 py-1.5 text-sm text-lane-900 outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <div className="flex flex-1 flex-col gap-1">
+                        <label htmlFor="save-location" className="text-xs font-medium text-lane-600">Ort / Bowlingbahn</label>
+                        <input
+                          id="save-location"
+                          type="text"
+                          value={saveLocation}
+                          onChange={(e) => setSaveLocation(e.target.value)}
+                          placeholder="z.B. Bowling Arena Stuttgart"
+                          className="rounded-lg border border-lane-200 px-3 py-1.5 text-sm text-lane-900 outline-none focus:ring-1 focus:ring-blue-400"
+                        />
+                      </div>
+                      <button
+                        className="rounded-full bg-lane-800 px-5 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        type="button"
+                        disabled={!saveLocation.trim() || !saveDate || saving}
+                        onClick={handleSaveGame}
+                      >
+                        {saving ? 'Speichert...' : 'Jetzt speichern'}
+                      </button>
+                      <button
+                        className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+                        type="button"
+                        onClick={() => setShowSaveForm(false)}
+                      >
+                        Abbrechen
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            {savedGame ? (
+              <div className="grid gap-4">
+                <div className="rounded-[1.3rem] border border-green-300 bg-green-50 p-4 text-sm text-green-900">
+                  <p className="font-semibold">Gespeichert!</p>
+                  <p className="mt-1">
+                    Spiel #{savedGame.id} — {savedGame.location}, {savedGame.played_at} — {savedGame.scores.length} Spieler
+                  </p>
+                </div>
+
+                <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-lane-800">Punkteverlauf</h3>
+                    <div className="flex items-center gap-4 text-xs text-lane-600">
+                      <span className="flex items-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 14 14"><line x1="2" y1="2" x2="12" y2="12" stroke="#64748b" strokeWidth="2" /><line x1="12" y1="2" x2="2" y2="12" stroke="#64748b" strokeWidth="2" /></svg>
+                        Strike
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" fill="#64748b" rx="2" /></svg>
+                        Spare
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" fill="#64748b" /></svg>
+                        Normal
+                      </span>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={320}>
+                    <LineChart data={buildCumulativeChartData(savedGame.scores)} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                      <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
+                      <YAxis tick={{ fontSize: 12 }} />
+                      <Tooltip />
+                      <Legend />
+                      {savedGame.scores.map((score, i) => (
+                        <Line
+                          key={score.player_name}
+                          type="monotone"
+                          dataKey={score.player_name}
+                          stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]}
+                          strokeWidth={2}
+                          dot={<FrameDot />}
+                          activeDot={{ r: 6 }}
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             ) : null}
           </div>
         ) : null}
       </section>
+      </>}
     </main>
   );
 }

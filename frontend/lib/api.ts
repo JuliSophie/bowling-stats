@@ -1,4 +1,4 @@
-import type { CornerGuessResult, ExtractionResult, ManualCorner, RectifiedPreview } from '@/types';
+import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, ManualCorner, RectifiedPreview, StatsResponse } from '@/types';
 
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api';
@@ -94,4 +94,27 @@ export async function extractScorecard(file: File, corners: ManualCorner[], bwTh
   });
 
   return handleResponse<ExtractionResult>(response);
+}
+
+
+export async function createGame(payload: GameCreate): Promise<GameRead> {
+  const response = await fetch(`${API_BASE}/games`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  return handleResponse<GameRead>(response);
+}
+
+
+export async function fetchGames(): Promise<GameRead[]> {
+  const response = await fetch(`${API_BASE}/games`);
+  return handleResponse<GameRead[]>(response);
+}
+
+
+export async function fetchStats(): Promise<StatsResponse> {
+  const response = await fetch(`${API_BASE}/stats`);
+  return handleResponse<StatsResponse>(response);
 }

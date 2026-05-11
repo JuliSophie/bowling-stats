@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -8,6 +8,27 @@ from app.schemas import GameCreate, GameRead, StoredScore
 
 
 router = APIRouter(tags=["games"])
+
+
+@router.get("/games", response_model=list[GameRead])
+def list_games(db: Session = Depends(get_db)) -> list[GameRead]:
+    games = db.scalars(select(Game).order_by(desc(Game.played_at), desc(Game.id))).all()
+    result: list[GameRead] = []
+    for game in games:
+        scores = db.execute(
+            select(Player.name, Score.total_score, Score.frames)
+            .join(Score, Score.player_id == Player.id)
+            .where(Score.game_id == game.id)
+        ).all()
+        result.append(GameRead(
+            id=game.id,
+            played_at=game.played_at,
+            location=game.location,
+            mode=game.mode,
+            user_id=game.user_id,
+            scores=[StoredScore(player_name=s[0], total_score=s[1], frames=s[2] or []) for s in scores],
+        ))
+    return result
 
 
 @router.post("/games", response_model=GameRead, status_code=status.HTTP_201_CREATED)

@@ -33,3 +33,59 @@ export type RectifiedPreview = {
   edge_debug_image_data_url?: string | null;
   warnings: string[];
 };
+
+export type ConfirmedScore = {
+  player_name: string;
+  total_score: number;
+  frames: FrameData[];
+};
+
+export type GameCreate = {
+  played_at: string;
+  location: string;
+  mode?: string;
+  scores: ConfirmedScore[];
+};
+
+export type StoredScore = {
+  player_name: string;
+  total_score: number;
+  frames: FrameData[];
+};
+
+export type GameRead = {
+  id: number;
+  played_at: string;
+  location: string;
+  mode: string;
+  scores: StoredScore[];
+};
+
+export type TrendPoint = {
+  played_at: string;
+  total_score: number;
+};
+
+export type PlayerTrend = {
+  player_name: string;
+  games: TrendPoint[];
+};
+
+export type PlayerAverage = {
+  player_name: string;
+  average_score: number;
+  games_played: number;
+};
+
+export type HighScoreEntry = {
+  player_name: string;
+  total_score: number;
+  played_at: string;
+  location: string;
+};
+
+export type StatsResponse = {
+  score_trends: PlayerTrend[];
+  averages: PlayerAverage[];
+  hall_of_fame: HighScoreEntry[];
+};
