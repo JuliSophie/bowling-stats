@@ -1,7 +1,7 @@
 import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse } from '@/types';
 
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
 
 
 async function extractErrorMessage(response: Response): Promise<string> {
