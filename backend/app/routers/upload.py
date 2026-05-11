@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import TypeAdapter, ValidationError
@@ -8,6 +9,7 @@ from app.services.ocr import build_rectified_preview, extract_scorecard, guess_s
 
 
 router = APIRouter(tags=["upload"])
+logger = logging.getLogger(__name__)
 
 
 manual_corners_adapter = TypeAdapter(list[ManualCorner])
@@ -51,7 +53,8 @@ async def upload_scorecard_corners(file: UploadFile = File(...)) -> CornerGuessR
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Monitor-Erkennung fehlgeschlagen.") from exc
+        logger.exception("Corner detection failed for %s", file.filename or "upload")
+        raise HTTPException(status_code=500, detail=f"Monitor-Erkennung fehlgeschlagen: {exc}") from exc
 
 
 @router.post("/upload/rectify", response_model=RectifiedPreview)
@@ -73,7 +76,8 @@ async def upload_scorecard_rectified(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Entzerrung fehlgeschlagen.") from exc
+        logger.exception("Rectify failed for %s", file.filename or "upload")
+        raise HTTPException(status_code=500, detail=f"Entzerrung fehlgeschlagen: {exc}") from exc
 
 
 @router.post("/upload/extract", response_model=ExtractionResult)
@@ -97,4 +101,5 @@ async def upload_scorecard_extract(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="OCR-Extraktion fehlgeschlagen.") from exc
+        logger.exception("OCR extract failed for %s", file.filename or "upload")
+        raise HTTPException(status_code=500, detail=f"OCR-Extraktion fehlgeschlagen: {exc}") from exc

@@ -41,10 +41,34 @@ async function extractErrorMessage(response: Response): Promise<string> {
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    throw new Error(await extractErrorMessage(response));
+    const message = await extractErrorMessage(response);
+    console.error('API HTTP error', {
+      url: response.url,
+      status: response.status,
+      statusText: response.statusText,
+      message,
+    });
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;
+}
+
+
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  try {
+    const response = await fetch(url, init);
+    return await handleResponse<T>(response);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      console.error('API network error', {
+        url,
+        method: init?.method ?? 'GET',
+        message: error.message,
+      });
+    }
+    throw error;
+  }
 }
 
 
@@ -57,12 +81,10 @@ export async function guessScorecardCorners(file: File): Promise<CornerGuessResu
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await fetch(`${API_BASE}/upload/corners`, {
+  return requestJson<CornerGuessResult>(`${API_BASE}/upload/corners`, {
     method: 'POST',
     body: formData,
   });
-
-  return handleResponse<CornerGuessResult>(response);
 }
 
 
@@ -71,12 +93,10 @@ export async function rectifyScorecard(file: File, corners: ManualCorner[]): Pro
   formData.append('file', file);
   appendJsonField(formData, 'corners', corners);
 
-  const response = await fetch(`${API_BASE}/upload/rectify`, {
+  return requestJson<RectifiedPreview>(`${API_BASE}/upload/rectify`, {
     method: 'POST',
     body: formData,
   });
-
-  return handleResponse<RectifiedPreview>(response);
 }
 
 
@@ -88,33 +108,27 @@ export async function extractScorecard(file: File, corners: ManualCorner[], bwTh
     formData.append('bw_threshold', String(bwThreshold));
   }
 
-  const response = await fetch(`${API_BASE}/upload/extract`, {
+  return requestJson<ExtractionResult>(`${API_BASE}/upload/extract`, {
     method: 'POST',
     body: formData,
   });
-
-  return handleResponse<ExtractionResult>(response);
 }
 
 
 export async function createGame(payload: GameCreate): Promise<GameRead> {
-  const response = await fetch(`${API_BASE}/games`, {
+  return requestJson<GameRead>(`${API_BASE}/games`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-
-  return handleResponse<GameRead>(response);
 }
 
 
 export async function fetchGames(): Promise<GameRead[]> {
-  const response = await fetch(`${API_BASE}/games`);
-  return handleResponse<GameRead[]>(response);
+  return requestJson<GameRead[]>(`${API_BASE}/games`);
 }
 
 
 export async function fetchStats(): Promise<StatsResponse> {
-  const response = await fetch(`${API_BASE}/stats`);
-  return handleResponse<StatsResponse>(response);
+  return requestJson<StatsResponse>(`${API_BASE}/stats`);
 }

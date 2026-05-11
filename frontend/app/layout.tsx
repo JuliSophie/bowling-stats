@@ -5,8 +5,22 @@ import './globals.css';
 
 
 export const metadata: Metadata = {
-  title: 'Bowling Stats',
+  title: {
+    default: 'Bowling Stats',
+    template: '%s | Bowling Stats',
+  },
+  applicationName: 'Bowling Stats',
   description: 'Mobile-first OCR-Workflow und Statistik-Dashboard für Bowling-Runden.',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    title: 'Bowling Scorecard',
+    statusBarStyle: 'default',
+  },
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon',
+  },
 };
 
 
