@@ -373,6 +373,19 @@ export default function BowlingApp() {
     };
   }
 
+  function getNormalizedPointFromTouch(event: React.TouchEvent<HTMLDivElement>, imageElement: HTMLImageElement | null): ManualCorner | null {
+    if (!imageElement) return null;
+    const touch = event.touches[0] || event.changedTouches[0];
+    if (!touch) return null;
+    const bounds = imageElement.getBoundingClientRect();
+    const x = (touch.clientX - bounds.left) / bounds.width;
+    const y = (touch.clientY - bounds.top) / bounds.height;
+    return {
+      x: Math.min(1, Math.max(0, x)),
+      y: Math.min(1, Math.max(0, y)),
+    };
+  }
+
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -445,6 +458,45 @@ export default function BowlingApp() {
     if (draggingCornerIndex !== null) {
       setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? { x: nx, y: ny } : corner)));
     }
+  }
+
+  function handleCornerPreviewTouchStart(event: React.TouchEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const point = getNormalizedPointFromTouch(event, cornerImageRef.current);
+    if (!point) return;
+    // find nearest corner if not tapping an existing button
+    setActiveCornerIndex(null);
+    setManualCorners((current) => {
+      if (current.length < 4) return [...current, point];
+      const next = [...current];
+      const targetIndex = activeCornerIndex ?? findNearestCornerIndex(current, point);
+      next[targetIndex] = point;
+      return next;
+    });
+  }
+
+  function handleCornerPreviewTouchMove(event: React.TouchEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const img = cornerImageRef.current;
+    if (!img) return;
+    const touch = event.touches[0];
+    if (!touch) return;
+    const bounds = img.getBoundingClientRect();
+    const px = touch.clientX - bounds.left;
+    const py = touch.clientY - bounds.top;
+    const nx = Math.min(1, Math.max(0, px / bounds.width));
+    const ny = Math.min(1, Math.max(0, py / bounds.height));
+
+    setMagnifierPos({ nx, ny, px, py });
+
+    if (draggingCornerIndex !== null) {
+      setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? { x: nx, y: ny } : corner)));
+    }
+  }
+
+  function handleCornerPreviewTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
+    event.preventDefault();
+    stopCornerDrag();
   }
 
   function stopCornerDrag() {
@@ -691,19 +743,24 @@ export default function BowlingApp() {
         {step === 1 && previewUrl ? (
           <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
             <div
-              className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
-              onClick={handleCornerPreviewClick}
-              onMouseMove={handleCornerPreviewMouseMove}
-              onMouseUp={stopCornerDrag}
-              onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                }
-              }}
-            >
+                  className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
+                  onClick={handleCornerPreviewClick}
+                  onMouseMove={handleCornerPreviewMouseMove}
+                  onMouseUp={stopCornerDrag}
+                  onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
+                  onTouchStart={handleCornerPreviewTouchStart}
+                  onTouchMove={handleCornerPreviewTouchMove}
+                  onTouchEnd={handleCornerPreviewTouchEnd}
+                  onContextMenu={(e) => e.preventDefault()}
+                  role="button"
+                  tabIndex={0}
+                  style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                    }
+                  }}
+                >
               <img
                 ref={cornerImageRef}
                 alt="Bowling-Monitor Farbvorschau"
@@ -733,10 +790,22 @@ export default function BowlingApp() {
                     setDraggingCornerIndex(index);
                     setActiveCornerIndex(index);
                   }}
+                  onTouchStart={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDraggingCornerIndex(index);
+                    setActiveCornerIndex(index);
+                  }}
+                  onTouchEnd={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    stopCornerDrag();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
                     setActiveCornerIndex(index);
                   }}
+                  onContextMenu={(e) => e.preventDefault()}
                 >
                   {index + 1}
                 </button>
