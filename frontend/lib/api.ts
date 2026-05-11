@@ -1,4 +1,4 @@
-import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, ManualCorner, RectifiedPreview, StatsResponse } from '@/types';
+import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse } from '@/types';
 
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api';
@@ -118,6 +118,15 @@ export async function extractScorecard(file: File, corners: ManualCorner[], bwTh
 export async function createGame(payload: GameCreate): Promise<GameRead> {
   return requestJson<GameRead>(`${API_BASE}/games`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+
+export async function renamePlayer(payload: PlayerRenameRequest): Promise<PlayerRenameResponse> {
+  return requestJson<PlayerRenameResponse>(`${API_BASE}/players/rename`, {
+    method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });

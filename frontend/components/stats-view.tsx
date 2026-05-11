@@ -15,7 +15,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import { fetchGames } from '@/lib/api';
+import { fetchGames, renamePlayer } from '@/lib/api';
 import type { FrameData, GameRead } from '@/types';
 
 const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
@@ -771,10 +771,43 @@ export default function StatsView() {
   const [loading, setLoading] = useState(true);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
   const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
+  const [editingPlayerName, setEditingPlayerName] = useState('');
+  const [renamingPlayer, setRenamingPlayer] = useState(false);
+  const [renameError, setRenameError] = useState('');
+  const [renameNotice, setRenameNotice] = useState('');
+  const [isEditingPlayer, setIsEditingPlayer] = useState(false);
 
   useEffect(() => {
     fetchGames().then(setGames).finally(() => setLoading(false));
   }, []);
+
+  async function handleRenamePlayer() {
+    if (!selectedPlayer) return;
+
+    const nextName = editingPlayerName.trim();
+    if (!nextName) {
+      setRenameError('Der Spielername darf nicht leer sein.');
+      return;
+    }
+
+    setRenamingPlayer(true);
+    setRenameError('');
+    setRenameNotice('');
+
+    try {
+      const result = await renamePlayer({ current_name: selectedPlayer, new_name: nextName });
+      const refreshedGames = await fetchGames();
+      setGames(refreshedGames);
+      setSelectedPlayer(result.player_name);
+      setEditingPlayerName(result.player_name);
+      setIsEditingPlayer(false);
+      setRenameNotice(result.merged ? 'Spieler wurden zusammengefuehrt.' : 'Spielername aktualisiert.');
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : 'Spieler konnte nicht umbenannt werden.');
+    } finally {
+      setRenamingPlayer(false);
+    }
+  }
 
   if (loading) {
     return <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-sm text-lane-600">Lade Statistiken...</div>;
@@ -801,11 +834,68 @@ export default function StatsView() {
       <div className="grid gap-4">
         <button type="button"
           className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
-          onClick={() => { setSelectedPlayer(null); setExpandedGameId(null); }}
+          onClick={() => {
+            setSelectedPlayer(null);
+            setExpandedGameId(null);
+            setIsEditingPlayer(false);
+            setRenameError('');
+            setRenameNotice('');
+          }}
         >← Alle Spieler</button>
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
-          <h2 className="text-xl font-semibold text-lane-900">{selectedPlayer}</h2>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              {isEditingPlayer ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={editingPlayerName}
+                    onChange={(e) => setEditingPlayerName(e.target.value)}
+                    className="min-w-[220px] rounded-lg border border-lane-200 px-3 py-2 text-base font-semibold text-lane-900 outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="Spielername"
+                  />
+                  <button
+                    type="button"
+                    className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={handleRenamePlayer}
+                    disabled={renamingPlayer}
+                  >
+                    {renamingPlayer ? 'Speichert...' : 'Speichern'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    onClick={() => {
+                      setIsEditingPlayer(false);
+                      setEditingPlayerName(selectedPlayer);
+                      setRenameError('');
+                    }}
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <h2 className="text-xl font-semibold text-lane-900">{selectedPlayer}</h2>
+                  <button
+                    type="button"
+                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    onClick={() => {
+                      setEditingPlayerName(selectedPlayer);
+                      setIsEditingPlayer(true);
+                      setRenameError('');
+                      setRenameNotice('');
+                    }}
+                  >
+                    Spieler bearbeiten
+                  </button>
+                </div>
+              )}
+              {renameError ? <p className="mt-2 text-sm text-red-700">{renameError}</p> : null}
+              {!renameError && renameNotice ? <p className="mt-2 text-sm text-green-700">{renameNotice}</p> : null}
+            </div>
+          </div>
           {summary && (
             <div className="mt-3 flex flex-wrap gap-3">
               <StatCard label="Spiele" value={summary.gamesPlayed} />

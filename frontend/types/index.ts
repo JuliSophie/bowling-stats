@@ -47,6 +47,17 @@ export type GameCreate = {
   scores: ConfirmedScore[];
 };
 
+export type PlayerRenameRequest = {
+  current_name: string;
+  new_name: string;
+};
+
+export type PlayerRenameResponse = {
+  previous_name: string;
+  player_name: string;
+  merged: boolean;
+};
+
 export type StoredScore = {
   player_name: string;
   total_score: number;

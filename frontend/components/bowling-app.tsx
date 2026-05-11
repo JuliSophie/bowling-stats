@@ -26,6 +26,10 @@ const MAGNIFIER_ZOOM = 4;
 
 const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
 
+function normalizePlayerName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
+}
+
 type FrameType = 'strike' | 'spare' | 'normal';
 
 function getFrameType(frame: FrameData): FrameType {
@@ -512,6 +516,15 @@ export default function BowlingApp() {
     });
   }
 
+  function removePlayerRow(playerIdx: number) {
+    setShowSaveForm(false);
+    setExtractionResult((prev) => {
+      if (!prev) return prev;
+      const players = prev.players.filter((_, idx) => idx !== playerIdx);
+      return { ...prev, players };
+    });
+  }
+
   function updateFrame(playerIdx: number, frameIdx: number, field: keyof FrameData, value: string) {
     setExtractionResult((prev) => {
       if (!prev) return prev;
@@ -542,7 +555,7 @@ export default function BowlingApp() {
         played_at: saveDate,
         location: saveLocation.trim(),
         scores: extractionResult.players.map((player) => ({
-          player_name: player.name.trim(),
+          player_name: normalizePlayerName(player.name),
           total_score: computeTotalScore(player.frames),
           frames: player.frames,
         })),
@@ -868,6 +881,7 @@ export default function BowlingApp() {
                           {i + 1}
                         </th>
                       ))}
+                      <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">Aktion</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -918,6 +932,23 @@ export default function BowlingApp() {
                             </td>
                           );
                         })}
+                        <td className="border border-lane-200 px-2 py-1 align-top">
+                          <button
+                            type="button"
+                            aria-label={`Spieler ${player.name || pIdx + 1} löschen`}
+                            title="Zeile löschen"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-700 transition hover:bg-red-50"
+                            onClick={() => removePlayerRow(pIdx)}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M4 7h16" />
+                              <path d="M9 7V5.8c0-.9.7-1.6 1.6-1.6h2.8c.9 0 1.6.7 1.6 1.6V7" />
+                              <path d="M7.2 7l.8 11c.1 1 1 1.8 2 1.8h4c1 0 1.9-.8 2-1.8l.8-11" />
+                              <path d="M10 11.2v5.6" />
+                              <path d="M14 11.2v5.6" />
+                            </svg>
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

@@ -21,3 +21,5 @@ Thumbs.db
 .claude/
 .omc/
 debug_crops/
+backend/dev.db
+backend/tmp

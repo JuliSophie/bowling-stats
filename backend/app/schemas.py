@@ -54,6 +54,17 @@ class GameCreate(BaseModel):
     scores: list[ConfirmedScore] = Field(min_length=1)
 
 
+class PlayerRenameRequest(BaseModel):
+    current_name: str = Field(min_length=1, max_length=120)
+    new_name: str = Field(min_length=1, max_length=120)
+
+
+class PlayerRenameResponse(BaseModel):
+    previous_name: str
+    player_name: str
+    merged: bool = False
+
+
 class StoredScore(BaseModel):
     player_name: str
     total_score: int
