@@ -1,17 +1,41 @@
 import base64
+import logging
+import tempfile
+from pathlib import Path
 
 import cv2
 import easyocr
 import numpy as np
+from app.config import get_settings
 from app.schemas import ManualCorner
 
 _reader: easyocr.Reader | None = None
+logger = logging.getLogger(__name__)
+
+
+def _get_ocr_cache_dir() -> str:
+    configured_dir = get_settings().temp_dir / "easyocr"
+    fallback_dir = Path(tempfile.gettempdir()) / "bowling-stats" / "easyocr"
+
+    try:
+        configured_dir.mkdir(parents=True, exist_ok=True)
+        return str(configured_dir)
+    except PermissionError:
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        logger.warning("EasyOCR cache directory %s is not writable; falling back to %s", configured_dir, fallback_dir)
+        return str(fallback_dir)
 
 
 def _get_reader() -> easyocr.Reader:
     global _reader
     if _reader is None:
-        _reader = easyocr.Reader(["de", "en"], gpu=False)
+        cache_dir = _get_ocr_cache_dir()
+        _reader = easyocr.Reader(
+            ["de", "en"],
+            gpu=False,
+            model_storage_directory=cache_dir,
+            user_network_directory=cache_dir,
+        )
     return _reader
 
 
