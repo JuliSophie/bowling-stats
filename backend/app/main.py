@@ -35,6 +35,6 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
-app.include_router(upload_router)
-app.include_router(games_router)
-app.include_router(stats_router)
+app.include_router(upload_router, prefix="/api")
+app.include_router(games_router, prefix="/api")
+app.include_router(stats_router, prefix="/api")
