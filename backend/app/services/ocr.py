@@ -20,7 +20,14 @@ def build_rectified_preview(
     manual_corners: list[ManualCorner],
 ) -> RectifiedPreview:
     bw_image = ImagePreprocessor.prepare_image(file_bytes, manual_corners)
-    warnings = ["Bitte prüfe die Bildverarbeitung Schritt für Schritt."]
+    sorted_h, sorted_v = ImagePreprocessor._detect_table_lines(bw_image)
+    num_columns = max(0, len(sorted_v) - 1)
+    num_rows = max(0, len(sorted_h) - 1)
+    warnings: list[str] = []
+    if num_columns < 11:
+        warnings.append(f"Nur {num_columns} von 11 Spalten erkannt. Bitte prüfe die Monitor-Ecken.")
+    if num_rows < 2:
+        warnings.append(f"Nur {num_rows} Zeilen erkannt. Bitte prüfe die Monitor-Ecken.")
     return RectifiedPreview(
         filename=filename,
         bw_image_data_url=ImagePreprocessor.encode_image_data_url(bw_image),

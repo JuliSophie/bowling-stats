@@ -5,14 +5,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
 import type { ExtractionResult, FrameData, ManualCorner, RectifiedPreview } from '@/types';
 
-
-const CORNER_LABELS = ['Oben links', 'Oben rechts', 'Unten rechts', 'Unten links'];
-
 const PIPELINE_STEPS = [
   { title: 'Monitor finden' },
-  { title: 'Tabelle finden' },
-  { title: 'Bereiche gruppieren' },
-  { title: 'Text erkennen' },
+  { title: 'Ergebnis prüfen' },
 ];
 
 type TableSubView = 'bw' | 'lines';
@@ -21,6 +16,9 @@ const TABLE_SUB_VIEWS: { key: TableSubView; label: string }[] = [
   { key: 'bw', label: 'Schwarz/Weiß' },
   { key: 'lines', label: 'Linien' },
 ];
+
+const MAGNIFIER_SIZE = 140;
+const MAGNIFIER_ZOOM = 4;
 
 
 function parseThrowValue(value: string): number | null {
@@ -175,9 +173,14 @@ export default function BowlingApp() {
   const [extracting, setExtracting] = useState(false);
   const [bwThreshold, setBwThreshold] = useState(75);
   const cornerImageRef = useRef<HTMLImageElement | null>(null);
+  const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
   const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
   const edgeBaseImageRef = useRef<HTMLImageElement | null>(null);
+
+  const bwThresholdRef = useRef(bwThreshold);
+  bwThresholdRef.current = bwThreshold;
 
   const applyThresholdToCanvas = useCallback(() => {
     const canvas = bwCanvasRef.current;
@@ -190,8 +193,9 @@ export default function BowlingApp() {
     ctx.drawImage(img, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const pixels = imageData.data;
+    const threshold = bwThresholdRef.current;
     for (let i = 0; i < pixels.length; i += 4) {
-      const val = pixels[i] > bwThreshold ? 255 : 0;
+      const val = pixels[i] > threshold ? 255 : 0;
       pixels[i] = val;
       pixels[i + 1] = val;
       pixels[i + 2] = val;
@@ -221,7 +225,7 @@ export default function BowlingApp() {
     }
 
     ctx.putImageData(imageData, 0, 0);
-  }, [bwThreshold]);
+  }, []);
 
   useEffect(() => {
     if (!rectifiedPreview?.bw_image_data_url) return;
@@ -255,6 +259,36 @@ export default function BowlingApp() {
       }
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (!magnifierPos) return;
+    const canvas = magnifierCanvasRef.current;
+    const img = cornerImageRef.current;
+    if (!canvas || !img || !img.naturalWidth) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const displayW = img.getBoundingClientRect().width;
+    const scale = img.naturalWidth / (displayW || 1);
+    const srcSize = (MAGNIFIER_SIZE / MAGNIFIER_ZOOM) * scale;
+    const srcX = magnifierPos.nx * img.naturalWidth - srcSize / 2;
+    const srcY = magnifierPos.ny * img.naturalHeight - srcSize / 2;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+    ctx.drawImage(img, srcX, srcY, srcSize, srcSize, 0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+
+    const center = MAGNIFIER_SIZE / 2;
+    ctx.strokeStyle = 'rgba(31, 111, 235, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(center, 0);
+    ctx.lineTo(center, MAGNIFIER_SIZE);
+    ctx.moveTo(0, center);
+    ctx.lineTo(MAGNIFIER_SIZE, center);
+    ctx.stroke();
+  }, [magnifierPos]);
 
   function getNormalizedPoint(event: React.MouseEvent<HTMLDivElement>, imageElement: HTMLImageElement | null): ManualCorner | null {
     if (!imageElement) {
@@ -298,11 +332,7 @@ export default function BowlingApp() {
       const guessResult = await guessScorecardCorners(file);
       setManualCorners(guessResult.guessed_corners);
       setCornerWarnings(guessResult.warnings);
-      setStatusMessage(
-        guessResult.guessed_corners.length === 4
-          ? 'Monitor-Ecken erkannt. Bitte prüfen und bei Bedarf korrigieren.'
-          : 'Bitte die vier Monitor-Ecken manuell setzen.'
-      );
+      setStatusMessage('');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Monitor-Ecken konnten nicht erkannt werden.');
       setStatusMessage('');
@@ -333,16 +363,20 @@ export default function BowlingApp() {
   }
 
   function handleCornerPreviewMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    if (draggingCornerIndex === null) {
-      return;
-    }
+    const img = cornerImageRef.current;
+    if (!img) return;
 
-    const point = getNormalizedPoint(event, cornerImageRef.current);
-    if (!point) {
-      return;
-    }
+    const bounds = img.getBoundingClientRect();
+    const px = event.clientX - bounds.left;
+    const py = event.clientY - bounds.top;
+    const nx = Math.min(1, Math.max(0, px / bounds.width));
+    const ny = Math.min(1, Math.max(0, py / bounds.height));
 
-    setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? point : corner)));
+    setMagnifierPos({ nx, ny, px, py });
+
+    if (draggingCornerIndex !== null) {
+      setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? { x: nx, y: ny } : corner)));
+    }
   }
 
   function stopCornerDrag() {
@@ -376,13 +410,10 @@ export default function BowlingApp() {
   }
 
   function goToStep(targetStep: number) {
-    if (targetStep < 1 || targetStep > 4) {
+    if (targetStep < 1 || targetStep > 2) {
       return;
     }
     if (targetStep >= 2 && !rectifiedPreview) {
-      return;
-    }
-    if (targetStep >= 3) {
       return;
     }
     setStep(targetStep);
@@ -430,7 +461,9 @@ export default function BowlingApp() {
 
   const scoreErrors = extractionResult ? validateBowlingScores(extractionResult.players) : new Set<string>();
 
-  const currentWarnings = step === 1 ? cornerWarnings : rectifiedPreview?.warnings ?? [];
+
+
+  const currentWarnings = step === 1 ? cornerWarnings : [...(rectifiedPreview?.warnings ?? []), ...(extractionResult?.warnings ?? [])];
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
@@ -446,7 +479,6 @@ export default function BowlingApp() {
           const number = index + 1;
           const isActive = step === number;
           const isReachable = number === 1 || (number === 2 && !!rectifiedPreview);
-          const isFuture = number >= 3;
 
           return (
             <button
@@ -455,14 +487,12 @@ export default function BowlingApp() {
               className={`flex-1 rounded-2xl px-2 py-2.5 text-center text-xs font-medium transition sm:px-3 sm:text-sm ${
                 isActive
                   ? 'bg-white/20 text-white'
-                  : isFuture
-                    ? 'cursor-not-allowed text-lane-600'
-                    : isReachable
-                      ? 'text-lane-200 hover:bg-white/10'
-                      : 'cursor-not-allowed text-lane-500'
+                  : isReachable
+                    ? 'text-lane-200 hover:bg-white/10'
+                    : 'cursor-not-allowed text-lane-500'
               }`}
               onClick={() => isReachable && goToStep(number)}
-              disabled={!isReachable || isFuture}
+              disabled={!isReachable}
             >
               {number}. {title}
             </button>
@@ -473,7 +503,7 @@ export default function BowlingApp() {
       <section className="panel rounded-[2rem] p-5 sm:p-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Schritt {step} von 4</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Schritt {step} von {PIPELINE_STEPS.length}</p>
             <h2 className="mt-1.5 text-xl font-semibold text-lane-800 sm:text-2xl">{PIPELINE_STEPS[step - 1].title}</h2>
           </div>
           {step === 1 && (
@@ -527,33 +557,12 @@ export default function BowlingApp() {
 
         {step === 1 && previewUrl ? (
           <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-2">
-                {CORNER_LABELS.map((label, index) => (
-                  <button
-                    key={label}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                      activeCornerIndex === index ? 'bg-lane-800 text-white' : 'border border-lane-300 bg-white/80 text-lane-700'
-                    }`}
-                    type="button"
-                    onClick={() => setActiveCornerIndex(index)}
-                  >
-                    {index + 1}. {label}
-                  </button>
-                ))}
-              </div>
-              <label className="rounded-full border border-lane-300 bg-white/80 px-3 py-1.5 text-xs font-medium text-lane-700 cursor-pointer transition hover:bg-white">
-                Neues Bild
-                <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
-              </label>
-            </div>
-
             <div
               className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
               onClick={handleCornerPreviewClick}
               onMouseMove={handleCornerPreviewMouseMove}
               onMouseUp={stopCornerDrag}
-              onMouseLeave={stopCornerDrag}
+              onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
@@ -599,6 +608,24 @@ export default function BowlingApp() {
                   {index + 1}
                 </button>
               ))}
+              {magnifierPos && (
+                <div
+                  className="pointer-events-none absolute z-20 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
+                  style={{
+                    left: magnifierPos.px + (magnifierPos.px > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16),
+                    top: magnifierPos.py + (magnifierPos.py > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16),
+                    width: MAGNIFIER_SIZE,
+                    height: MAGNIFIER_SIZE,
+                  }}
+                >
+                  <canvas
+                    ref={magnifierCanvasRef}
+                    width={MAGNIFIER_SIZE}
+                    height={MAGNIFIER_SIZE}
+                    className="block bg-black"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -632,6 +659,10 @@ export default function BowlingApp() {
                 disabled={!manualCorners.length}
               >
                 Letzten Punkt entfernen
+              </button>
+              <button className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
+                Neues Bild
+                <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
               </button>
             </div>
           </div>
@@ -707,7 +738,7 @@ export default function BowlingApp() {
             </div>
 
             {extractionResult ? (
-              <div className="mt-4 overflow-x-auto rounded-[1.3rem] border border-lane-200 bg-white/80 p-4">
+              <div className={`mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80`}>
                 <table className="w-full border-collapse text-xs">
                   <thead>
                     <tr>
@@ -771,6 +802,19 @@ export default function BowlingApp() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            ) : null}
+
+            {extractionResult && extractionResult.players.length > 0 ? (
+              <div className="flex justify-end">
+                <button
+                  className="rounded-full bg-lane-800 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  type="button"
+                  disabled={extractionResult.players.some((p) => !p.name.trim())}
+                  onClick={() => {}}
+                >
+                  Ergebnis speichern
+                </button>
               </div>
             ) : null}
           </div>

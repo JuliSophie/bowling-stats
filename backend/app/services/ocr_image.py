@@ -379,11 +379,16 @@ class ImagePreprocessor:
                             mid_x = (cell_left + cell_right) // 2
                             cv2.line(overlay, (mid_x, cell_top), (mid_x, mid_y), pink, 1, lineType=cv2.LINE_AA)
 
+            num_columns = len(sorted_v) - 1
+            is_incomplete = num_columns < 11
+            line_color = (0, 0, 255) if is_incomplete else (255, 120, 0)
+            line_thickness = 4 if is_incomplete else 2
+
             for y_position, _, _, _, _ in sorted_h:
-                cv2.line(overlay, (left_bound, y_position), (right_bound, y_position), (255, 120, 0), 2, lineType=cv2.LINE_AA)
+                cv2.line(overlay, (left_bound, y_position), (right_bound, y_position), line_color, line_thickness, lineType=cv2.LINE_AA)
 
             for x_position, _, _, _, _ in sorted_v:
-                cv2.line(overlay, (x_position, top_bound), (x_position, bottom_bound), (255, 120, 0), 2, lineType=cv2.LINE_AA)
+                cv2.line(overlay, (x_position, top_bound), (x_position, bottom_bound), line_color, line_thickness, lineType=cv2.LINE_AA)
 
         elif sorted_h:
             for y_position, span_start, span_end, _, _ in sorted_h:
@@ -487,8 +492,8 @@ class ImagePreprocessor:
                 cumulative_crop = ocr_img[mid_y + m:cell_bottom - m, cell_left + m:cell_right - m]
                 cumulative = ImagePreprocessor._ocr_crop(cumulative_crop, allowlist=score_chars, skip_empty_check=True)
 
-                def throw_or_miss(crop: np.ndarray) -> str:
-                    return ImagePreprocessor._ocr_crop(crop, allowlist=throw_chars, skip_empty_check=True) or "-"
+                def ocr_throw(crop: np.ndarray) -> str:
+                    return ImagePreprocessor._ocr_crop(crop, allowlist=throw_chars, skip_empty_check=True)
 
                 if col_idx == last_col_idx:
                     cell_w = cell_right - cell_left
@@ -496,17 +501,22 @@ class ImagePreprocessor:
                     s1 = cell_left + cell_w // 4
                     s2 = cell_left + (cell_w * 2) // 4
                     s3 = cell_left + (cell_w * 3) // 4
+                    raw1 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s0 + m:s1 - m])
+                    raw2 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s1 + m:s2 - m])
+                    raw3 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s2 + m:s3 - m])
                     frames.append(FrameData(
-                        throw1=throw_or_miss(ocr_img[cell_top + m:mid_y - m, s0 + m:s1 - m]),
-                        throw2=throw_or_miss(ocr_img[cell_top + m:mid_y - m, s1 + m:s2 - m]),
-                        throw3=throw_or_miss(ocr_img[cell_top + m:mid_y - m, s2 + m:s3 - m]),
+                        throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
+                        throw2=raw2 or ("" if raw3.strip().upper() == "X" else "-"),
+                        throw3=raw3 or "-",
                         cumulative=cumulative,
                     ).model_dump())
                 else:
                     mid_x = (cell_left + cell_right) // 2
+                    raw1 = ocr_throw(ocr_img[cell_top + m:mid_y - m, cell_left + m:mid_x - m])
+                    raw2 = ocr_throw(ocr_img[cell_top + m:mid_y - m, mid_x + m:cell_right - m])
                     frames.append(FrameData(
-                        throw1=throw_or_miss(ocr_img[cell_top + m:mid_y - m, cell_left + m:mid_x - m]),
-                        throw2=throw_or_miss(ocr_img[cell_top + m:mid_y - m, mid_x + m:cell_right - m]),
+                        throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
+                        throw2=raw2 or "-",
                         cumulative=cumulative,
                     ).model_dump())
 
