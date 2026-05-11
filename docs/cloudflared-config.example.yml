@@ -1,0 +1,21 @@
+# Example Cloudflared `config.yml` for a tunnel-backed API subdomain.
+# Replace TUNNEL_UUID and credential file path with values from `cloudflared tunnel create`.
+
+tunnel: TUNNEL_UUID
+credentials-file: /home/youruser/.cloudflared/TUNNEL_UUID.json
+
+ingress:
+  # API subdomain -> backend (FastAPI)
+  - hostname: api.bowling.sophiealexandra.de
+    service: http://127.0.0.1:8000
+
+  # Main frontend site -> Next.js (if hosted on same server)
+  - hostname: bowling.sophiealexandra.de
+    service: http://127.0.0.1:3000
+
+  # Default rule
+  - service: http_status:404
+
+# Notes:
+# - Use `cloudflared tunnel route dns <NAME> api.bowling.sophiealexandra.de` to create DNS mapping.
+# - Run the tunnel with `cloudflared tunnel run <NAME>` or install as a system service.
