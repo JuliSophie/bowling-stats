@@ -243,7 +243,6 @@ export default function BowlingApp() {
   const cornerImageRef = useRef<HTMLImageElement | null>(null);
   const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
-  const [chartInteracting, setChartInteracting] = useState(false);
   const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
   const edgeBaseImageRef = useRef<HTMLImageElement | null>(null);
@@ -1161,19 +1160,14 @@ export default function BowlingApp() {
                       </span>
                     </div>
                   </div>
-                  <div
-                    onPointerDown={() => setChartInteracting(true)}
-                    onPointerUp={() => setChartInteracting(false)}
-                    onPointerCancel={() => setChartInteracting(false)}
-                    style={{ touchAction: 'none' }}
-                  >
+                  <div style={{ touchAction: 'none' }}>
                     <ResponsiveContainer width="100%" height={320}>
                       <LineChart data={buildCumulativeChartData(savedGame.scores)} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-                      <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
-                      <YAxis tick={{ fontSize: 12 }} />
-                      <Tooltip />
-                      <Legend />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                        <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} />
+                        <Tooltip />
+                        <Legend />
                         {savedGame.scores.map((score, i) => (
                           <Line
                             key={score.player_name}
@@ -1181,8 +1175,7 @@ export default function BowlingApp() {
                             dataKey={score.player_name}
                             stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]}
                             strokeWidth={2}
-                            strokeOpacity={chartInteracting ? 0 : 1}
-                            dot={chartInteracting ? <FrameDot /> : false}
+                            dot={<FrameDot />}
                             activeDot={{ r: 6 }}
                           />
                         ))}

@@ -494,12 +494,11 @@ function ScoreTable({ game }: { game: GameRead }) {
 }
 
 function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?: string }) {
-  const [chartInteractingLocal, setChartInteractingLocal] = useState(false);
   return (
     <div className="grid gap-4">
       <div>
         <div className="mb-2 flex justify-end">{PIN_LEGEND}</div>
-        <div onPointerDown={() => setChartInteractingLocal(true)} onPointerUp={() => setChartInteractingLocal(false)} onPointerCancel={() => setChartInteractingLocal(false)} style={{ touchAction: 'none' }}>
+        <div style={{ touchAction: 'none' }}>
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={buildGameChartData(game)} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
@@ -515,8 +514,7 @@ function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?
                 stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]}
                 strokeWidth={!highlightPlayer || score.player_name === highlightPlayer ? 2.5 : 1.5}
                 strokeDasharray={highlightPlayer && score.player_name !== highlightPlayer ? '5 3' : undefined}
-                strokeOpacity={chartInteractingLocal ? 0 : 1}
-                dot={chartInteractingLocal ? <PinDot /> : false}
+                dot={<PinDot />}
                 activeDot={{ r: 6 }}
               />
             ))}
@@ -780,7 +778,6 @@ export default function StatsView() {
   const [renameError, setRenameError] = useState('');
   const [renameNotice, setRenameNotice] = useState('');
   const [isEditingPlayer, setIsEditingPlayer] = useState(false);
-  const [chartInteracting, setChartInteracting] = useState(false);
 
   useEffect(() => {
     fetchGames().then(setGames).finally(() => setLoading(false));
@@ -913,7 +910,7 @@ export default function StatsView() {
         {trendData.length > 1 && (
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
             <h3 className="mb-3 text-sm font-semibold text-lane-800">Punkteentwicklung</h3>
-            <div onPointerDown={() => setChartInteracting(true)} onPointerUp={() => setChartInteracting(false)} onPointerCancel={() => setChartInteracting(false)} style={{ touchAction: 'none' }}>
+            <div style={{ touchAction: 'none' }}>
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={trendData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
@@ -926,7 +923,7 @@ export default function StatsView() {
                   }}
                   formatter={(value: number) => [value, 'Punkte']}
                 />
-                <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} strokeOpacity={chartInteracting ? 0 : 1} dot={chartInteracting ? { r: 6 } : false} name={selectedPlayer} />
+                <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name={selectedPlayer} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
