@@ -386,6 +386,17 @@ export default function BowlingApp() {
     };
   }
 
+  function getNormalizedPointFromPointer(event: React.PointerEvent, imageElement: HTMLImageElement | null): ManualCorner | null {
+    if (!imageElement) return null;
+    const bounds = imageElement.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    return {
+      x: Math.min(1, Math.max(0, x)),
+      y: Math.min(1, Math.max(0, y)),
+    };
+  }
+
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) {
@@ -496,6 +507,49 @@ export default function BowlingApp() {
 
   function handleCornerPreviewTouchEnd(event: React.TouchEvent<HTMLDivElement>) {
     event.preventDefault();
+    stopCornerDrag();
+  }
+
+  function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    // behave like mouse move but for pointer
+    const img = cornerImageRef.current;
+    if (!img) return;
+
+    const bounds = img.getBoundingClientRect();
+    const px = event.clientX - bounds.left;
+    const py = event.clientY - bounds.top;
+    const nx = Math.min(1, Math.max(0, px / bounds.width));
+    const ny = Math.min(1, Math.max(0, py / bounds.height));
+
+    setMagnifierPos({ nx, ny, px, py });
+
+    if (draggingCornerIndex !== null) {
+      setManualCorners((current) => current.map((corner, index) => (index === draggingCornerIndex ? { x: nx, y: ny } : corner)));
+    }
+  }
+
+  function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    stopCornerDrag();
+  }
+
+  function handleButtonPointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      (event.target as Element).setPointerCapture?.(event.pointerId);
+    } catch (e) {
+      // ignore
+    }
+    setDraggingCornerIndex(index);
+    setActiveCornerIndex(index);
+  }
+
+  function handleButtonPointerUp(event: React.PointerEvent<HTMLButtonElement>) {
+    try {
+      (event.target as Element).releasePointerCapture?.(event.pointerId);
+    } catch (e) {
+      // ignore
+    }
     stopCornerDrag();
   }
 
@@ -742,15 +796,17 @@ export default function BowlingApp() {
 
         {step === 1 && previewUrl ? (
           <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
-            <div
+              <div
                   className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
                   onClick={handleCornerPreviewClick}
                   onMouseMove={handleCornerPreviewMouseMove}
+                onPointerMove={handlePointerMove}
                   onMouseUp={stopCornerDrag}
-                  onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
-                  onTouchStart={handleCornerPreviewTouchStart}
-                  onTouchMove={handleCornerPreviewTouchMove}
-                  onTouchEnd={handleCornerPreviewTouchEnd}
+                onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
+                onTouchStart={handleCornerPreviewTouchStart}
+                onTouchMove={handleCornerPreviewTouchMove}
+                onTouchEnd={handleCornerPreviewTouchEnd}
+                onPointerUp={handlePointerUp}
                   onContextMenu={(e) => e.preventDefault()}
                   role="button"
                   tabIndex={0}
@@ -790,17 +846,8 @@ export default function BowlingApp() {
                     setDraggingCornerIndex(index);
                     setActiveCornerIndex(index);
                   }}
-                  onTouchStart={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setDraggingCornerIndex(index);
-                    setActiveCornerIndex(index);
-                  }}
-                  onTouchEnd={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    stopCornerDrag();
-                  }}
+                  onPointerDown={(event) => handleButtonPointerDown(event, index)}
+                  onPointerUp={(event) => handleButtonPointerUp(event)}
                   onClick={(event) => {
                     event.stopPropagation();
                     setActiveCornerIndex(index);
