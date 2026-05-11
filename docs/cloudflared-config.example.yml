@@ -6,7 +6,7 @@ credentials-file: /home/youruser/.cloudflared/TUNNEL_UUID.json
 
 ingress:
   # API subdomain -> backend (FastAPI)
-  - hostname: api.bowling.sophiealexandra.de
+  - hostname: bowling-api.sophiealexandra.de
     service: http://127.0.0.1:8000
 
   # Main frontend site -> Next.js (if hosted on same server)

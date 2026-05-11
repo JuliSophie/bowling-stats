@@ -3,7 +3,7 @@
 
 server {
     listen 80;
-    server_name api.bowling.sophiealexandra.de;
+    server_name bowling-api.sophiealexandra.de;
 
     # Redirect HTTP to HTTPS
     return 301 https://$host$request_uri;
@@ -11,11 +11,11 @@ server {
 
 server {
     listen 443 ssl;
-    server_name api.bowling.sophiealexandra.de;
+    server_name bowling-api.sophiealexandra.de;
 
     # SSL certificate directives (use Let's Encrypt or Cloudflare Origin certificate)
-    ssl_certificate /etc/letsencrypt/live/api.bowling.sophiealexandra.de/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/api.bowling.sophiealexandra.de/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/bowling-api.sophiealexandra.de/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bowling-api.sophiealexandra.de/privkey.pem;
 
     client_max_body_size 50M; # adjust to your needs for uploads
 
