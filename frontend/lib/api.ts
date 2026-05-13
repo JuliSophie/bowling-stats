@@ -88,10 +88,13 @@ export async function guessScorecardCorners(file: File): Promise<CornerGuessResu
 }
 
 
-export async function rectifyScorecard(file: File, corners: ManualCorner[]): Promise<RectifiedPreview> {
+export async function rectifyScorecard(file: File, corners: ManualCorner[], bwThreshold?: number): Promise<RectifiedPreview> {
   const formData = new FormData();
   formData.append('file', file);
   appendJsonField(formData, 'corners', corners);
+  if (bwThreshold !== undefined) {
+    formData.append('bw_threshold', String(bwThreshold));
+  }
 
   return requestJson<RectifiedPreview>(`${API_BASE}/upload/rectify`, {
     method: 'POST',

@@ -153,276 +153,16 @@ class ImagePreprocessor:
         return cv2.resize(image, ImagePreprocessor.PROCESSED_SIZE, interpolation=cv2.INTER_CUBIC)
 
     @staticmethod
-    def _estimate_skew_angle(image: np.ndarray) -> float | None:
-        foreground = cv2.bitwise_not(image)
-        coordinates = np.column_stack(np.where(foreground > 0))
-        if len(coordinates) < 10:
-            return None
-
-        angle = cv2.minAreaRect(coordinates)[-1]
-        if angle < -45:
-            angle = -(90 + angle)
-        else:
-            angle = -angle
-
-        if abs(angle) < 0.25 or abs(angle) > 7.5:
-            return None
-        return float(angle)
-
-    @staticmethod
-    def _rotate_image(image: np.ndarray, angle: float, border_value: int = 255) -> np.ndarray:
-        fill_value: int | tuple[int, int, int]
-        if image.ndim == 3:
-            fill_value = (border_value, border_value, border_value)
-        else:
-            fill_value = border_value
-
-        height, width = image.shape[:2]
-        center = (width // 2, height // 2)
-        rotation = cv2.getRotationMatrix2D(center, angle, 1.0)
-        return cv2.warpAffine(
-            image,
-            rotation,
-            (width, height),
-            flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=fill_value,
-        )
-
-    @staticmethod
-    def _deskew_image(image: np.ndarray, border_value: int = 255) -> np.ndarray:
-        angle = ImagePreprocessor._estimate_skew_angle(image)
-        if angle is None:
-            return image
-        return ImagePreprocessor._rotate_image(image, angle, border_value=border_value)
-
-    @staticmethod
     def _build_bw_image(corrected: np.ndarray) -> np.ndarray:
         grayscale = cv2.cvtColor(corrected, cv2.COLOR_BGR2GRAY)
         grayscale = cv2.normalize(grayscale, None, 0, 255, cv2.NORM_MINMAX)
-        grayscale = ImagePreprocessor._deskew_image(grayscale, border_value=255)
         if float(np.mean(grayscale)) < 127:
             grayscale = cv2.bitwise_not(grayscale)
         return grayscale
 
-    @staticmethod
-    def _cluster_line_segments(
-        segments: list[tuple[int, int, int, float]],
-        tolerance: int,
-        min_total_length: float,
-        min_count: int = 1,
-    ) -> list[tuple[int, int, int, float, int]]:
-        if not segments:
-            return []
-
-        sorted_segments = sorted(segments, key=lambda item: item[0])
-        clusters: list[dict[str, float | int]] = []
-
-        for position, span_start, span_end, length in sorted_segments:
-            if not clusters or abs(position - int(clusters[-1]["position"])) > tolerance:
-                clusters.append(
-                    {
-                        "position": float(position),
-                        "weight": float(length),
-                        "span_start": int(span_start),
-                        "span_end": int(span_end),
-                        "count": 1,
-                    }
-                )
-                continue
-
-            cluster = clusters[-1]
-            weight = float(cluster["weight"])
-            cluster["position"] = ((float(cluster["position"]) * weight) + (position * length)) / (weight + length)
-            cluster["weight"] = weight + length
-            cluster["span_start"] = min(int(cluster["span_start"]), span_start)
-            cluster["span_end"] = max(int(cluster["span_end"]), span_end)
-            cluster["count"] = int(cluster["count"]) + 1
-
-        canonical_lines: list[tuple[int, int, int, float, int]] = []
-        for cluster in clusters:
-            if float(cluster["weight"]) < min_total_length:
-                continue
-            if int(cluster["count"]) < min_count:
-                continue
-            canonical_lines.append(
-                (
-                    int(round(float(cluster["position"]))),
-                    int(cluster["span_start"]),
-                    int(cluster["span_end"]),
-                    float(cluster["weight"]),
-                    int(cluster["count"]),
-                )
-            )
-
-        return canonical_lines
-
-    @staticmethod
-    def _prune_line_clusters(
-        lines: list[tuple[int, int, int, float, int]],
-        min_gap: int,
-    ) -> list[tuple[int, int, int, float, int]]:
-        if not lines:
-            return []
-
-        pruned: list[tuple[int, int, int, float, int]] = []
-        for line in sorted(lines, key=lambda item: item[0]):
-            if not pruned or abs(line[0] - pruned[-1][0]) > min_gap:
-                pruned.append(line)
-                continue
-
-            previous = pruned[-1]
-            previous_span = previous[2] - previous[1]
-            current_span = line[2] - line[1]
-            previous_score = previous[3] + (previous_span * 0.5) + (previous[4] * 8)
-            current_score = line[3] + (current_span * 0.5) + (line[4] * 8)
-            if current_score > previous_score:
-                pruned[-1] = line
-
-        return pruned
-
-    @staticmethod
-    def _detect_table_lines(
-        bw_image: np.ndarray,
-    ) -> tuple[list[tuple[int, int, int, float, int]], list[tuple[int, int, int, float, int]]]:
-        height, width = bw_image.shape[:2]
-        enhanced = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8)).apply(bw_image)
-        blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
-        edges = cv2.Canny(blurred, 55, 155)
-        edges = cv2.dilate(edges, np.ones((2, 2), dtype=np.uint8), iterations=1)
-
-        horizontal_segments: list[tuple[int, int, int, float]] = []
-        vertical_segments: list[tuple[int, int, int, float]] = []
-
-        lines = cv2.HoughLinesP(
-            edges,
-            1,
-            np.pi / 180,
-            threshold=max(40, width // 28),
-            minLineLength=max(50, width // 14),
-            maxLineGap=max(5, width // 220),
-        )
-
-        if lines is not None:
-            for line in lines[:, 0]:
-                x1, y1, x2, y2 = (int(value) for value in line)
-                delta_x = x2 - x1
-                delta_y = y2 - y1
-                length = float(np.hypot(delta_x, delta_y))
-                if length < max(50, width * 0.06):
-                    continue
-
-                angle = abs(np.degrees(np.arctan2(delta_y, delta_x)))
-                is_horizontal = angle <= 6 or angle >= 174
-                is_vertical = 84 <= angle <= 96
-                if not (is_horizontal or is_vertical):
-                    continue
-
-                if is_horizontal and length < width * 0.08:
-                    continue
-                if is_vertical and length < height * 0.08:
-                    continue
-
-                if is_horizontal:
-                    horizontal_segments.append((int(round((y1 + y2) / 2)), min(x1, x2), max(x1, x2), length))
-                if is_vertical:
-                    vertical_segments.append((int(round((x1 + x2) / 2)), min(y1, y2), max(y1, y2), length))
-
-        horizontal_lines = ImagePreprocessor._prune_line_clusters(
-            ImagePreprocessor._cluster_line_segments(
-                horizontal_segments,
-                tolerance=max(8, height // 90),
-                min_total_length=width * 0.18,
-                min_count=1,
-            ),
-            min_gap=max(12, height // 60),
-        )
-        vertical_lines = ImagePreprocessor._prune_line_clusters(
-            ImagePreprocessor._cluster_line_segments(
-                vertical_segments,
-                tolerance=max(8, width // 110),
-                min_total_length=height * 0.16,
-                min_count=1,
-            ),
-            min_gap=max(16, width // 75),
-        )
-
-        if horizontal_lines:
-            avg_h_span = sum(line[2] - line[1] for line in horizontal_lines) / len(horizontal_lines)
-            horizontal_lines = [line for line in horizontal_lines if (line[2] - line[1]) >= avg_h_span]
-
-        if vertical_lines:
-            avg_v_span = sum(line[2] - line[1] for line in vertical_lines) / len(vertical_lines)
-            vertical_lines = [line for line in vertical_lines if (line[2] - line[1]) >= avg_v_span]
-
-        sorted_h = sorted(horizontal_lines, key=lambda l: l[0])[:10]
-        sorted_v = sorted(vertical_lines, key=lambda l: l[0])
-        return sorted_h, sorted_v
-
-    @staticmethod
-    def build_edge_debug_image(bw_image: np.ndarray) -> np.ndarray:
-        sorted_h, sorted_v = ImagePreprocessor._detect_table_lines(bw_image)
-        overlay = cv2.cvtColor(bw_image, cv2.COLOR_GRAY2BGR)
-
-        if sorted_h and sorted_v:
-            left_bound = sorted_v[0][0]
-            right_bound = sorted_v[-1][0]
-            top_bound = sorted_h[0][0]
-            bottom_bound = sorted_h[-1][0]
-
-            if len(sorted_h) >= 2 and len(sorted_v) >= 2:
-                header_top = sorted_h[0][0]
-                header_bottom = sorted_h[1][0]
-                name_left = sorted_v[0][0]
-                name_right = sorted_v[1][0]
-
-                region = overlay[header_top:header_bottom, left_bound:right_bound].copy()
-                cv2.rectangle(region, (0, 0), (region.shape[1], region.shape[0]), (255, 180, 50), -1)
-                cv2.addWeighted(region, 0.25, overlay[header_top:header_bottom, left_bound:right_bound], 0.75, 0, overlay[header_top:header_bottom, left_bound:right_bound])
-
-                region = overlay[header_bottom:bottom_bound, name_left:name_right].copy()
-                cv2.rectangle(region, (0, 0), (region.shape[1], region.shape[0]), (50, 180, 255), -1)
-                cv2.addWeighted(region, 0.25, overlay[header_bottom:bottom_bound, name_left:name_right], 0.75, 0, overlay[header_bottom:bottom_bound, name_left:name_right])
-
-                pink = (180, 105, 255)
-                last_col_idx = len(sorted_v) - 2
-                for row_idx in range(1, len(sorted_h) - 1):
-                    cell_top = sorted_h[row_idx][0]
-                    cell_bottom = sorted_h[row_idx + 1][0]
-                    mid_y = (cell_top + cell_bottom) // 2
-                    for col_idx in range(1, len(sorted_v) - 1):
-                        cell_left = sorted_v[col_idx][0]
-                        cell_right = sorted_v[col_idx + 1][0]
-                        cv2.line(overlay, (cell_left, mid_y), (cell_right, mid_y), pink, 1, lineType=cv2.LINE_AA)
-                        if col_idx == last_col_idx:
-                            cell_w = cell_right - cell_left
-                            for i in range(1, 4):
-                                split_x = cell_left + (cell_w * i) // 4
-                                cv2.line(overlay, (split_x, cell_top), (split_x, mid_y), pink, 1, lineType=cv2.LINE_AA)
-                        else:
-                            mid_x = (cell_left + cell_right) // 2
-                            cv2.line(overlay, (mid_x, cell_top), (mid_x, mid_y), pink, 1, lineType=cv2.LINE_AA)
-
-            num_columns = len(sorted_v) - 1
-            is_incomplete = num_columns < 11
-            line_color = (0, 0, 255) if is_incomplete else (255, 120, 0)
-            line_thickness = 4 if is_incomplete else 2
-
-            for y_position, _, _, _, _ in sorted_h:
-                cv2.line(overlay, (left_bound, y_position), (right_bound, y_position), line_color, line_thickness, lineType=cv2.LINE_AA)
-
-            for x_position, _, _, _, _ in sorted_v:
-                cv2.line(overlay, (x_position, top_bound), (x_position, bottom_bound), line_color, line_thickness, lineType=cv2.LINE_AA)
-
-        elif sorted_h:
-            for y_position, span_start, span_end, _, _ in sorted_h:
-                cv2.line(overlay, (span_start, y_position), (span_end, y_position), (255, 120, 0), 2, lineType=cv2.LINE_AA)
-
-        elif sorted_v:
-            for x_position, span_start, span_end, _, _ in sorted_v:
-                cv2.line(overlay, (x_position, span_start), (x_position, span_end), (255, 120, 0), 2, lineType=cv2.LINE_AA)
-
-        return overlay
+    # ------------------------------------------------------------------
+    # OCR helpers (unchanged, will be rewired once detection is rebuilt)
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _has_content(image: np.ndarray, threshold: float = 0.03) -> bool:
@@ -477,9 +217,14 @@ class ImagePreprocessor:
     def extract_table_data(bw_image: np.ndarray, bw_threshold: int | None = None) -> tuple[list[dict], int]:
         from app.schemas import FrameData, PlayerData
 
-        sorted_h, sorted_v = ImagePreprocessor._detect_table_lines(bw_image)
-        num_columns = max(0, len(sorted_v) - 1)
-        if len(sorted_h) < 3 or len(sorted_v) < 3:
+        from app.services.line_detection import build_table_layout, detect_lines, rectify_table_image
+
+        bw_image, _ = rectify_table_image(bw_image)
+
+        raw_h, raw_v = detect_lines(bw_image)
+        y_grid, x_grid, row_splits = build_table_layout(raw_h, raw_v)
+        num_columns = max(0, len(x_grid) - 2)
+        if len(y_grid) < 3 or len(x_grid) < 3:
             return [], num_columns
 
         if bw_threshold is not None:
@@ -491,16 +236,30 @@ class ImagePreprocessor:
         score_chars = "0123456789"
         m = 6
 
-        last_col_idx = len(sorted_v) - 2
+        image_h, image_w = ocr_img.shape[:2]
+
+        def crop_rect(top: int, bottom: int, left: int, right: int, margin: int = 0) -> np.ndarray:
+            cropped_top = max(0, min(image_h, top + margin))
+            cropped_bottom = max(0, min(image_h, bottom - margin))
+            cropped_left = max(0, min(image_w, left + margin))
+            cropped_right = max(0, min(image_w, right - margin))
+            if cropped_bottom <= cropped_top or cropped_right <= cropped_left:
+                return ocr_img[0:0, 0:0]
+            return ocr_img[cropped_top:cropped_bottom, cropped_left:cropped_right]
+
         players: list[dict] = []
+        frame_count = len(x_grid) - 2
 
-        for row_idx in range(1, len(sorted_h) - 1):
-            cell_top = sorted_h[row_idx][0]
-            cell_bottom = sorted_h[row_idx + 1][0]
+        for row_idx in range(1, len(y_grid) - 1):
+            cell_top = y_grid[row_idx]
+            cell_bottom = y_grid[row_idx + 1]
+            split_y = row_splits[row_idx] if row_idx < len(row_splits) else None
+            if split_y is None or split_y <= cell_top + 6 or split_y >= cell_bottom - 6:
+                split_y = (cell_top + cell_bottom) // 2
 
-            if not ImagePreprocessor._has_content(ocr_img[cell_top + 5:cell_bottom - 5, sorted_v[0][0] + 5:sorted_v[1][0] - 5]):
+            if not ImagePreprocessor._has_content(crop_rect(cell_top, cell_bottom, x_grid[0], x_grid[1], 5)):
                 continue
-            name_crop = ocr_img[cell_top + m:cell_bottom - m, sorted_v[0][0] + m:sorted_v[1][0] - m]
+            name_crop = crop_rect(cell_top, cell_bottom, x_grid[0], x_grid[1], m)
             name = ImagePreprocessor._ocr_crop(name_crop)
 
             player_index = len(players) + 1
@@ -508,36 +267,41 @@ class ImagePreprocessor:
                 name = ""
 
             frames: list[dict] = []
-            for col_idx in range(1, len(sorted_v) - 1):
-                cell_left = sorted_v[col_idx][0]
-                cell_right = sorted_v[col_idx + 1][0]
-                mid_y = (cell_top + cell_bottom) // 2
+            for frame_idx in range(frame_count):
+                cell_left = x_grid[frame_idx + 1]
+                cell_right = x_grid[frame_idx + 2]
 
-                cumulative_crop = ocr_img[mid_y + m:cell_bottom - m, cell_left + m:cell_right - m]
+                cumulative_crop = crop_rect(split_y, cell_bottom, cell_left, cell_right, m)
                 cumulative = ImagePreprocessor._ocr_crop(cumulative_crop, allowlist=score_chars, skip_empty_check=True)
 
                 def ocr_throw(crop: np.ndarray) -> str:
                     return ImagePreprocessor._ocr_crop(crop, allowlist=throw_chars, skip_empty_check=True)
 
-                if col_idx == last_col_idx:
-                    cell_w = cell_right - cell_left
-                    s0 = cell_left
-                    s1 = cell_left + cell_w // 4
-                    s2 = cell_left + (cell_w * 2) // 4
-                    s3 = cell_left + (cell_w * 3) // 4
-                    raw1 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s0 + m:s1 - m])
-                    raw2 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s1 + m:s2 - m])
-                    raw3 = ocr_throw(ocr_img[cell_top + m:mid_y - m, s2 + m:s3 - m])
+                segment_count = 4 if frame_idx == frame_count - 1 else 2
+                upper_bounds = [
+                    int(round(cell_left + ((cell_right - cell_left) * idx) / segment_count))
+                    for idx in range(segment_count + 1)
+                ]
+                upper_values = [
+                    ocr_throw(crop_rect(cell_top, split_y, upper_bounds[idx], upper_bounds[idx + 1], m))
+                    for idx in range(segment_count)
+                ]
+
+                if frame_idx == frame_count - 1:
+                    raw1 = upper_values[0] if len(upper_values) > 0 else ""
+                    raw2 = upper_values[1] if len(upper_values) > 1 else ""
+                    raw3 = upper_values[2] if len(upper_values) > 2 and upper_values[2].strip() else ""
+                    raw4 = upper_values[3] if len(upper_values) > 3 else ""
+                    throw3 = raw3 or raw4 or "-"
                     frames.append(FrameData(
                         throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
-                        throw2=raw2 or ("" if raw3.strip().upper() == "X" else "-"),
-                        throw3=raw3 or "-",
+                        throw2=raw2 or ("" if throw3.strip().upper() == "X" else "-"),
+                        throw3=throw3,
                         cumulative=cumulative,
                     ).model_dump())
                 else:
-                    mid_x = (cell_left + cell_right) // 2
-                    raw1 = ocr_throw(ocr_img[cell_top + m:mid_y - m, cell_left + m:mid_x - m])
-                    raw2 = ocr_throw(ocr_img[cell_top + m:mid_y - m, mid_x + m:cell_right - m])
+                    raw1 = upper_values[0] if len(upper_values) > 0 else ""
+                    raw2 = upper_values[1] if len(upper_values) > 1 else ""
                     frames.append(FrameData(
                         throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
                         throw2=raw2 or "-",

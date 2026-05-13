@@ -18,6 +18,8 @@ class RectifiedPreview(BaseModel):
     filename: str
     bw_image_data_url: str | None = None
     edge_debug_image_data_url: str | None = None
+    morph_horizontal_data_url: str | None = None
+    morph_vertical_data_url: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 

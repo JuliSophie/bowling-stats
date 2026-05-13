@@ -1,4 +1,5 @@
 from app.schemas import CornerGuessResult, ExtractionResult, ManualCorner, PlayerData, RectifiedPreview
+from app.services.line_detection import build_debug_stage_images
 from app.services.ocr_image import ImagePreprocessor
 
 
@@ -18,21 +19,19 @@ def build_rectified_preview(
     file_bytes: bytes,
     filename: str,
     manual_corners: list[ManualCorner],
+    bw_threshold: int | None = None,
 ) -> RectifiedPreview:
     bw_image = ImagePreprocessor.prepare_image(file_bytes, manual_corners)
-    sorted_h, sorted_v = ImagePreprocessor._detect_table_lines(bw_image)
-    num_columns = max(0, len(sorted_v) - 1)
-    num_rows = max(0, len(sorted_h) - 1)
-    warnings: list[str] = []
-    if num_columns < 11:
-        warnings.append(f"Nur {num_columns} von 11 Spalten erkannt. Bitte prüfe die Monitor-Ecken.")
-    if num_rows < 2:
-        warnings.append(f"Nur {num_rows} Zeilen erkannt. Bitte prüfe die Monitor-Ecken.")
+    rectified_bw, morph_horizontal, morph_vertical, edge_debug = build_debug_stage_images(
+        bw_image,
+        bw_threshold=bw_threshold,
+    )
     return RectifiedPreview(
         filename=filename,
-        bw_image_data_url=ImagePreprocessor.encode_image_data_url(bw_image),
-        edge_debug_image_data_url=ImagePreprocessor.encode_image_data_url(ImagePreprocessor.build_edge_debug_image(bw_image)),
-        warnings=warnings,
+        bw_image_data_url=ImagePreprocessor.encode_image_data_url(rectified_bw),
+        edge_debug_image_data_url=ImagePreprocessor.encode_image_data_url(edge_debug),
+        morph_horizontal_data_url=ImagePreprocessor.encode_image_data_url(morph_horizontal),
+        morph_vertical_data_url=ImagePreprocessor.encode_image_data_url(morph_vertical),
     )
 
 
@@ -48,6 +47,4 @@ def extract_scorecard(
     warnings: list[str] = []
     if not players:
         warnings.append("Keine Spieler erkannt. Bitte prüfe die Monitor-Ecken und versuche es erneut.")
-    if num_columns < 11:
-        warnings.append(f"Nur {num_columns} von 11 Spalten erkannt. Möglicherweise fehlen Frames — bitte prüfe die Ecken und den Schwellenwert.")
     return ExtractionResult(filename=filename, players=players, warnings=warnings)

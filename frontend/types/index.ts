@@ -31,6 +31,8 @@ export type RectifiedPreview = {
   filename: string;
   bw_image_data_url?: string | null;
   edge_debug_image_data_url?: string | null;
+  morph_horizontal_data_url?: string | null;
+  morph_vertical_data_url?: string | null;
   warnings: string[];
 };
 

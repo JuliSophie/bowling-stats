@@ -61,6 +61,7 @@ async def upload_scorecard_corners(file: UploadFile = File(...)) -> CornerGuessR
 async def upload_scorecard_rectified(
     file: UploadFile = File(...),
     corners: str | None = Form(default=None),
+    bw_threshold: int | None = Form(default=None),
 ) -> RectifiedPreview:
     file_bytes = await file.read()
     _validate_file(file, file_bytes)
@@ -72,6 +73,7 @@ async def upload_scorecard_rectified(
             file_bytes=file_bytes,
             filename=file.filename or "upload",
             manual_corners=manual_corners or [],
+            bw_threshold=bw_threshold,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

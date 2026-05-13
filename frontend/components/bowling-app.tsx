@@ -14,11 +14,13 @@ const PIPELINE_STEPS = [
   { title: 'Ergebnis prüfen' },
 ];
 
-type TableSubView = 'bw' | 'lines';
+type TableSubView = 'bw' | 'lines' | 'morph-horizontal' | 'morph-vertical';
 
 const TABLE_SUB_VIEWS: { key: TableSubView; label: string }[] = [
-  { key: 'bw', label: 'Schwarz/Weiß' },
   { key: 'lines', label: 'Linien' },
+  { key: 'morph-horizontal', label: 'Morph H' },
+  { key: 'morph-vertical', label: 'Morph V' },
+  { key: 'bw', label: 'S/W' },
 ];
 
 const MAGNIFIER_SIZE = 140;
@@ -226,7 +228,7 @@ export default function BowlingApp() {
   const [draggingCornerIndex, setDraggingCornerIndex] = useState<number | null>(null);
   const [rectifiedPreview, setRectifiedPreview] = useState<RectifiedPreview | null>(null);
   const [step, setStep] = useState(1);
-  const [tableSubView, setTableSubView] = useState<TableSubView>('lines');
+  const [tableSubView, setTableSubView] = useState<TableSubView>('bw');
   const [cornerWarnings, setCornerWarnings] = useState<string[]>([]);
   const [guessingCorners, setGuessingCorners] = useState(false);
   const [rectifying, setRectifying] = useState(false);
@@ -234,6 +236,7 @@ export default function BowlingApp() {
   const [errorMessage, setErrorMessage] = useState('');
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [detectingLines, setDetectingLines] = useState(false);
   const [bwThreshold, setBwThreshold] = useState(75);
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [saveDate, setSaveDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -245,10 +248,18 @@ export default function BowlingApp() {
   const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
   const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
-  const edgeBaseImageRef = useRef<HTMLImageElement | null>(null);
 
   const bwThresholdRef = useRef(bwThreshold);
   bwThresholdRef.current = bwThreshold;
+
+  const tablePreviewSources: Partial<Record<TableSubView, string | null | undefined>> = {
+    bw: rectifiedPreview?.bw_image_data_url,
+    lines: rectifiedPreview?.edge_debug_image_data_url,
+    'morph-horizontal': rectifiedPreview?.morph_horizontal_data_url,
+    'morph-vertical': rectifiedPreview?.morph_vertical_data_url,
+  };
+
+  const availableTableSubViews = TABLE_SUB_VIEWS.filter(({ key }) => key === 'bw' || !!tablePreviewSources[key]);
 
   const applyThresholdToCanvas = useCallback(() => {
     const canvas = bwCanvasRef.current;
@@ -269,29 +280,6 @@ export default function BowlingApp() {
       pixels[i + 2] = val;
     }
 
-    const edgeImg = edgeBaseImageRef.current;
-    if (edgeImg) {
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
-      const tempCtx = tempCanvas.getContext('2d');
-      if (tempCtx) {
-        tempCtx.drawImage(edgeImg, 0, 0, canvas.width, canvas.height);
-        const edgeData = tempCtx.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < edgeData.data.length; i += 4) {
-          const r = edgeData.data[i];
-          const g = edgeData.data[i + 1];
-          const b = edgeData.data[i + 2];
-          const maxDiff = Math.max(Math.abs(r - g), Math.abs(g - b), Math.abs(r - b));
-          if (maxDiff > 30) {
-            pixels[i] = r;
-            pixels[i + 1] = g;
-            pixels[i + 2] = b;
-          }
-        }
-      }
-    }
-
     ctx.putImageData(imageData, 0, 0);
   }, []);
 
@@ -306,19 +294,22 @@ export default function BowlingApp() {
   }, [rectifiedPreview?.bw_image_data_url, applyThresholdToCanvas]);
 
   useEffect(() => {
-    if (!rectifiedPreview?.edge_debug_image_data_url) return;
-    const img = new Image();
-    img.onload = () => {
-      edgeBaseImageRef.current = img;
-      applyThresholdToCanvas();
-    };
-    img.src = rectifiedPreview.edge_debug_image_data_url;
-  }, [rectifiedPreview?.edge_debug_image_data_url, applyThresholdToCanvas]);
+    if (tableSubView !== 'bw') return;
+    const frameId = requestAnimationFrame(() => applyThresholdToCanvas());
+    return () => cancelAnimationFrame(frameId);
+  }, [tableSubView, rectifiedPreview?.bw_image_data_url, applyThresholdToCanvas]);
 
   useEffect(() => {
     const timer = setTimeout(() => applyThresholdToCanvas(), 250);
     return () => clearTimeout(timer);
   }, [bwThreshold, applyThresholdToCanvas]);
+
+  useEffect(() => {
+    if (availableTableSubViews.some(({ key }) => key === tableSubView)) {
+      return;
+    }
+    setTableSubView('bw');
+  }, [availableTableSubViews, tableSubView]);
 
   useEffect(() => {
     return () => {
@@ -595,6 +586,23 @@ export default function BowlingApp() {
     setStep(targetStep);
     setErrorMessage('');
     setStatusMessage('');
+  }
+
+  async function handleDetectLines() {
+    if (!uploadedFile || manualCorners.length !== 4) return;
+
+    setDetectingLines(true);
+    setErrorMessage('');
+
+    try {
+      const preview = await rectifyScorecard(uploadedFile, manualCorners);
+      setRectifiedPreview(preview);
+      setTableSubView(preview.bw_image_data_url ? 'bw' : 'lines');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Linienerkennung fehlgeschlagen.');
+    } finally {
+      setDetectingLines(false);
+    }
   }
 
   async function handleExtract() {
@@ -921,39 +929,53 @@ export default function BowlingApp() {
 
         {step === 2 && rectifiedPreview ? (
           <div className="grid gap-4">
-            <div className="flex items-center gap-2 rounded-full border border-lane-200 bg-white/90 p-1 self-start">
-              {TABLE_SUB_VIEWS.map(({ key, label }) => (
-                <button
-                  key={key}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    tableSubView === key ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'
-                  }`}
-                  type="button"
-                  onClick={() => setTableSubView(key)}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-2 self-start flex-wrap">
+              <div className="flex items-center gap-1 rounded-full border border-lane-200 bg-white/90 p-1">
+                {availableTableSubViews.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                      tableSubView === key ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'
+                    }`}
+                    type="button"
+                    onClick={() => setTableSubView(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {tableSubView === 'bw' && (
-              <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
-                <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">
-                  S/W Schwelle
-                </label>
-                <input
-                  id="bw-threshold"
-                  type="range"
-                  min={10}
-                  max={240}
-                  step={1}
-                  value={bwThreshold}
-                  onChange={(e) => setBwThreshold(Number(e.target.value))}
-                  className="flex-1"
-                />
-                <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
-              </div>
-            )}
+            <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
+              {tableSubView === 'bw' ? (
+                <>
+                  <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">
+                    S/W Schwelle
+                  </label>
+                  <input
+                    id="bw-threshold"
+                    type="range"
+                    min={10}
+                    max={240}
+                    step={1}
+                    value={bwThreshold}
+                    onChange={(e) => setBwThreshold(Number(e.target.value))}
+                    className="flex-1"
+                  />
+                  <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
+                </>
+              ) : (
+                <div className="flex-1 text-xs font-medium text-lane-600">Debug-Ansicht ohne S/W-Schwelle</div>
+              )}
+              <button
+                className="rounded-full bg-lane-800 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={handleDetectLines}
+                disabled={detectingLines}
+              >
+                {detectingLines ? 'Suche...' : 'Linien erkennen'}
+              </button>
+            </div>
 
             <div className="overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white">
               {tableSubView === 'bw' ? (
@@ -963,9 +985,9 @@ export default function BowlingApp() {
                 />
               ) : (
                 <img
-                  alt="Tabelle finden: Linien"
+                  alt="Debug-Ansicht"
                   className="block max-h-[42rem] w-full object-contain"
-                  src={rectifiedPreview?.edge_debug_image_data_url ?? ''}
+                  src={tablePreviewSources[tableSubView] ?? ''}
                 />
               )}
             </div>
