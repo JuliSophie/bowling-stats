@@ -2,51 +2,10 @@ import cv2
 import numpy as np
 
 
-def _cluster_positions(values: list[int], tolerance: int = 6) -> list[int]:
-    if not values:
-        return []
-
-    sorted_values = sorted(values)
-    clusters: list[list[int]] = [[sorted_values[0]]]
-    for value in sorted_values[1:]:
-        if value - clusters[-1][-1] <= tolerance:
-            clusters[-1].append(value)
-        else:
-            clusters.append([value])
-
-    return [int(round(float(np.mean(cluster)))) for cluster in clusters]
-
-
-def _cluster_position_support(
-    positions_with_support: list[tuple[int, int]],
-    tolerance: int = 6,
-) -> list[tuple[int, int]]:
-    if not positions_with_support:
-        return []
-
-    sorted_values = sorted(positions_with_support, key=lambda item: item[0])
-    clusters: list[list[tuple[int, int]]] = [[sorted_values[0]]]
-    for position, support in sorted_values[1:]:
-        if position - clusters[-1][-1][0] <= tolerance:
-            clusters[-1].append((position, support))
-        else:
-            clusters.append([(position, support)])
-
-    aggregated: list[tuple[int, int]] = []
-    for cluster in clusters:
-        total_support = sum(support for _, support in cluster)
-        weighted_position = int(round(sum(position * support for position, support in cluster) / max(total_support, 1)))
-        aggregated.append((weighted_position, total_support))
-    return aggregated
-
-
 def _prepare_foreground_mask(bw_image: np.ndarray) -> np.ndarray:
     blurred = cv2.GaussianBlur(bw_image, (3, 3), 0)
     _, thresholded = cv2.threshold(
-        blurred,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+        blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU,
     )
     return ((255 - thresholded) > 0).astype(np.uint8)
 
@@ -57,548 +16,350 @@ def _build_directional_mask(
     closing_kernel: tuple[int, int],
 ) -> np.ndarray:
     mask = np.zeros_like(foreground)
-    for kernel_w, kernel_h in kernels:
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_w, kernel_h))
+    for kw, kh in kernels:
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, kh))
         opened = cv2.morphologyEx(foreground, cv2.MORPH_OPEN, kernel)
         mask = cv2.bitwise_or(mask, opened)
-
     if closing_kernel[0] > 1 or closing_kernel[1] > 1:
         mask = cv2.morphologyEx(
-            mask,
-            cv2.MORPH_CLOSE,
+            mask, cv2.MORPH_CLOSE,
             cv2.getStructuringElement(cv2.MORPH_RECT, closing_kernel),
         )
     return mask
 
 
-def _build_directional_masks(bw_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    height, width = bw_image.shape[:2]
-    foreground = _prepare_foreground_mask(bw_image)
-    horizontal_mask = _build_directional_mask(
-        foreground,
-        kernels=[
-            (max(25, width // 30), 3),
-            (max(45, width // 18), 3),
-            (max(85, width // 10), 3),
-        ],
-        closing_kernel=(max(9, width // 180), 1),
+def build_directional_masks(bw_image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    h, w = bw_image.shape[:2]
+    fg = _prepare_foreground_mask(bw_image)
+    h_mask = _build_directional_mask(
+        fg,
+        kernels=[(max(25, w // 30), 3), (max(45, w // 18), 3), (max(85, w // 10), 3)],
+        closing_kernel=(max(9, w // 180), 1),
     )
-    vertical_mask = _build_directional_mask(
-        foreground,
-        kernels=[
-            (3, max(25, height // 30)),
-            (3, max(45, height // 18)),
-            (3, max(85, height // 10)),
-        ],
-        closing_kernel=(1, max(9, height // 180)),
+    v_mask = _build_directional_mask(
+        fg,
+        kernels=[(3, max(25, h // 30)), (3, max(45, h // 18)), (3, max(85, h // 10))],
+        closing_kernel=(1, max(9, h // 180)),
     )
-    return horizontal_mask, vertical_mask
+    return h_mask, v_mask
 
 
-def _fit_component_segment(
-    component_mask: np.ndarray,
-    offset_x: int,
-    offset_y: int,
-) -> tuple[int, int, int, int] | None:
-    ys, xs = np.where(component_mask > 0)
-    if len(xs) < 2:
+def _fit_line_to_points(points: np.ndarray) -> tuple[float, float, float, float] | None:
+    if len(points) < 2:
         return None
-
-    points = np.column_stack((xs + offset_x, ys + offset_y)).astype(np.float32)
-    vx, vy, x0, y0 = cv2.fitLine(points, cv2.DIST_L2, 0, 0.01, 0.01)
-    direction = np.array([float(vx[0]), float(vy[0])], dtype=np.float32)
-    norm = float(np.linalg.norm(direction))
-    if norm == 0:
+    pts = points.astype(np.float32)
+    vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
+    d = np.array([float(vx[0]), float(vy[0])], dtype=np.float32)
+    n = float(np.linalg.norm(d))
+    if n == 0:
         return None
-    direction /= norm
-
-    origin = np.array([float(x0[0]), float(y0[0])], dtype=np.float32)
-    projections = (points - origin) @ direction
-    start = origin + direction * float(np.min(projections))
-    end = origin + direction * float(np.max(projections))
-
-    x1, y1 = int(round(float(start[0]))), int(round(float(start[1])))
-    x2, y2 = int(round(float(end[0]))), int(round(float(end[1])))
-    if (x1, y1) == (x2, y2):
-        return None
-    if x1 > x2 or (x1 == x2 and y1 > y2):
-        x1, y1, x2, y2 = x2, y2, x1, y1
-    return x1, y1, x2, y2
+    d /= n
+    o = np.array([float(x0[0]), float(y0[0])], dtype=np.float32)
+    proj = (pts - o) @ d
+    start = o + d * float(np.min(proj))
+    end = o + d * float(np.max(proj))
+    return (float(start[0]), float(start[1]), float(end[0]), float(end[1]))
 
 
-def _extract_horizontal_segments(
-    horizontal_mask: np.ndarray,
-    width: int,
-    height: int,
-) -> list[tuple[int, int, int, int]]:
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(horizontal_mask, connectivity=8)
-    min_width = max(40, width // 14)
-    max_thickness = max(12, height // 30)
+def _extend_h_to_bounds(
+    seg: tuple[float, float, float, float], width: int,
+) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = seg
+    dx = x2 - x1
+    if abs(dx) < 1e-6:
+        mid_y = (y1 + y2) / 2
+        return (0.0, mid_y, float(width), mid_y)
+    slope = (y2 - y1) / dx
+    return (0.0, float(y1 - slope * x1), float(width), float(y1 + slope * (width - x1)))
 
-    horizontal: list[tuple[int, int, int, int]] = []
+
+def _extend_v_to_bounds(
+    seg: tuple[float, float, float, float], height: int,
+) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = seg
+    dy = y2 - y1
+    if abs(dy) < 1e-6:
+        mid_x = (x1 + x2) / 2
+        return (mid_x, 0.0, mid_x, float(height))
+    slope = (x2 - x1) / dy
+    return (float(x1 - slope * y1), 0.0, float(x1 + slope * (height - y1)), float(height))
+
+
+def extract_horizontal_candidates(
+    h_mask: np.ndarray, width: int, height: int,
+) -> list[tuple[float, float, float, float]]:
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(h_mask, connectivity=8)
+    min_w = int(width * 0.8)
+    min_row_span = int(width * 0.5)
+    max_h = max(15, height // 25)
+
+    candidates: list[tuple[float, float, float, float]] = []
     for idx in range(1, count):
-        x, y, component_w, component_h, _ = stats[idx]
-        if component_w < min_width:
-            continue
-        if component_h > max_thickness:
-            continue
-        if component_w / max(component_h, 1) < 8:
+        x, y, cw, ch, _ = stats[idx]
+        if cw < min_w:
             continue
 
-        component_mask = (labels[y:y + component_h, x:x + component_w] == idx).astype(np.uint8)
-        segment = _fit_component_segment(component_mask, x, y)
-        if segment is None:
+        comp = (labels[y : y + ch, x : x + cw] == idx).astype(np.uint8)
+        ys_all, xs_all = np.where(comp > 0)
+        if len(ys_all) < 5:
             continue
 
-        x1, y1, x2, y2 = segment
-        if abs(y2 - y1) > max(8, abs(x2 - x1) // 20):
+        col_thickness = comp.sum(axis=0)
+        active = col_thickness[col_thickness > 0]
+        if len(active) == 0:
             continue
-        horizontal.append(segment)
+        median_thick = float(np.median(active))
+        max_col = max(median_thick * 3, max_h)
 
-    return sorted(horizontal, key=lambda line: (min(line[1], line[3]), min(line[0], line[2])))
+        cleaned = comp.copy()
+        cleaned[:, col_thickness > max_col] = 0
 
+        ys_c, xs_c = np.where(cleaned > 0)
+        if len(ys_c) < 5:
+            continue
 
-def _extract_vertical_segments(
-    vertical_mask: np.ndarray,
-    width: int,
-    height: int,
-) -> list[tuple[int, int, int, int]]:
-    support_by_x = vertical_mask.sum(axis=0)
-    min_support = max(60, int(height * 0.18))
-    candidate_columns = np.where(support_by_x >= min_support)[0].tolist()
-    x_positions = _cluster_positions(candidate_columns, tolerance=max(4, width // 300))
+        row_min = np.full(ch, cw, dtype=np.int32)
+        row_max = np.full(ch, -1, dtype=np.int32)
+        np.minimum.at(row_min, ys_c, xs_c)
+        np.maximum.at(row_max, ys_c, xs_c)
+        row_span = row_max - row_min + 1
+        wide = row_span >= min_row_span
 
-    band_half_width = max(3, width // 220)
-    min_length = max(30, height // 28)
-    max_gap = max(4, height // 220)
-
-    vertical: list[tuple[int, int, int, int]] = []
-    for x in x_positions:
-        left = max(0, x - band_half_width)
-        right = min(width, x + band_half_width + 1)
-        band = vertical_mask[:, left:right]
-        occupied = np.any(band > 0, axis=1)
-
-        start: int | None = None
+        bands: list[list[int]] = []
+        current: list[int] = []
         gap = 0
-        for y, is_occupied in enumerate(occupied.tolist()):
-            if is_occupied:
-                if start is None:
-                    start = y
+        for i in range(ch):
+            if wide[i]:
+                if current and gap > 3:
+                    bands.append(current)
+                    current = []
+                current.append(i)
                 gap = 0
+            elif current:
+                gap += 1
+        if current:
+            bands.append(current)
+
+        for band in bands:
+            lo, hi = min(band), max(band)
+            orig_band = (ys_all >= lo) & (ys_all <= hi)
+            if orig_band.sum() < 5:
                 continue
-
-            if start is None:
+            total_extent = float(np.max(xs_all[orig_band]) - np.min(xs_all[orig_band]))
+            if total_extent < cw * 0.7:
                 continue
-
-            gap += 1
-            if gap <= max_gap:
+            row_mask = (ys_c >= lo) & (ys_c <= hi)
+            if row_mask.sum() < 5:
                 continue
+            seg = _fit_line_to_points(np.column_stack((xs_c[row_mask] + x, ys_c[row_mask] + y)))
+            if seg is None:
+                continue
+            x1, y1, x2, y2 = seg
+            if abs(y2 - y1) > max(20, abs(x2 - x1) // 8):
+                continue
+            candidates.append(_extend_h_to_bounds(seg, width))
 
-            end = y - gap
-            if end - start + 1 >= min_length:
-                vertical.append((x, start, x, end))
-            start = None
-            gap = 0
-
-        if start is not None:
-            end = len(occupied) - 1
-            if end - start + 1 >= min_length:
-                vertical.append((x, start, x, end))
-
-    return sorted(vertical, key=lambda line: (min(line[0], line[2]), min(line[1], line[3])))
+    return sorted(candidates, key=lambda s: (s[1] + s[3]) / 2)
 
 
-def _extract_structural_horizontal_lines(
-    horizontal_mask: np.ndarray,
-    width: int,
-    height: int,
-) -> list[tuple[int, int, int, int]]:
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(horizontal_mask, connectivity=8)
-    min_width = max(200, int(width * 0.55))
-    max_thickness = max(90, height // 12)
+def extract_vertical_candidates(
+    v_mask: np.ndarray, width: int, height: int,
+) -> list[tuple[float, float, float, float]]:
+    support = v_mask.sum(axis=0)
+    min_sup = max(20, int(height * 0.05))
+    cols = np.where(support >= min_sup)[0].tolist()
+    if not cols:
+        return []
 
-    structural: list[tuple[int, int, int, int]] = []
-    for idx in range(1, count):
-        x, y, component_w, component_h, _ = stats[idx]
-        if component_w < min_width:
-            continue
-        if component_h > max_thickness:
-            continue
-        if component_w / max(component_h, 1) < 6:
-            continue
+    tol = max(4, width // 250)
+    clusters: list[list[int]] = [[cols[0]]]
+    for c in cols[1:]:
+        if c - clusters[-1][-1] <= tol:
+            clusters[-1].append(c)
+        else:
+            clusters.append([c])
 
-        component_mask = (labels[y:y + component_h, x:x + component_w] == idx).astype(np.uint8)
-        segment = _fit_component_segment(component_mask, x, y)
-        if segment is None:
-            continue
-
-        x1, y1, x2, y2 = segment
-        if abs(y2 - y1) > max(12, abs(x2 - x1) // 18):
-            continue
-        structural.append(segment)
-
-    return sorted(structural, key=lambda line: (line[1] + line[3]) / 2.0)
-
-
-def _extract_structural_vertical_lines(
-    vertical_mask: np.ndarray,
-    width: int,
-    height: int,
-) -> list[tuple[int, int, int, int]]:
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(vertical_mask, connectivity=8)
-    min_height = max(200, int(height * 0.65))
-    max_width = max(25, width // 40)
-
-    structural: list[tuple[int, int, int, int]] = []
-    for idx in range(1, count):
-        x, y, component_w, component_h, _ = stats[idx]
-        if component_h < min_height:
-            continue
-        if component_w > max_width:
-            continue
-        if component_h / max(component_w, 1) < 8:
+    band_hw = max(4, width // 180)
+    max_row_w = max(10, width // 50)
+    candidates: list[tuple[float, float, float, float]] = []
+    for cluster in clusters:
+        cx = int(round(float(np.mean(cluster))))
+        left = max(0, cx - band_hw)
+        right = min(width, cx + band_hw + 1)
+        band = v_mask[:, left:right]
+        ys, xs = np.where(band > 0)
+        if len(ys) < 8:
             continue
 
-        component_mask = (labels[y:y + component_h, x:x + component_w] == idx).astype(np.uint8)
-        segment = _fit_component_segment(component_mask, x, y)
-        if segment is None:
+        row_thickness = band.sum(axis=1)
+        active_rows = row_thickness[row_thickness > 0]
+        if len(active_rows) == 0:
+            continue
+        median_row = float(np.median(active_rows))
+        if median_row > max_row_w:
+            continue
+        max_row = max(median_row * 3, max_row_w)
+        good_rows = row_thickness <= max_row
+        mask = good_rows[ys]
+        ys, xs = ys[mask], xs[mask]
+        if len(ys) < 8:
             continue
 
-        x1, y1, x2, y2 = segment
-        if abs(x2 - x1) > max(10, abs(y2 - y1) // 18):
+        y_span = float(np.max(ys) - np.min(ys))
+        if y_span < height * 0.7:
             continue
+        filled_rows = len(np.unique(ys))
+        if filled_rows / (y_span + 1) < 0.8:
+            continue
+        seg = _fit_line_to_points(np.column_stack((xs + left, ys)))
+        if seg is None:
+            continue
+        x1, y1, x2, y2 = seg
         if y1 > y2:
-            segment = (x2, y2, x1, y1)
-        structural.append(segment)
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        if abs(x2 - x1) > max(20, abs(y2 - y1) // 8):
+            continue
+        candidates.append(_extend_v_to_bounds((x1, y1, x2, y2), height))
 
-    return sorted(structural, key=lambda line: (line[0] + line[2]) / 2.0)
+    return sorted(candidates, key=lambda s: (s[0] + s[2]) / 2)
 
 
-def _segment_to_line_coefficients(segment: tuple[int, int, int, int]) -> np.ndarray:
-    x1, y1, x2, y2 = (float(value) for value in segment)
+def normalize_segments(
+    segments: list[tuple[float, float, float, float]], width: int, height: int,
+) -> list[tuple[float, float, float, float]]:
+    return [(x1 / width, y1 / height, x2 / width, y2 / height) for x1, y1, x2, y2 in segments]
+
+
+def denormalize_segments(
+    segments: list[tuple[float, float, float, float]], width: int, height: int,
+) -> list[tuple[float, float, float, float]]:
+    return [(x1 * width, y1 * height, x2 * width, y2 * height) for x1, y1, x2, y2 in segments]
+
+
+def _line_eq(seg: tuple[float, float, float, float]) -> np.ndarray:
+    x1, y1, x2, y2 = seg
     return np.array([y1 - y2, x2 - x1, x1 * y2 - x2 * y1], dtype=np.float64)
 
 
-def _intersect_lines(line_a: np.ndarray, line_b: np.ndarray) -> np.ndarray | None:
-    cross = np.cross(line_a, line_b)
-    if abs(float(cross[2])) < 1e-6:
+def _intersect(l1: np.ndarray, l2: np.ndarray) -> tuple[float, float] | None:
+    c = np.cross(l1, l2)
+    if abs(float(c[2])) < 1e-6:
         return None
-    return (cross[:2] / cross[2]).astype(np.float32)
+    return (float(c[0] / c[2]), float(c[1] / c[2]))
 
 
-def _order_quad(points: np.ndarray) -> np.ndarray:
-    ordered = np.zeros((4, 2), dtype=np.float32)
-    point_sums = points.sum(axis=1)
-    point_diffs = np.diff(points, axis=1).reshape(-1)
-    ordered[0] = points[np.argmin(point_sums)]
-    ordered[2] = points[np.argmax(point_sums)]
-    ordered[1] = points[np.argmin(point_diffs)]
-    ordered[3] = points[np.argmax(point_diffs)]
-    return ordered
-
-
-def _estimate_table_corners(bw_image: np.ndarray) -> np.ndarray | None:
-    height, width = bw_image.shape[:2]
-    horizontal_mask, vertical_mask = _build_directional_masks(bw_image)
-    horizontal = _extract_structural_horizontal_lines(horizontal_mask, width, height)
-    vertical = _extract_structural_vertical_lines(vertical_mask, width, height)
-    if len(horizontal) < 2 or len(vertical) < 2:
+def compute_table_corners(
+    h_lines: list[tuple[float, float, float, float]],
+    v_lines: list[tuple[float, float, float, float]],
+) -> np.ndarray | None:
+    if len(h_lines) < 2 or len(v_lines) < 2:
         return None
 
-    top = min(horizontal, key=lambda line: (line[1] + line[3]) / 2.0)
-    bottom = max(horizontal, key=lambda line: (line[1] + line[3]) / 2.0)
-    left = min(vertical, key=lambda line: (line[0] + line[2]) / 2.0)
-    right = max(vertical, key=lambda line: (line[0] + line[2]) / 2.0)
+    top = min(h_lines, key=lambda s: (s[1] + s[3]) / 2)
+    bottom = max(h_lines, key=lambda s: (s[1] + s[3]) / 2)
+    left = min(v_lines, key=lambda s: (s[0] + s[2]) / 2)
+    right = max(v_lines, key=lambda s: (s[0] + s[2]) / 2)
 
-    top_line = _segment_to_line_coefficients(top)
-    bottom_line = _segment_to_line_coefficients(bottom)
-    left_line = _segment_to_line_coefficients(left)
-    right_line = _segment_to_line_coefficients(right)
+    tl = _intersect(_line_eq(top), _line_eq(left))
+    tr = _intersect(_line_eq(top), _line_eq(right))
+    br = _intersect(_line_eq(bottom), _line_eq(right))
+    bl = _intersect(_line_eq(bottom), _line_eq(left))
 
-    intersections = [
-        _intersect_lines(top_line, left_line),
-        _intersect_lines(top_line, right_line),
-        _intersect_lines(bottom_line, right_line),
-        _intersect_lines(bottom_line, left_line),
-    ]
-    if any(point is None for point in intersections):
+    if any(p is None for p in [tl, tr, br, bl]):
         return None
-
-    corners = _order_quad(np.asarray(intersections, dtype=np.float32))
-    if np.any(corners[:, 0] < -width * 0.1) or np.any(corners[:, 0] > width * 1.1):
-        return None
-    if np.any(corners[:, 1] < -height * 0.1) or np.any(corners[:, 1] > height * 1.1):
-        return None
-    return corners
+    return np.array([tl, tr, br, bl], dtype=np.float32)
 
 
-def rectify_table_image(bw_image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
-    corners = _estimate_table_corners(bw_image)
-    if corners is None:
-        return bw_image, None
+def rectify_table(
+    bw_image: np.ndarray, table_corners: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    corners = table_corners.astype(np.float32)
+    w_top = float(np.linalg.norm(corners[1] - corners[0]))
+    w_bot = float(np.linalg.norm(corners[2] - corners[3]))
+    h_left = float(np.linalg.norm(corners[3] - corners[0]))
+    h_right = float(np.linalg.norm(corners[2] - corners[1]))
 
-    return _warp_image_to_table(bw_image, corners), corners
-
-
-def _warp_image_to_table(bw_image: np.ndarray, corners: np.ndarray) -> np.ndarray:
-    corners = corners.astype(np.float32)
-
-    width_top = float(np.linalg.norm(corners[1] - corners[0]))
-    width_bottom = float(np.linalg.norm(corners[2] - corners[3]))
-    height_left = float(np.linalg.norm(corners[3] - corners[0]))
-    height_right = float(np.linalg.norm(corners[2] - corners[1]))
-
-    output_width = max(50, int(round(max(width_top, width_bottom))))
-    output_height = max(50, int(round(max(height_left, height_right))))
-    destination = np.array(
-        [
-            [0, 0],
-            [output_width - 1, 0],
-            [output_width - 1, output_height - 1],
-            [0, output_height - 1],
-        ],
+    out_w = max(50, int(round(max(w_top, w_bot))))
+    out_h = max(50, int(round(max(h_left, h_right))))
+    dst = np.array(
+        [[0, 0], [out_w - 1, 0], [out_w - 1, out_h - 1], [0, out_h - 1]],
         dtype=np.float32,
     )
 
-    transform = cv2.getPerspectiveTransform(corners, destination)
+    M = cv2.getPerspectiveTransform(corners, dst)
     rectified = cv2.warpPerspective(
-        bw_image,
-        transform,
-        (output_width, output_height),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=255,
+        bw_image, M, (out_w, out_h),
+        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=255,
     )
-    return rectified
+    return rectified, M
 
 
-def detect_lines(
-    bw_image: np.ndarray,
-) -> tuple[list[tuple[int, int, int, int]], list[tuple[int, int, int, int]]]:
-    height, width = bw_image.shape[:2]
+def transform_lines_to_rectified(
+    h_lines: list[tuple[float, float, float, float]],
+    v_lines: list[tuple[float, float, float, float]],
+    M: np.ndarray,
+) -> tuple[list[float], list[float]]:
+    rect_h: list[float] = []
+    for seg in h_lines:
+        pts = np.array([[seg[0], seg[1]], [seg[2], seg[3]]], dtype=np.float32).reshape(-1, 1, 2)
+        t = cv2.perspectiveTransform(pts, M).reshape(-1, 2)
+        rect_h.append(float((t[0][1] + t[1][1]) / 2))
 
-    horizontal_mask, vertical_mask = _build_directional_masks(bw_image)
+    rect_v: list[float] = []
+    for seg in v_lines:
+        pts = np.array([[seg[0], seg[1]], [seg[2], seg[3]]], dtype=np.float32).reshape(-1, 1, 2)
+        t = cv2.perspectiveTransform(pts, M).reshape(-1, 2)
+        rect_v.append(float((t[0][0] + t[1][0]) / 2))
 
-    horizontal = _extract_horizontal_segments(horizontal_mask, width, height)
-    vertical = _extract_vertical_segments(vertical_mask, width, height)
-    return horizontal, vertical
-
-
-def infer_grid(
-    horizontal: list[tuple[int, int, int, int]],
-    vertical: list[tuple[int, int, int, int]],
-) -> tuple[list[int], list[int]]:
-    if len(horizontal) < 2 or len(vertical) < 2:
-        return [], []
-
-    horizontal_support = _cluster_position_support(
-        [
-            (int(round((line[1] + line[3]) / 2)), abs(line[2] - line[0]) + 1)
-            for line in horizontal
-        ],
-        tolerance=8,
-    )
-    if len(horizontal_support) < 2:
-        return [], []
-
-    max_horizontal_support = max(support for _, support in horizontal_support)
-    y_positions = [
-        position
-        for position, support in horizontal_support
-        if support >= max(80, int(round(max_horizontal_support * 0.8)))
-    ]
-    if len(y_positions) < 2:
-        y_positions = [position for position, _ in horizontal_support]
-    y_positions = sorted(y_positions)
-    if len(y_positions) < 2:
-        return [], []
-
-    top, bottom = y_positions[0], y_positions[-1]
-    table_h = bottom - top
-    if table_h < 50:
-        return y_positions, []
-
-    vertical_support = _cluster_position_support(
-        [
-            (int(round((line[0] + line[2]) / 2)), abs(line[3] - line[1]) + 1)
-            for line in vertical
-        ],
-        tolerance=8,
-    )
-    if len(vertical_support) < 2:
-        return y_positions, []
-
-    max_vertical_support = max(support for _, support in vertical_support)
-    min_major_support = max(int(round(table_h * 0.75)), int(round(max_vertical_support * 0.78)))
-    x_positions = [
-        position
-        for position, support in vertical_support
-        if support >= min_major_support
-    ]
-    if len(x_positions) < 2:
-        x_positions = [position for position, _ in vertical_support]
-
-    x_positions = sorted(x_positions)
-    return y_positions, x_positions
+    return sorted(rect_h), sorted(rect_v)
 
 
-def _split_span(left: int, right: int, segments: int) -> list[int]:
-    if segments <= 1:
-        return [left, right]
-    return [int(round(left + ((right - left) * idx) / segments)) for idx in range(segments + 1)]
-
-
-def _infer_row_splits(
-    horizontal: list[tuple[int, int, int, int]],
-    y_positions: list[int],
-    scoring_left: int,
-    scoring_right: int,
-) -> list[int | None]:
-    if len(y_positions) < 2:
+def compute_subcells(
+    y_positions: list[float],
+    x_positions: list[float],
+    rect_w: int,
+    rect_h: int,
+) -> list[dict]:
+    if len(y_positions) < 2 or len(x_positions) < 2:
         return []
 
-    scoring_width = scoring_right - scoring_left
-    left_tolerance = max(12, scoring_width // 30)
-    min_span = max(80, int(scoring_width * 0.55))
-    row_splits: list[int | None] = []
+    num_rows = len(y_positions) - 1
+    num_cols = len(x_positions) - 1
+    cells: list[dict] = []
 
-    for row_idx in range(len(y_positions) - 1):
-        top = y_positions[row_idx]
-        bottom = y_positions[row_idx + 1]
-        if row_idx == 0:
-            row_splits.append(None)
-            continue
+    for row in range(num_rows):
+        top = y_positions[row]
+        bot = y_positions[row + 1]
+        mid = (top + bot) / 2
 
-        target_y = top + int(round((bottom - top) * 0.52))
-        candidates: list[tuple[float, int, int]] = []
-        for x1, y1, x2, y2 in horizontal:
-            mid_y = int(round((y1 + y2) / 2))
-            start_x = min(x1, x2)
-            end_x = max(x1, x2)
-            span = end_x - start_x
+        for col in range(num_cols):
+            left = x_positions[col]
+            right = x_positions[col + 1]
 
-            if mid_y <= top + 6 or mid_y >= bottom - 6:
-                continue
-            if start_x < scoring_left - left_tolerance or start_x > scoring_left + left_tolerance:
-                continue
-            if end_x < scoring_right - left_tolerance:
-                continue
-            if span < min_span:
+            if row == 0 or col == 0:
+                cells.append({
+                    "row": row, "col": col, "sub_index": 0,
+                    "x": left / rect_w, "y": top / rect_h,
+                    "w": (right - left) / rect_w, "h": (bot - top) / rect_h,
+                })
                 continue
 
-            candidates.append((abs(mid_y - target_y), -span, mid_y))
+            is_last = col == num_cols - 1
+            sub_count = 4 if is_last else 2
+            sub_w = (right - left) / sub_count
 
-        if candidates:
-            candidates.sort()
-            row_splits.append(int(candidates[0][2]))
-        else:
-            row_splits.append(int(round((top + bottom) / 2)))
+            for si in range(sub_count):
+                sl = left + si * sub_w
+                cells.append({
+                    "row": row, "col": col, "sub_index": si,
+                    "x": sl / rect_w, "y": top / rect_h,
+                    "w": sub_w / rect_w, "h": (mid - top) / rect_h,
+                })
 
-    return row_splits
+            cells.append({
+                "row": row, "col": col, "sub_index": sub_count,
+                "x": left / rect_w, "y": mid / rect_h,
+                "w": (right - left) / rect_w, "h": (bot - mid) / rect_h,
+            })
 
-
-def build_table_layout(
-    horizontal: list[tuple[int, int, int, int]],
-    vertical: list[tuple[int, int, int, int]],
-) -> tuple[list[int], list[int], list[int | None]]:
-    y_positions, x_positions = infer_grid(horizontal, vertical)
-    if len(y_positions) < 2 or len(x_positions) < 2:
-        return y_positions, x_positions, []
-
-    scoring_left = x_positions[1] if len(x_positions) > 1 else x_positions[0]
-    scoring_right = x_positions[-1]
-    row_splits = _infer_row_splits(horizontal, y_positions, scoring_left, scoring_right)
-    return y_positions, x_positions, row_splits
-
-
-def build_lines_debug_image(bw_image: np.ndarray, bw_threshold: int | None = None) -> np.ndarray:
-    _, _, _, overlay = build_debug_stage_images(bw_image, bw_threshold=bw_threshold)
-    return overlay
-
-
-def build_debug_stage_images(
-    bw_image: np.ndarray,
-    bw_threshold: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    _ = bw_threshold
-    line_source = bw_image
-
-    rectified_bw, corners = rectify_table_image(bw_image)
-    rectified_line_source = _warp_image_to_table(line_source, corners) if corners is not None else line_source
-
-    horizontal_mask, vertical_mask = _build_directional_masks(rectified_line_source)
-    horizontal, vertical = detect_lines(rectified_line_source)
-    y_grid, x_grid, row_splits = build_table_layout(horizontal, vertical)
-    overlay = cv2.cvtColor(rectified_line_source, cv2.COLOR_GRAY2BGR)
-    has_enough_columns = len(x_grid) >= 12
-    detected_line_color = (0, 0, 220) if not has_enough_columns else None
-
-    if y_grid and x_grid:
-        left, right = x_grid[0], x_grid[-1]
-        top, bottom = y_grid[0], y_grid[-1]
-
-        for y in y_grid:
-            cv2.line(overlay, (left, y), (right, y), (0, 180, 0), 2, lineType=cv2.LINE_AA)
-        for x in x_grid:
-            cv2.line(overlay, (x, top), (x, bottom), (0, 180, 0), 2, lineType=cv2.LINE_AA)
-
-        if len(x_grid) >= 3 and len(row_splits) == len(y_grid) - 1:
-            scoring_left = x_grid[1]
-            frame_count = len(x_grid) - 2
-            for row_idx in range(1, len(y_grid) - 1):
-                split_y = row_splits[row_idx]
-                if split_y is None:
-                    continue
-                row_top = y_grid[row_idx]
-
-                for frame_idx in range(frame_count):
-                    frame_left = x_grid[frame_idx + 1]
-                    frame_right = x_grid[frame_idx + 2]
-                    segment_count = 4 if frame_idx == frame_count - 1 else 2
-                    bounds = _split_span(frame_left, frame_right, segment_count)
-                    for boundary in bounds[1:-1]:
-                        cv2.line(overlay, (boundary, row_top), (boundary, split_y), (255, 80, 0), 2, lineType=cv2.LINE_AA)
-
-    for x1, y1, x2, y2 in horizontal:
-        cv2.line(
-            overlay,
-            (x1, y1),
-            (x2, y2),
-            detected_line_color or (0, 200, 200),
-            1,
-            lineType=cv2.LINE_AA,
-        )
-    for x1, y1, x2, y2 in vertical:
-        cv2.line(
-            overlay,
-            (x1, y1),
-            (x2, y2),
-            detected_line_color or (0, 80, 220),
-            1,
-            lineType=cv2.LINE_AA,
-        )
-
-    rectified = "Y" if corners is not None else "N"
-    status_color = (0, 0, 220) if not has_enough_columns else (0, 180, 0)
-    cv2.putText(
-        overlay,
-        f"H: {len(horizontal)}  V: {len(vertical)}  Grid: {len(y_grid)}x{len(x_grid)}  R: {rectified}",
-        (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        status_color,
-        2,
-    )
-    if not has_enough_columns:
-        cv2.putText(
-            overlay,
-            "Zu wenig Hauptspalten erkannt",
-            (10, 58),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 0, 220),
-            2,
-        )
-
-    return rectified_bw, horizontal_mask * 255, vertical_mask * 255, overlay
+    return cells

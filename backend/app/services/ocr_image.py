@@ -193,10 +193,15 @@ class ImagePreprocessor:
         return ""
 
     @staticmethod
-    def _ocr_crop(image: np.ndarray, allowlist: str = "", skip_empty_check: bool = False) -> str:
+    def _ocr_crop(
+        image: np.ndarray,
+        allowlist: str = "",
+        skip_empty_check: bool = False,
+        content_threshold: float = 0.03,
+    ) -> str:
         if image.size == 0 or image.shape[0] < 3 or image.shape[1] < 3:
             return ""
-        if not skip_empty_check and not ImagePreprocessor._has_content(image):
+        if not skip_empty_check and not ImagePreprocessor._has_content(image, threshold=content_threshold):
             return ""
 
         h, w = image.shape[:2]
@@ -214,106 +219,106 @@ class ImagePreprocessor:
         return text
 
     @staticmethod
-    def extract_table_data(bw_image: np.ndarray, bw_threshold: int | None = None) -> tuple[list[dict], int]:
+    def extract_from_grid(
+        rectified_bw: np.ndarray,
+        bw_threshold: int,
+        sub_cells: list[dict],
+    ) -> list[dict]:
         from app.schemas import FrameData, PlayerData
 
-        from app.services.line_detection import build_table_layout, detect_lines, rectify_table_image
+        _, ocr_img = cv2.threshold(rectified_bw, bw_threshold, 255, cv2.THRESH_BINARY)
+        img_h, img_w = ocr_img.shape[:2]
+        grid: dict[tuple[int, int], dict[int, dict]] = {}
+        for cell in sub_cells:
+            key = (cell["row"], cell["col"])
+            if key not in grid:
+                grid[key] = {}
+            grid[key][cell["sub_index"]] = cell
 
-        bw_image, _ = rectify_table_image(bw_image)
+        rows = sorted({r for r, _ in grid})
+        cols = sorted({c for _, c in grid})
+        if not rows or not cols:
+            return []
 
-        raw_h, raw_v = detect_lines(bw_image)
-        y_grid, x_grid, row_splits = build_table_layout(raw_h, raw_v)
-        num_columns = max(0, len(x_grid) - 2)
-        if len(y_grid) < 3 or len(x_grid) < 3:
-            return [], num_columns
-
-        if bw_threshold is not None:
-            ocr_img = cv2.threshold(bw_image, bw_threshold, 255, cv2.THRESH_BINARY)[1]
-        else:
-            ocr_img = bw_image
-
+        frame_cols = [c for c in cols if c > 0]
         throw_chars = "0123456789-xX"
         score_chars = "0123456789"
-        m = 6
 
-        image_h, image_w = ocr_img.shape[:2]
-
-        def crop_rect(top: int, bottom: int, left: int, right: int, margin: int = 0) -> np.ndarray:
-            cropped_top = max(0, min(image_h, top + margin))
-            cropped_bottom = max(0, min(image_h, bottom - margin))
-            cropped_left = max(0, min(image_w, left + margin))
-            cropped_right = max(0, min(image_w, right - margin))
-            if cropped_bottom <= cropped_top or cropped_right <= cropped_left:
+        def crop(cell: dict) -> np.ndarray:
+            cx = int(cell["x"] * img_w)
+            cy = int(cell["y"] * img_h)
+            cr = int((cell["x"] + cell["w"]) * img_w)
+            cb = int((cell["y"] + cell["h"]) * img_h)
+            pad_x = max(3, int((cr - cx) * 0.08))
+            pad_y = max(3, int((cb - cy) * 0.08))
+            x, y = max(0, cx + pad_x), max(0, cy + pad_y)
+            r, b = min(img_w, cr - pad_x), min(img_h, cb - pad_y)
+            if r <= x or b <= y:
                 return ocr_img[0:0, 0:0]
-            return ocr_img[cropped_top:cropped_bottom, cropped_left:cropped_right]
+            return ocr_img[y:b, x:r]
 
         players: list[dict] = []
-        frame_count = len(x_grid) - 2
-
-        for row_idx in range(1, len(y_grid) - 1):
-            cell_top = y_grid[row_idx]
-            cell_bottom = y_grid[row_idx + 1]
-            split_y = row_splits[row_idx] if row_idx < len(row_splits) else None
-            if split_y is None or split_y <= cell_top + 6 or split_y >= cell_bottom - 6:
-                split_y = (cell_top + cell_bottom) // 2
-
-            if not ImagePreprocessor._has_content(crop_rect(cell_top, cell_bottom, x_grid[0], x_grid[1], 5)):
+        for row in rows:
+            if row == 0:
                 continue
-            name_crop = crop_rect(cell_top, cell_bottom, x_grid[0], x_grid[1], m)
-            name = ImagePreprocessor._ocr_crop(name_crop)
 
-            player_index = len(players) + 1
-            if name.rstrip().endswith(str(player_index)):
-                name = ""
+            name_cell = grid.get((row, 0), {}).get(0)
+            if not name_cell:
+                continue
+            name_crop = crop(name_cell)
+            if not ImagePreprocessor._has_content(name_crop, threshold=0.02):
+                continue
+            raw_name = ImagePreprocessor._ocr_crop(name_crop)
+            name = "" if raw_name and raw_name[-1].isdigit() else raw_name
 
             frames: list[dict] = []
-            for frame_idx in range(frame_count):
-                cell_left = x_grid[frame_idx + 1]
-                cell_right = x_grid[frame_idx + 2]
+            for col in frame_cols:
+                col_cells = grid.get((row, col), {})
+                is_last = col == max(frame_cols)
+                sub_count = 4 if is_last else 2
 
-                cumulative_crop = crop_rect(split_y, cell_bottom, cell_left, cell_right, m)
-                cumulative = ImagePreprocessor._ocr_crop(cumulative_crop, allowlist=score_chars, skip_empty_check=True)
+                throws = []
+                for si in range(sub_count):
+                    sc = col_cells.get(si)
+                    if sc:
+                        cr = crop(sc)
+                        if ImagePreprocessor._has_content(cr, threshold=0.01):
+                            throws.append(ImagePreprocessor._ocr_crop(cr, allowlist=throw_chars, content_threshold=0.01))
+                        else:
+                            throws.append("")
+                    else:
+                        throws.append("")
 
-                def ocr_throw(crop: np.ndarray) -> str:
-                    return ImagePreprocessor._ocr_crop(crop, allowlist=throw_chars, skip_empty_check=True)
+                cum_cell = col_cells.get(sub_count)
+                cum = ""
+                if cum_cell:
+                    cr = crop(cum_cell)
+                    if ImagePreprocessor._has_content(cr, threshold=0.012):
+                        cum = ImagePreprocessor._ocr_crop(cr, allowlist=score_chars, content_threshold=0.012)
 
-                segment_count = 4 if frame_idx == frame_count - 1 else 2
-                upper_bounds = [
-                    int(round(cell_left + ((cell_right - cell_left) * idx) / segment_count))
-                    for idx in range(segment_count + 1)
-                ]
-                upper_values = [
-                    ocr_throw(crop_rect(cell_top, split_y, upper_bounds[idx], upper_bounds[idx + 1], m))
-                    for idx in range(segment_count)
-                ]
-
-                if frame_idx == frame_count - 1:
-                    raw1 = upper_values[0] if len(upper_values) > 0 else ""
-                    raw2 = upper_values[1] if len(upper_values) > 1 else ""
-                    raw3 = upper_values[2] if len(upper_values) > 2 and upper_values[2].strip() else ""
-                    raw4 = upper_values[3] if len(upper_values) > 3 else ""
-                    throw3 = raw3 or raw4 or "-"
+                if is_last:
                     frames.append(FrameData(
-                        throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
-                        throw2=raw2 or ("" if throw3.strip().upper() == "X" else "-"),
-                        throw3=throw3,
-                        cumulative=cumulative,
+                        throw1=throws[0] or "-",
+                        throw2=throws[1] or "-",
+                        throw3=throws[2] if len(throws) > 2 else "-",
+                        cumulative=cum,
                     ).model_dump())
                 else:
-                    raw1 = upper_values[0] if len(upper_values) > 0 else ""
-                    raw2 = upper_values[1] if len(upper_values) > 1 else ""
                     frames.append(FrameData(
-                        throw1=raw1 or ("" if raw2.strip().upper() == "X" else "-"),
-                        throw2=raw2 or "-",
-                        cumulative=cumulative,
+                        throw1=throws[0] or "-",
+                        throw2=throws[1] or "-",
+                        cumulative=cum,
                     ).model_dump())
 
             while len(frames) < 10:
                 frames.append(FrameData().model_dump())
 
-            players.append(PlayerData(name=name, frames=[FrameData(**f) for f in frames[:10]]).model_dump())
+            players.append(PlayerData(
+                name=name,
+                frames=[FrameData(**f) for f in frames[:10]],
+            ).model_dump())
 
-        return players, num_columns
+        return players
 
     @staticmethod
     def prepare_image(file_bytes: bytes, manual_corners: list[ManualCorner]) -> np.ndarray:

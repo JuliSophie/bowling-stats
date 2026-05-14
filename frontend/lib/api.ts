@@ -1,4 +1,4 @@
-import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse } from '@/types';
+import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse, TableBuildResult } from '@/types';
 
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
@@ -88,13 +88,13 @@ export async function guessScorecardCorners(file: File): Promise<CornerGuessResu
 }
 
 
-export async function rectifyScorecard(file: File, corners: ManualCorner[], bwThreshold?: number): Promise<RectifiedPreview> {
+export async function rectifyScorecard(
+  file: File,
+  corners: ManualCorner[],
+): Promise<RectifiedPreview> {
   const formData = new FormData();
   formData.append('file', file);
   appendJsonField(formData, 'corners', corners);
-  if (bwThreshold !== undefined) {
-    formData.append('bw_threshold', String(bwThreshold));
-  }
 
   return requestJson<RectifiedPreview>(`${API_BASE}/upload/rectify`, {
     method: 'POST',
@@ -103,13 +103,38 @@ export async function rectifyScorecard(file: File, corners: ManualCorner[], bwTh
 }
 
 
-export async function extractScorecard(file: File, corners: ManualCorner[], bwThreshold?: number): Promise<ExtractionResult> {
+export async function buildTable(
+  file: File,
+  corners: ManualCorner[],
+  selectedHLines: LineSegment[],
+  selectedVLines: LineSegment[],
+): Promise<TableBuildResult> {
   const formData = new FormData();
   formData.append('file', file);
   appendJsonField(formData, 'corners', corners);
-  if (bwThreshold !== undefined) {
-    formData.append('bw_threshold', String(bwThreshold));
-  }
+  appendJsonField(formData, 'selected_h_lines', selectedHLines);
+  appendJsonField(formData, 'selected_v_lines', selectedVLines);
+
+  return requestJson<TableBuildResult>(`${API_BASE}/upload/build-table`, {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+
+export async function extractScorecard(
+  file: File,
+  corners: ManualCorner[],
+  selectedHLines: LineSegment[],
+  selectedVLines: LineSegment[],
+  bwThreshold: number,
+): Promise<ExtractionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  appendJsonField(formData, 'corners', corners);
+  appendJsonField(formData, 'selected_h_lines', selectedHLines);
+  appendJsonField(formData, 'selected_v_lines', selectedVLines);
+  formData.append('bw_threshold', String(bwThreshold));
 
   return requestJson<ExtractionResult>(`${API_BASE}/upload/extract`, {
     method: 'POST',

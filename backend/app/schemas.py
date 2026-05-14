@@ -8,6 +8,23 @@ class ManualCorner(BaseModel):
     y: float = Field(ge=0.0, le=1.0)
 
 
+class LineSegment(BaseModel):
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+class SubCell(BaseModel):
+    row: int
+    col: int
+    sub_index: int
+    x: float
+    y: float
+    w: float
+    h: float
+
+
 class CornerGuessResult(BaseModel):
     filename: str
     guessed_corners: list[ManualCorner] = Field(default_factory=list, min_length=0, max_length=4)
@@ -17,9 +34,16 @@ class CornerGuessResult(BaseModel):
 class RectifiedPreview(BaseModel):
     filename: str
     bw_image_data_url: str | None = None
-    edge_debug_image_data_url: str | None = None
     morph_horizontal_data_url: str | None = None
     morph_vertical_data_url: str | None = None
+    horizontal_candidates: list[LineSegment] = Field(default_factory=list)
+    vertical_candidates: list[LineSegment] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TableBuildResult(BaseModel):
+    rectified_bw_data_url: str | None = None
+    sub_cells: list[SubCell] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 

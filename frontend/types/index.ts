@@ -3,6 +3,23 @@ export type ManualCorner = {
   y: number;
 };
 
+export type LineSegment = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+export type SubCell = {
+  row: number;
+  col: number;
+  sub_index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
 export type CornerGuessResult = {
   filename: string;
   guessed_corners: ManualCorner[];
@@ -30,9 +47,16 @@ export type ExtractionResult = {
 export type RectifiedPreview = {
   filename: string;
   bw_image_data_url?: string | null;
-  edge_debug_image_data_url?: string | null;
   morph_horizontal_data_url?: string | null;
   morph_vertical_data_url?: string | null;
+  horizontal_candidates: LineSegment[];
+  vertical_candidates: LineSegment[];
+  warnings: string[];
+};
+
+export type TableBuildResult = {
+  rectified_bw_data_url?: string | null;
+  sub_cells: SubCell[];
   warnings: string[];
 };
 
