@@ -169,3 +169,13 @@ export async function fetchGames(): Promise<GameRead[]> {
 export async function fetchStats(): Promise<StatsResponse> {
   return requestJson<StatsResponse>(`${API_BASE}/stats`);
 }
+
+
+export async function checkApiHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE.replace(/\/api$/, '')}/health`, { signal: AbortSignal.timeout(5000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

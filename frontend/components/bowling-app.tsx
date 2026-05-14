@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-import { buildTable, createGame, extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
+import { buildTable, checkApiHealth, createGame, extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
 import type { ExtractionResult, FrameData, GameRead, LineSegment, ManualCorner, RectifiedPreview, TableBuildResult } from '@/types';
 import StatsView from './stats-view';
 
@@ -292,6 +292,7 @@ function scanVerticalLine(data: ImageData, nx: number, ny: number): LineSegment 
 
 
 export default function BowlingApp() {
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [appTab, setAppTab] = useState<AppTab>('upload');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -359,6 +360,12 @@ export default function BowlingApp() {
     }
     ctx.putImageData(imageData, 0, 0);
     setBwCanvasReady(true);
+  }, []);
+
+  useEffect(() => {
+    checkApiHealth().then(setApiOnline);
+    const id = setInterval(() => checkApiHealth().then(setApiOnline), 30000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -809,7 +816,13 @@ export default function BowlingApp() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
       <section className="panel overflow-hidden rounded-[2.4rem] border border-lane-200/60 p-6 sm:p-8">
-        <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
+          <span className="flex items-center gap-1.5 text-xs text-lane-500">
+            API
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${apiOnline === true ? 'bg-emerald-400' : apiOnline === false ? 'bg-red-400' : 'bg-lane-300 animate-pulse'}`} />
+          </span>
+        </div>
         <h1 className="mt-3 text-3xl font-semibold leading-tight text-lane-900 sm:text-4xl">Bowling Stats</h1>
         <div className="mt-4 flex gap-2">
           <button type="button" className={`rounded-full px-4 py-2 text-sm font-medium transition ${appTab === 'upload' ? 'bg-lane-800 text-white' : 'border border-lane-300 text-lane-700 hover:bg-white/70'}`} onClick={() => setAppTab('upload')}>Upload</button>
