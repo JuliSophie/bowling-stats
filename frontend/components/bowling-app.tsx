@@ -969,6 +969,9 @@ export default function BowlingApp() {
                     style={{ touchAction: 'none' }}
                   >
                     <img ref={morphImageRef} alt="Morph-Ansicht" className="block max-h-[42rem] w-full object-contain" src={morphSrc} />
+                    {rectifiedPreview?.bw_image_data_url && (
+                      <img alt="" className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-20 mix-blend-lighten" src={rectifiedPreview.bw_image_data_url} />
+                    )}
                     <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1 1">
                       {(() => {
                         const enough = currentOrientation === 'h' ? selectedHLines.length >= 10 : selectedVLines.length >= 12;
