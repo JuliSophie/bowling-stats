@@ -9,6 +9,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -171,6 +172,8 @@ type PlayerAdvancedStats = {
   firstBallAvg: number | null;
   totalStrikes: number;
   totalSpares: number;
+  strikeAvgValue: number | null;
+  spareAvgValue: number | null;
   cleanGames: number;
   dutch200: number;
   venueStats: { location: string; avg: number; games: number }[];
@@ -189,6 +192,8 @@ function computePlayerAdvanced(games: GameRead[], playerName: string): PlayerAdv
   let maxStreak = 0;
   const throw1s: number[] = [];
   let cleanGames = 0, dutch200 = 0, totalStrikes = 0, totalSpares = 0;
+  const strikeFrameValues: number[] = [];
+  const spareFrameValues: number[] = [];
   const venueMap = new Map<string, number[]>();
 
   for (const game of pGames) {
@@ -199,8 +204,21 @@ function computePlayerAdvanced(games: GameRead[], playerName: string): PlayerAdv
 
     const types = frames.map(getFrameType);
 
-    // totals
-    for (const t of types) { if (t === 'strike') totalStrikes++; if (t === 'spare') totalSpares++; }
+    // totals + frame values
+    for (let f = 0; f < types.length; f++) {
+      if (types[f] === 'strike') {
+        totalStrikes++;
+        const cum = parseCumulative(frames[f]);
+        const prevCum = f > 0 ? parseCumulative(frames[f - 1]) : 0;
+        if (cum !== null && prevCum !== null) strikeFrameValues.push(cum - prevCum);
+      }
+      if (types[f] === 'spare') {
+        totalSpares++;
+        const cum = parseCumulative(frames[f]);
+        const prevCum = f > 0 ? parseCumulative(frames[f - 1]) : 0;
+        if (cum !== null && prevCum !== null) spareFrameValues.push(cum - prevCum);
+      }
+    }
 
     // venue
     const vs = venueMap.get(game.location) ?? [];
@@ -265,7 +283,10 @@ function computePlayerAdvanced(games: GameRead[], playerName: string): PlayerAdv
     maxConsecutiveStrikes: maxStreak,
     streakLabel: STREAK_NAMES[Math.min(maxStreak, 7)] ?? `${maxStreak}x Strikes`,
     firstBallAvg: avg(throw1s),
-    totalStrikes, totalSpares, cleanGames, dutch200,
+    totalStrikes, totalSpares,
+    strikeAvgValue: avg(strikeFrameValues),
+    spareAvgValue: avg(spareFrameValues),
+    cleanGames, dutch200,
     venueStats: [...venueMap.entries()]
       .map(([location, scores]) => ({ location, avg: avg(scores)!, games: scores.length }))
       .sort((a, b) => b.avg - a.avg),
@@ -607,8 +628,8 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
             <StatCard label="Erster Wurf ⌀" value={s.firstBallAvg} sub="⌀ Pins mit dem 1. Wurf"
               info="Durchschnittliche Anzahl Pins, die du mit dem ersten Wurf jedes Frames abräumst. Ein guter Indikator für dein Grundniveau – unabhängig vom Spare-Glück." />
           )}
-          <StatCard label="Strikes gesamt" value={s.totalStrikes} info="Gesamtzahl aller Strikes über alle Spiele." />
-          <StatCard label="Spares gesamt" value={s.totalSpares} info="Gesamtzahl aller Spares über alle Spiele." />
+          <StatCard label="Strikes gesamt" value={s.totalStrikes} sub={s.strikeAvgValue !== null ? `⌀ ${s.strikeAvgValue} Pins/Strike` : undefined} info="Gesamtzahl aller Strikes und durchschnittliche Pins pro Strike-Frame (inkl. Bonus durch Folgewürfe). Über 20 = du räumst nach einem Strike meistens alle Pins ab oder kettest Strikes. Unter 20 = nach einem Strike bleiben oft Pins stehen. Maximum: 30 (Turkey-Sequenz)." />
+          <StatCard label="Spares gesamt" value={s.totalSpares} sub={s.spareAvgValue !== null ? `⌀ ${s.spareAvgValue} Pins/Spare` : undefined} info="Gesamtzahl aller Spares und durchschnittliche Pins pro Spare-Frame (inkl. Bonus durch den Folgewurf). Über 15 = du wirfst nach einem Spare meistens gut. Unter 15 = nach einem Spare geht oft wenig. Maximum: 20 (Spare gefolgt von Strike)." />
         </div>
       </div>
 
@@ -762,6 +783,450 @@ function SocialStatsSection({ games, players }: { games: GameRead[]; players: Pl
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Day session stats ──
+
+type DayPlayerStats = {
+  name: string;
+  scores: number[];
+  totalPins: number;
+  dayAvg: number;
+  bestGame: number;
+  globalAvg: number;
+  performancePct: number;
+  dayStrikes: number;
+  strikeAvgValue: number;
+};
+
+function getMultiGameDays(games: GameRead[]): { date: string; games: GameRead[] }[] {
+  const dateMap = new Map<string, GameRead[]>();
+  for (const game of games) {
+    const list = dateMap.get(game.played_at) ?? [];
+    list.push(game);
+    dateMap.set(game.played_at, list);
+  }
+  return [...dateMap.entries()]
+    .filter(([, g]) => g.length >= 2)
+    .map(([date, g]) => ({ date, games: g.slice().sort((a, b) => a.id - b.id) }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function computeDayPlayerStats(dayGames: GameRead[], globalPlayers: PlayerSummary[]): DayPlayerStats[] {
+  const globalAvgMap = new Map(globalPlayers.map((p) => [p.name, p.avgScore]));
+  const playerData = new Map<string, { scores: number[]; strikes: number; strikeValues: number[] }>();
+  for (const game of dayGames) {
+    for (const score of game.scores) {
+      const entry = playerData.get(score.player_name) ?? { scores: [], strikes: 0, strikeValues: [] };
+      entry.scores.push(score.total_score);
+      const frames = score.frames as FrameData[];
+      for (let f = 0; f < frames.length; f++) {
+        if (getFrameType(frames[f]) === 'strike') {
+          entry.strikes++;
+          const cum = parseCumulative(frames[f]);
+          const prevCum = f > 0 ? parseCumulative(frames[f - 1]) : 0;
+          if (cum !== null && prevCum !== null) {
+            entry.strikeValues.push(cum - prevCum);
+          }
+        }
+      }
+      playerData.set(score.player_name, entry);
+    }
+  }
+  return [...playerData.entries()].map(([name, { scores, strikes, strikeValues }]) => {
+    const totalPins = scores.reduce((a, b) => a + b, 0);
+    const dayAvg = Math.round((totalPins / scores.length) * 10) / 10;
+    const globalAvg = globalAvgMap.get(name) ?? dayAvg;
+    const performancePct = globalAvg > 0 ? Math.round(((dayAvg - globalAvg) / globalAvg) * 1000) / 10 : 0;
+    const strikeAvgValue = strikeValues.length > 0 ? Math.round((strikeValues.reduce((a, b) => a + b, 0) / strikeValues.length) * 10) / 10 : 0;
+    return { name, scores, totalPins, dayAvg, bestGame: Math.max(...scores), globalAvg, performancePct, dayStrikes: strikes, strikeAvgValue };
+  }).sort((a, b) => b.totalPins - a.totalPins);
+}
+
+function buildDayChartData(dayGames: GameRead[]): Record<string, string | number>[] {
+  return dayGames.slice().sort((a, b) => a.id - b.id).map((game, i) => {
+    const point: Record<string, string | number> = { game: `Spiel ${i + 1}` };
+    for (const score of game.scores) {
+      point[score.player_name] = score.total_score;
+    }
+    return point;
+  });
+}
+
+function buildDayAllFramesChartData(dayGames: GameRead[]): {
+  data: Record<string, string | number | undefined>[];
+  gameBoundaries: string[];
+} {
+  const sorted = dayGames.slice().sort((a, b) => a.id - b.id);
+  const data: Record<string, string | number | undefined>[] = [];
+  const gameBoundaries: string[] = [];
+
+  for (let g = 0; g < sorted.length; g++) {
+    const game = sorted[g];
+    const frameCount = Math.max(...game.scores.map((s) => s.frames.length), 0);
+
+    if (g > 0) {
+      gameBoundaries.push(`${g + 1}-1`);
+      data.push({ frame: `gap-${g}` });
+    }
+
+    for (let f = 0; f < frameCount; f++) {
+      const label = `${g + 1}-${f + 1}`;
+      const point: Record<string, string | number | undefined> = { frame: label };
+      for (const score of game.scores) {
+        if (f < score.frames.length) {
+          const frame = score.frames[f] as FrameData;
+          const cum = parseCumulative(frame);
+          if (cum !== null) {
+            point[score.player_name] = cum;
+            point[`${score.player_name}_type`] = getFrameType(frame);
+          }
+        }
+      }
+      data.push(point);
+    }
+  }
+
+  return { data, gameBoundaries };
+}
+
+function buildDayCumulativeChartData(dayGames: GameRead[]): {
+  data: Record<string, string | number>[];
+  gameBoundaries: string[];
+} {
+  const sorted = dayGames.slice().sort((a, b) => a.id - b.id);
+  const data: Record<string, string | number>[] = [];
+  const gameBoundaries: string[] = [];
+  const playerPrevTotal = new Map<string, number>();
+
+  for (let g = 0; g < sorted.length; g++) {
+    const game = sorted[g];
+    const frameCount = Math.max(...game.scores.map((s) => s.frames.length), 0);
+
+    if (g > 0) {
+      gameBoundaries.push(`${g + 1}-1`);
+    }
+
+    for (let f = 0; f < frameCount; f++) {
+      const label = `${g + 1}-${f + 1}`;
+      const point: Record<string, string | number> = { frame: label };
+      for (const score of game.scores) {
+        if (f < score.frames.length) {
+          const frame = score.frames[f] as FrameData;
+          const cum = parseCumulative(frame);
+          if (cum !== null) {
+            point[score.player_name] = (playerPrevTotal.get(score.player_name) ?? 0) + cum;
+          }
+        }
+      }
+      data.push(point);
+    }
+
+    for (const score of game.scores) {
+      const lastFrame = score.frames[score.frames.length - 1] as FrameData | undefined;
+      if (lastFrame) {
+        const finalCum = parseCumulative(lastFrame);
+        if (finalCum !== null) {
+          playerPrevTotal.set(score.player_name, (playerPrevTotal.get(score.player_name) ?? 0) + finalCum);
+        }
+      }
+    }
+  }
+
+  return { data, gameBoundaries };
+}
+
+function buildDayCumulativeEndpointsData(dayGames: GameRead[]): Record<string, string | number>[] {
+  const sorted = dayGames.slice().sort((a, b) => a.id - b.id);
+  const playerRunning = new Map<string, number>();
+  return sorted.map((game, i) => {
+    const point: Record<string, string | number> = { game: `Spiel ${i + 1}` };
+    for (const score of game.scores) {
+      const prev = playerRunning.get(score.player_name) ?? 0;
+      const cumTotal = prev + score.total_score;
+      playerRunning.set(score.player_name, cumTotal);
+      point[score.player_name] = cumTotal;
+    }
+    return point;
+  });
+}
+
+function DaySessionContent({ dayGames, players }: {
+  dayGames: GameRead[];
+  players: PlayerSummary[];
+}) {
+  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
+  const [cumOpen, setCumOpen] = useState(true);
+  const [cumMode, setCumMode] = useState<'allFrames' | 'final'>('allFrames');
+  const [compareOpen, setCompareOpen] = useState(true);
+  const [compareMode, setCompareMode] = useState<'allFrames' | 'final'>('final');
+  const sortedGames = dayGames.slice().sort((a, b) => a.id - b.id);
+  const dayPlayers = computeDayPlayerStats(sortedGames, players);
+  const chartData = buildDayChartData(sortedGames);
+  const allPlayerNames = [...new Set(sortedGames.flatMap((g) => g.scores.map((s) => s.player_name)))];
+  const dayWinner = dayPlayers[0];
+  const bestSingle = dayPlayers.reduce(
+    (best, p) => (p.bestGame > best.score ? { name: p.name, score: p.bestGame } : best),
+    { name: '', score: 0 },
+  );
+  const maxStrikes = Math.max(...dayPlayers.map((p) => p.dayStrikes), 0);
+  const strikeLeaders = maxStrikes > 0
+    ? dayPlayers.filter((p) => p.dayStrikes === maxStrikes).sort((a, b) => b.strikeAvgValue - a.strikeAvgValue)
+    : [];
+
+  const allFrames = buildDayAllFramesChartData(sortedGames);
+  const cumAllFrames = buildDayCumulativeChartData(sortedGames);
+  const cumEndpoints = buildDayCumulativeEndpointsData(sortedGames);
+
+  return (
+    <div className="grid gap-4">
+      {/* Cumulative chart */}
+      <div className="rounded-xl border border-lane-100 overflow-hidden">
+        <button type="button" className="flex w-full items-center justify-between px-4 py-2.5 text-left transition hover:bg-lane-50"
+          onClick={() => setCumOpen((v) => !v)}>
+          <span className="text-sm font-semibold text-lane-800">Kumulativ</span>
+          <span className="text-lane-400 text-sm">{cumOpen ? '▲' : '▼'}</span>
+        </button>
+        {cumOpen && (
+          <div className="border-t border-lane-100 px-2 py-3">
+            <div className="mb-2 flex items-center gap-1 rounded-full border border-lane-200 bg-white/90 p-1 self-start w-fit">
+              <button type="button"
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${cumMode === 'allFrames' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                onClick={() => setCumMode('allFrames')}>Alle Frames</button>
+              <button type="button"
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${cumMode === 'final' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                onClick={() => setCumMode('final')}>Endpunkte</button>
+            </div>
+            <div style={{ touchAction: 'none' }}>
+              {cumMode === 'allFrames' ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={cumAllFrames.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.split('-')[1]} interval={0} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip labelFormatter={(v: string) => `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
+                    <Legend />
+                    {cumAllFrames.gameBoundaries.map((boundary) => (
+                      <ReferenceLine key={boundary} x={boundary} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1.5} />
+                    ))}
+                    {allPlayerNames.map((name, i) => (
+                      <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2} dot={{ r: 2 }} activeDot={{ r: 4 }} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={cumEndpoints} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="game" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Legend />
+                    {allPlayerNames.map((name, i) => (
+                      <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2.5} dot={{ r: 5 }} activeDot={{ r: 7 }} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Per-game comparison chart */}
+      <div className="rounded-xl border border-lane-100 overflow-hidden">
+        <button type="button" className="flex w-full items-center justify-between px-4 py-2.5 text-left transition hover:bg-lane-50"
+          onClick={() => setCompareOpen((v) => !v)}>
+          <span className="text-sm font-semibold text-lane-800">Spielvergleich</span>
+          <span className="text-lane-400 text-sm">{compareOpen ? '▲' : '▼'}</span>
+        </button>
+        {compareOpen && (
+          <div className="border-t border-lane-100 px-2 py-3">
+            <div className="mb-2 flex items-center gap-1 rounded-full border border-lane-200 bg-white/90 p-1 self-start w-fit">
+              <button type="button"
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${compareMode === 'allFrames' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                onClick={() => setCompareMode('allFrames')}>Alle Frames</button>
+              <button type="button"
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${compareMode === 'final' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                onClick={() => setCompareMode('final')}>Endpunkte</button>
+            </div>
+            <div style={{ touchAction: 'none' }}>
+              {compareMode === 'allFrames' ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={allFrames.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.includes('gap') ? '' : v.split('-')[1]} interval={0} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip labelFormatter={(v: string) => v.includes('gap') ? '' : `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
+                    <Legend />
+                    {allFrames.gameBoundaries.map((boundary) => (
+                      <ReferenceLine key={boundary} x={boundary} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1.5} />
+                    ))}
+                    {allPlayerNames.map((name, i) => (
+                      <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2} dot={<PinDot />} activeDot={{ r: 4 }} connectNulls={false} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="game" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={['dataMin - 20', 'dataMax + 20']} />
+                    <Tooltip />
+                    <Legend />
+                    {allPlayerNames.map((name, i) => (
+                      <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2.5} dot={{ r: 5 }} activeDot={{ r: 7 }} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        {dayWinner && (
+          <StatCard label="Tages-Sieger" value={dayWinner.name} sub={`${dayWinner.totalPins} Pins gesamt`} />
+        )}
+        <StatCard label="Bestes Einzelspiel" value={bestSingle.score} sub={bestSingle.name} />
+        {strikeLeaders.length === 1 && (
+          <StatCard label="Meiste Strikes" value={strikeLeaders[0].dayStrikes} sub={`${strikeLeaders[0].name} · ⌀ ${strikeLeaders[0].strikeAvgValue} Pins/Strike`} />
+        )}
+        {strikeLeaders.length > 1 && (
+          <div className="rounded-xl bg-lane-50 py-2.5 px-4">
+            <p className="text-xs text-lane-500">Meiste Strikes ({maxStrikes})</p>
+            <div className="mt-1 grid gap-1">
+              {strikeLeaders.map((p, i) => (
+                <div key={p.name} className="flex items-center justify-between text-sm">
+                  <span className={`font-semibold ${i === 0 ? 'text-lane-900' : 'text-lane-700'}`}>{i + 1}. {p.name}</span>
+                  <span className="text-xs text-lane-500">⌀ {p.strikeAvgValue} Pins/Strike</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-xs font-semibold uppercase tracking-wider text-lane-500">Tagesform</p>
+          <InfoTip text="Vergleicht den Tagesdurchschnitt jedes Spielers mit seinem Gesamtdurchschnitt. Positiv = besser als sonst, negativ = unter dem üblichen Niveau." />
+        </div>
+        <div className="grid gap-1.5">
+          {dayPlayers.map((p) => (
+            <div key={p.name} className="flex items-center justify-between rounded-lg bg-lane-50 px-3 py-2 text-sm">
+              <span className="font-semibold text-lane-800">{p.name}</span>
+              <span className="text-xs text-lane-600">
+                {p.totalPins} Pins · Tag ⌀ {p.dayAvg} · Gesamt ⌀ {p.globalAvg}
+                {' '}
+                <span className={`font-semibold ${p.performancePct > 0 ? 'text-green-700' : p.performancePct < 0 ? 'text-red-600' : 'text-lane-600'}`}>
+                  ({p.performancePct > 0 ? '+' : ''}{p.performancePct}%)
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-1.5">
+        {sortedGames.map((game, i) => {
+          const maxScore = Math.max(...game.scores.map((s) => s.total_score));
+          const isExpanded = expandedGameId === game.id;
+          return (
+            <div key={game.id} className="rounded-xl border border-lane-100 bg-lane-50/50 overflow-hidden">
+              <button type="button"
+                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-lane-50"
+                onClick={() => setExpandedGameId(isExpanded ? null : game.id)}
+              >
+                <div className="min-w-0">
+                  <span className="text-sm font-semibold text-lane-800">Spiel {i + 1}</span>
+                  <span className="ml-2 text-xs text-lane-500">{game.location}</span>
+                  <div className="mt-0.5 flex flex-wrap gap-2">
+                    {game.scores.map((s) => (
+                      <span key={s.player_name}
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.total_score === maxScore ? 'bg-lane-800 text-white' : 'bg-lane-100 text-lane-700'}`}
+                      >{s.player_name}: {s.total_score}</span>
+                    ))}
+                  </div>
+                </div>
+                <span className="text-lane-400 text-sm shrink-0">{isExpanded ? '▲' : '▼'}</span>
+              </button>
+              {isExpanded && (
+                <div className="border-t border-lane-100 p-4">
+                  <GameChart game={game} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TodaySessionSection({ games, players }: {
+  games: GameRead[];
+  players: PlayerSummary[];
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayGames = games.filter((g) => g.played_at === today);
+  if (todayGames.length < 2) return null;
+
+  return (
+    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+      <SectionHeader
+        title={`Heutige Session · ${todayGames.length} Spiele`}
+        info="Übersicht über alle heutigen Spiele: Punkteverlauf, Tagessieger und Leistung im Vergleich zum persönlichen Durchschnitt."
+      />
+      <DaySessionContent dayGames={todayGames} players={players} />
+    </div>
+  );
+}
+
+function PastSessionsList({ games, players }: {
+  games: GameRead[];
+  players: PlayerSummary[];
+}) {
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const multiGameDays = getMultiGameDays(games).filter((d) => d.date !== today);
+
+  if (multiGameDays.length === 0) return null;
+
+  return (
+    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+      <h3 className="px-5 pt-4 pb-2 text-sm font-semibold text-lane-800">Vergangene Tages-Sessions</h3>
+      {multiGameDays.map((session, i) => {
+        const isExpanded = expandedDate === session.date;
+        const dayPlayers = computeDayPlayerStats(session.games, players);
+        const winner = dayPlayers[0];
+        return (
+          <div key={session.date}>
+            <button type="button"
+              className={`flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition hover:bg-lane-50 ${i < multiGameDays.length - 1 || isExpanded ? 'border-b border-lane-100' : ''}`}
+              onClick={() => setExpandedDate(isExpanded ? null : session.date)}
+            >
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold text-lane-900">{session.date}</h4>
+                <p className="mt-0.5 text-xs text-lane-500">
+                  {session.games.length} Spiele · {session.games[0].location}
+                  {winner ? ` · Sieger: ${winner.name} (${winner.totalPins} Pins)` : ''}
+                </p>
+              </div>
+              <span className="text-lane-400 text-sm shrink-0">{isExpanded ? '▲' : '▼'}</span>
+            </button>
+            {isExpanded && (
+              <div className="border-b border-lane-100 p-4">
+                <DaySessionContent dayGames={session.games} players={players} />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -979,9 +1444,17 @@ export default function StatsView() {
   }
 
   // ── Overview ──
+  const today = new Date().toISOString().slice(0, 10);
+  const todayGameCount = games.filter((g) => g.played_at === today).length;
+  const openGameHandler = (id: number) => setExpandedGameId((prev) => (prev === id ? null : id));
+
   return (
     <div className="grid gap-4">
-      <TodaysGames games={games} onOpenGame={(id) => setExpandedGameId((prev) => prev === id ? null : id)} />
+      {todayGameCount >= 2 ? (
+        <TodaySessionSection games={games} players={players} />
+      ) : (
+        <TodaysGames games={games} onOpenGame={openGameHandler} />
+      )}
 
       {expandedGameId && !selectedPlayer && (() => {
         const game = games.find((g) => g.id === expandedGameId);
@@ -1038,6 +1511,8 @@ export default function StatsView() {
       </div>
 
       <SocialStatsSection games={games} players={players} />
+
+      <PastSessionsList games={games} players={players} />
     </div>
   );
 }
