@@ -66,6 +66,46 @@ function isSpareFrame(frame: FrameData): boolean {
   return frame.throw2.trim() === '/';
 }
 
+function parseCompactFrameInput(rawValue: string, isTenthFrame: boolean): Pick<FrameData, 'throw1' | 'throw2' | 'throw3'> {
+  const raw = rawValue.trim();
+  if (!raw) return { throw1: '', throw2: '', throw3: '' };
+
+  if (raw.includes('|')) {
+    const parts = raw.split('|').map((part) => part.trim());
+    return {
+      throw1: parts[0] ?? '',
+      throw2: parts[1] ?? '',
+      throw3: isTenthFrame ? (parts[2] ?? '') : '',
+    };
+  }
+
+  const compact = raw.replace(/\s+/g, '');
+  const maxLength = isTenthFrame ? 3 : 2;
+  const chars = compact.slice(0, maxLength).split('');
+  return {
+    throw1: chars[0] ?? '',
+    throw2: chars[1] ?? '',
+    throw3: isTenthFrame ? (chars[2] ?? '') : '',
+  };
+}
+
+function formatCompactFrameInput(frame: FrameData, isTenthFrame: boolean): string {
+  const throw1 = String(frame.throw1 ?? '').trim();
+  const throw2 = String(frame.throw2 ?? '').trim();
+  const throw3 = String(frame.throw3 ?? '').trim();
+
+  if (isTenthFrame) {
+    if (!throw1 && !throw2 && !throw3) return '';
+    if (!throw2 && !throw3) return throw1;
+    if (!throw3) return `${throw1}|${throw2}`;
+    return `${throw1}|${throw2}|${throw3}`;
+  }
+
+  if (!throw1 && !throw2) return '';
+  if (!throw2) return throw1;
+  return `${throw1}|${throw2}`;
+}
+
 function validateBowlingScores(players: { name: string; frames: FrameData[] }[]): Set<string> {
   const errors = new Set<string>();
   for (let p = 0; p < players.length; p++) {
@@ -1051,7 +1091,7 @@ export default function UploadView() {
 
                 {/* Extraction results table */}
                 {extractionResult ? (
-                  <div className="mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80 -mx-1 sm:mx-0">
+                  <div className="mt-4 overflow-x-auto rounded-[1.3rem] border border-lane-200 bg-lane-50/80 p-4 -mx-1 sm:mx-0">
                     <table className="min-w-[700px] w-full border-collapse text-xs">
                       <thead>
                         <tr>
@@ -1067,7 +1107,7 @@ export default function UploadView() {
                           <tr key={pIdx}>
                             <td className="border border-lane-200 bg-lane-50 px-2 py-1.5">
                               <input
-                                className="w-full border-0 bg-white px-1 py-0.5 text-xs font-medium outline-none focus:ring-1 focus:ring-lane-800"
+                                className={`w-full border-0 px-1 py-0.5 text-xs font-medium text-lane-900 outline-none focus:ring-1 focus:ring-lane-800 ${player.name.trim() ? 'bg-lane-50' : 'bg-red-100/80 text-red-700'}`}
                                 value={player.name}
                                 onChange={(e) => updatePlayerName(pIdx, e.target.value)}
                               />
@@ -1077,20 +1117,16 @@ export default function UploadView() {
                               return (
                                 <td
                                   key={fIdx}
-                                  className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasError ? 'bg-red-100' : 'bg-white'}`}
+                                  className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasError ? 'bg-red-100/80' : 'bg-lane-50'}`}
                                 >
                                   <input
                                     className={`w-full border-0 bg-transparent text-center text-xs font-mono outline-none focus:ring-1 focus:ring-lane-800 ${hasError ? 'text-red-700' : ''}`}
-                                    value={`${frame.throw1}|${frame.throw2}${fIdx === 9 ? `|${frame.throw3}` : ''}`}
+                                    value={formatCompactFrameInput(frame, fIdx === 9)}
                                     onChange={(e) => {
-                                      const parts = e.target.value.split('|');
-                                      if (parts.length >= 2) {
-                                        updateFrame(pIdx, fIdx, 'throw1', parts[0]);
-                                        updateFrame(pIdx, fIdx, 'throw2', parts[1]);
-                                        if (fIdx === 9 && parts.length >= 3) {
-                                          updateFrame(pIdx, fIdx, 'throw3', parts[2]);
-                                        }
-                                      }
+                                      const parsed = parseCompactFrameInput(e.target.value, fIdx === 9);
+                                      updateFrame(pIdx, fIdx, 'throw1', parsed.throw1);
+                                      updateFrame(pIdx, fIdx, 'throw2', parsed.throw2);
+                                      if (fIdx === 9) updateFrame(pIdx, fIdx, 'throw3', parsed.throw3);
                                     }}
                                   />
                                 </td>
@@ -1126,7 +1162,7 @@ export default function UploadView() {
                         className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
                         type="button"
                         onClick={() => setShowSaveForm(true)}
-                        disabled={extractionResult.players.length === 0}
+                        disabled={extractionResult.players.length === 0 || extractionResult.players.some((player) => !player.name.trim()) || scoreErrors.size > 0}
                       >
                         Spiel speichern
                       </button>

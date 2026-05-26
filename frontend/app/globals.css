@@ -262,6 +262,21 @@ select {
   background-color: rgba(255, 226, 190, 0.12) !important;
 }
 
+:root[data-theme="dark"] .bg-red-100,
+:root[data-theme="dark"] .bg-red-100\/80 {
+  background-color: rgba(127, 29, 29, 0.58) !important;
+  color: #ffd9d9 !important;
+}
+
+:root[data-theme="dark"] .text-red-700 {
+  color: #ffb4b4 !important;
+}
+
+:root[data-theme="dark"] .hover\:bg-red-100:hover,
+:root[data-theme="dark"] .hover\:bg-red-50:hover {
+  background-color: rgba(153, 27, 27, 0.48) !important;
+}
+
 :root[data-theme="dark"] .chart-toggle {
   color: #f8ead8 !important;
   background-color: rgba(255, 226, 190, 0.08) !important;

@@ -25,7 +25,21 @@ type DayPlayerStats = {
   wins: number;
   avgScore: number;
   medianScore: number;
+  openFrameRate: number;
 };
+
+type DayUnderdog = {
+  name: string;
+  dayAverage: number;
+  globalAverage: number;
+  upliftPercent: number;
+};
+
+function isOpenFrame(frame: FrameData) {
+  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
+  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
+  return throw1 !== 'x' && throw2 !== 'x' && throw2 !== '/';
+}
 
 function median(values: number[]) {
   if (values.length === 0) return 0;
@@ -35,30 +49,79 @@ function median(values: number[]) {
 }
 
 function computeDayPlayerStats(games: GameRead[]): DayPlayerStats[] {
-  const map = new Map<string, { pins: number; games: number; wins: number; scores: number[] }>();
+  const map = new Map<string, { pins: number; games: number; wins: number; scores: number[]; openFrames: number; totalFrames: number }>();
   
   for (const game of games) {
     const highScore = Math.max(...game.scores.map((score) => score.total_score));
     for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { pins: 0, games: 0, wins: 0, scores: [] };
+      const entry = map.get(score.player_name) ?? { pins: 0, games: 0, wins: 0, scores: [], openFrames: 0, totalFrames: 0 };
       entry.pins += score.total_score;
       entry.games++;
       entry.scores.push(score.total_score);
+      entry.openFrames += score.frames.filter(isOpenFrame).length;
+      entry.totalFrames += score.frames.length;
       if (score.total_score === highScore) entry.wins++;
       map.set(score.player_name, entry);
     }
   }
 
   return [...map.entries()]
-    .map(([name, { pins, games, wins, scores }]) => ({
+    .map(([name, { pins, games, wins, scores, openFrames, totalFrames }]) => ({
       name,
       totalPins: pins,
       gamesCount: games,
       wins,
       avgScore: Math.round((pins / games) * 10) / 10,
       medianScore: Math.round(median(scores) * 10) / 10,
+      openFrameRate: totalFrames > 0 ? Math.round((openFrames / totalFrames) * 1000) / 10 : 0,
     }))
     .sort((a, b) => b.wins - a.wins || b.totalPins - a.totalPins);
+}
+
+function buildGlobalAverageMap(games: GameRead[]) {
+  const map = new Map<string, { sum: number; count: number }>();
+  for (const game of games) {
+    for (const score of game.scores) {
+      const entry = map.get(score.player_name) ?? { sum: 0, count: 0 };
+      entry.sum += score.total_score;
+      entry.count += 1;
+      map.set(score.player_name, entry);
+    }
+  }
+
+  const avgMap = new Map<string, number>();
+  for (const [name, { sum, count }] of map.entries()) {
+    avgMap.set(name, count > 0 ? sum / count : 0);
+  }
+  return avgMap;
+}
+
+function computeDayUnderdog(dayPlayers: DayPlayerStats[], globalAverages: Map<string, number>): DayUnderdog | null {
+  if (dayPlayers.length === 0) return null;
+
+  let best: DayUnderdog | null = null;
+  for (const player of dayPlayers) {
+    const globalAverage = globalAverages.get(player.name) ?? 0;
+    if (globalAverage <= 0) continue;
+
+    const upliftPercent = ((player.avgScore - globalAverage) / globalAverage) * 100;
+    if (!best || upliftPercent > best.upliftPercent) {
+      best = {
+        name: player.name,
+        dayAverage: player.avgScore,
+        globalAverage: Math.round(globalAverage * 10) / 10,
+        upliftPercent: Math.round(upliftPercent * 10) / 10,
+      };
+    }
+  }
+
+  return best;
+}
+
+function signedPercent(value: number) {
+  if (value === 0) return '±0%';
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
 function buildDayGameHistoryChart(games: GameRead[]) {
@@ -156,11 +219,12 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   }
 
   const dayPlayers = computeDayPlayerStats(dayGames);
-  const winner = dayPlayers[0];
   const totalPins = dayPlayers.reduce((sum, p) => sum + p.totalPins, 0);
   const avgPinsPerGame = Math.round((totalPins / dayGames.length) * 10) / 10;
   const dayGameHistoryChart = buildDayGameHistoryChart(dayGames);
   const sessionScoreChart = buildSessionScoreChart(dayGames);
+  const globalAverages = buildGlobalAverageMap(games);
+  const underdog = computeDayUnderdog(dayPlayers, globalAverages);
 
   const toggleDayPlayer = (name: string) => {
     setHiddenDayPlayers((current) => {
@@ -183,7 +247,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           <h1 className="text-2xl font-bold text-lane-900">{date}</h1>
           <p className="text-sm text-lane-600 mt-2">{dayGames.length} Spiel{dayGames.length !== 1 ? 'e' : ''} · Ort: {dayGames[0].location}</p>
           
-          <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
               <p className="text-xs text-lane-600">Gesamtpunkte</p>
               <p className="mt-1 text-lg font-bold text-lane-900">{totalPins}</p>
@@ -195,6 +259,17 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
               <p className="text-xs text-lane-600">Ø pro Spiel</p>
               <p className="mt-1 text-lg font-bold text-lane-900">{avgPinsPerGame}</p>
+            </div>
+            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+              <p className="text-xs text-lane-600">Underdog des Abends</p>
+              {underdog ? (
+                <>
+                  <p className="mt-1 text-lg font-bold text-lane-900">{underdog.name}</p>
+                  <p className="text-xs text-lane-600">{signedPercent(underdog.upliftPercent)} vs Ø ({underdog.dayAverage} / {underdog.globalAverage})</p>
+                </>
+              ) : (
+                <p className="mt-1 text-sm text-lane-600">Nicht genug Daten</p>
+              )}
             </div>
           </div>
         </div>
@@ -210,7 +285,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
                     <span className="text-base font-semibold text-lane-900">{player.name}</span>
                     {i === 0 && <span className="text-sm">👑</span>}
                   </div>
-                  <p className="text-xs text-lane-600 mt-1">{player.gamesCount} Spiel{player.gamesCount !== 1 ? 'e' : ''} · Median {player.medianScore}</p>
+                  <p className="text-xs text-lane-600 mt-1">{player.gamesCount} Spiel{player.gamesCount !== 1 ? 'e' : ''} · Median {player.medianScore} · {player.openFrameRate}% offen</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-lane-900">{player.totalPins} Pins</p>

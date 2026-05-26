@@ -9,6 +9,7 @@ import type { FrameData, GameRead } from '@/types';
 type PlayerSummary = {
   name: string;
   gamesPlayed: number;
+  wins: number;
   avgScore: number;
   medianScore: number;
   maxScore: number;
@@ -31,11 +32,13 @@ function median(values: number[]) {
 }
 
 function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
-  const map = new Map<string, { scores: number[]; lastPlayed: string; openFrames: number; totalFrames: number }>();
+  const map = new Map<string, { scores: number[]; wins: number; lastPlayed: string; openFrames: number; totalFrames: number }>();
   for (const game of games) {
+    const highScore = Math.max(...game.scores.map((score) => score.total_score));
     for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { scores: [], lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
+      const entry = map.get(score.player_name) ?? { scores: [], wins: 0, lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
       entry.scores.push(score.total_score);
+      if (score.total_score === highScore) entry.wins++;
       entry.openFrames += score.frames.filter(isOpenFrame).length;
       entry.totalFrames += score.frames.length;
       if (game.played_at > entry.lastPlayed) entry.lastPlayed = game.played_at;
@@ -43,9 +46,10 @@ function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
     }
   }
   return [...map.entries()]
-    .map(([name, { scores, lastPlayed, openFrames, totalFrames }]) => ({
+    .map(([name, { scores, wins, lastPlayed, openFrames, totalFrames }]) => ({
       name,
       gamesPlayed: scores.length,
+      wins,
       avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
       medianScore: Math.round(median(scores) * 10) / 10,
       maxScore: Math.max(...scores),
@@ -109,7 +113,7 @@ export default function PlayersListPage() {
               <div className="rounded-[1.75rem] border border-white/15 bg-white/10 p-5 text-right backdrop-blur-xl">
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-100/70">Top Ø Score</p>
                 <p className="mt-2 text-5xl font-black text-white">{players[0].avgScore}</p>
-                <p className="mt-1 text-sm font-semibold text-amber-50/70">Median {players[0].medianScore} · Offen {players[0].openFrameRate}%</p>
+                <p className="mt-1 text-sm font-semibold text-amber-50/70">{players[0].wins} Siege · Median {players[0].medianScore} · Offen {players[0].openFrameRate}%</p>
               </div>
             </div>
           </Link>
@@ -142,6 +146,7 @@ export default function PlayersListPage() {
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="leaderboard-chip">{player.gamesPlayed} Spiele</span>
+                    <span className="leaderboard-chip">{player.wins} Siege</span>
                     <span className="leaderboard-chip">{player.totalPins} Pins gesamt</span>
                     <span className="leaderboard-chip">{player.openFrameRate}% offene Frames</span>
                     <span className="leaderboard-chip">zuletzt {player.lastPlayed}</span>

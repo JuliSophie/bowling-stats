@@ -1093,7 +1093,7 @@ export default function BowlingApp() {
 
                   {/* Extraction results table */}
                   {extractionResult ? (
-                    <div className="mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80 -mx-1 sm:mx-0">
+                    <div className="mt-4 overflow-x-auto rounded-[1.3rem] border border-lane-200 bg-lane-50/80 p-4 -mx-1 sm:mx-0">
                       <table className="min-w-[700px] w-full border-collapse text-xs">
                         <thead>
                           <tr>
@@ -1108,7 +1108,7 @@ export default function BowlingApp() {
                           {extractionResult.players.map((player, pIdx) => (
                             <tr key={pIdx}>
                               <td className="border border-lane-200 px-1 py-1">
-                                <input className={`w-full min-w-[80px] rounded px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${player.name.trim() ? 'bg-transparent' : 'bg-red-100'}`}
+                                <input className={`w-full min-w-[80px] rounded px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-lane-50 focus:ring-1 focus:ring-blue-400 ${player.name.trim() ? 'bg-lane-50' : 'bg-red-100/80'}`}
                                   value={player.name} onChange={(e) => updatePlayerName(pIdx, e.target.value)} placeholder="Name fehlt" />
                               </td>
                               {player.frames.map((frame, fIdx) => {
@@ -1116,11 +1116,11 @@ export default function BowlingApp() {
                                 return (
                                   <td key={fIdx} className="border border-lane-200 px-0 py-0">
                                     <div className="flex border-b border-lane-100">
-                                      <input className={`w-1/2 border-r border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw1')}`} value={frame.throw1} onChange={(e) => updateFrame(pIdx, fIdx, 'throw1', e.target.value)} placeholder="nA" />
-                                      <input className={`w-1/2 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw2')}`} value={frame.throw2} onChange={(e) => updateFrame(pIdx, fIdx, 'throw2', e.target.value)} placeholder="nA" />
-                                      {fIdx === 9 ? <input className={`w-1/2 border-l border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw3')}`} value={frame.throw3} onChange={(e) => updateFrame(pIdx, fIdx, 'throw3', e.target.value)} placeholder="nA" /> : null}
+                                      <input className={`w-1/2 border-r border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-lane-50 focus:ring-1 focus:ring-blue-400 ${errClass('throw1')}`} value={frame.throw1} onChange={(e) => updateFrame(pIdx, fIdx, 'throw1', e.target.value)} placeholder="nA" />
+                                      <input className={`w-1/2 px-1 py-0.5 text-center outline-none focus:bg-lane-50 focus:ring-1 focus:ring-blue-400 ${errClass('throw2')}`} value={frame.throw2} onChange={(e) => updateFrame(pIdx, fIdx, 'throw2', e.target.value)} placeholder="nA" />
+                                      {fIdx === 9 ? <input className={`w-1/2 border-l border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-lane-50 focus:ring-1 focus:ring-blue-400 ${errClass('throw3')}`} value={frame.throw3} onChange={(e) => updateFrame(pIdx, fIdx, 'throw3', e.target.value)} placeholder="nA" /> : null}
                                     </div>
-                                    <input className={`w-full px-1 py-0.5 text-center text-lane-600 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('cumulative')}`} value={frame.cumulative} onChange={(e) => updateFrame(pIdx, fIdx, 'cumulative', e.target.value)} placeholder="nA" />
+                                    <input className={`w-full px-1 py-0.5 text-center text-lane-600 outline-none focus:bg-lane-50 focus:ring-1 focus:ring-blue-400 ${errClass('cumulative')}`} value={frame.cumulative} onChange={(e) => updateFrame(pIdx, fIdx, 'cumulative', e.target.value)} placeholder="nA" />
                                   </td>
                                 );
                               })}

@@ -19,11 +19,29 @@ import {
 type PlayerSummary = {
   name: string;
   gamesPlayed: number;
+  wins: number;
   avgScore: number;
   medianScore: number;
   maxScore: number;
   lastPlayed: string;
   openFrameRate: number;
+};
+
+type PlayerAdvancedStats = {
+  finishStrength: number;
+  fatigueFactor: number;
+  strikeFollowRate: number;
+  comebackRate: number;
+  bestStrikeStreak: number;
+  bestStrikeStreakLabel: string;
+  firstThrowAverage: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalStrikes: number;
+  avgPointsPerStrike: number;
+  totalSpares: number;
+  avgPointsPerSpare: number;
 };
 
 function isOpenFrame(frame: FrameData) {
@@ -44,12 +62,170 @@ function signedDelta(value: number) {
   return value > 0 ? `+${value}` : String(value);
 }
 
+function parseThrowPins(value: unknown) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text || text === '-' || text === 'f') return 0;
+  if (text === 'x') return 10;
+  const parsed = parseInt(text, 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function isStrikeFrame(frame: FrameData) {
+  return String(frame.throw1 ?? '').trim().toLowerCase() === 'x';
+}
+
+function isSpareFrame(frame: FrameData) {
+  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
+  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
+  return throw1 !== 'x' && throw2 === '/';
+}
+
+function getFramePoints(frame: FrameData, previousCumulative: number) {
+  const cumulative = parseInt(String(frame.cumulative ?? ''), 10);
+  if (Number.isNaN(cumulative)) return null;
+  return cumulative - previousCumulative;
+}
+
+function average(values: number[]) {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildBestStrikeStreakLabel(streak: number) {
+  if (streak >= 3) return 'Turkey';
+  if (streak === 2) return 'Double';
+  if (streak === 1) return 'Single';
+  return 'Keine Serie';
+}
+
+function buildPlayerAdvancedStats(games: GameRead[], playerName: string): PlayerAdvancedStats {
+  const playerGames = getPlayerGames(games, playerName).slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const allFramePoints: number[] = [];
+  const tenthFramePoints: number[] = [];
+  const firstThrowPins: number[] = [];
+  const strikeFramePoints: number[] = [];
+  const spareFramePoints: number[] = [];
+  const gameScores: number[] = [];
+
+  let wins = 0;
+  let losses = 0;
+  let totalStrikes = 0;
+  let totalSpares = 0;
+  let strikeFollowOpportunities = 0;
+  let strikeFollowSuccesses = 0;
+  let comebackOpportunities = 0;
+  let comebackSuccesses = 0;
+  let bestStrikeStreak = 0;
+
+  for (const game of playerGames) {
+    const playerScore = game.scores.find((score) => score.player_name === playerName);
+    if (!playerScore) continue;
+
+    const highScore = Math.max(...game.scores.map((score) => score.total_score));
+    if (playerScore.total_score === highScore) wins++;
+    else losses++;
+    gameScores.push(playerScore.total_score);
+
+    let runningStrikeStreak = 0;
+    let previousCumulative = 0;
+
+    playerScore.frames.forEach((frame, index) => {
+      const strike = isStrikeFrame(frame);
+      const spare = isSpareFrame(frame);
+      const open = !strike && !spare;
+
+      firstThrowPins.push(parseThrowPins(frame.throw1));
+
+      if (strike) {
+        totalStrikes++;
+        runningStrikeStreak++;
+        if (runningStrikeStreak > bestStrikeStreak) bestStrikeStreak = runningStrikeStreak;
+      } else {
+        runningStrikeStreak = 0;
+      }
+
+      if (spare) totalSpares++;
+
+      const framePoints = getFramePoints(frame, previousCumulative);
+      const cumulative = parseInt(String(frame.cumulative ?? ''), 10);
+      if (!Number.isNaN(cumulative)) previousCumulative = cumulative;
+
+      if (framePoints != null) {
+        allFramePoints.push(framePoints);
+        if (index === 9) tenthFramePoints.push(framePoints);
+        if (strike) strikeFramePoints.push(framePoints);
+        if (spare) spareFramePoints.push(framePoints);
+      }
+
+      if (index >= playerScore.frames.length - 1) return;
+
+      const nextFrame = playerScore.frames[index + 1];
+      const nextStrike = isStrikeFrame(nextFrame);
+      const nextSpare = isSpareFrame(nextFrame);
+
+      if (strike) {
+        strikeFollowOpportunities++;
+        if (nextStrike) strikeFollowSuccesses++;
+      }
+
+      if (open) {
+        comebackOpportunities++;
+        if (nextStrike || nextSpare) comebackSuccesses++;
+      }
+    });
+  }
+
+  const avgFramePoints = average(allFramePoints);
+  const avgTenthFramePoints = average(tenthFramePoints);
+  const firstGameScore = gameScores[0] ?? 0;
+  const laterGameScores = gameScores.slice(1);
+  const avgLaterGames = average(laterGameScores);
+  const fatigueFactor = firstGameScore > 0 && laterGameScores.length > 0
+    ? Math.round((((firstGameScore - avgLaterGames) / firstGameScore) * 100) * 10) / 10
+    : 0;
+
+  return {
+    finishStrength: Math.round((avgTenthFramePoints - avgFramePoints) * 10) / 10,
+    fatigueFactor,
+    strikeFollowRate: strikeFollowOpportunities > 0 ? Math.round((strikeFollowSuccesses / strikeFollowOpportunities) * 1000) / 10 : 0,
+    comebackRate: comebackOpportunities > 0 ? Math.round((comebackSuccesses / comebackOpportunities) * 1000) / 10 : 0,
+    bestStrikeStreak,
+    bestStrikeStreakLabel: buildBestStrikeStreakLabel(bestStrikeStreak),
+    firstThrowAverage: Math.round(average(firstThrowPins) * 10) / 10,
+    wins,
+    losses,
+    winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
+    totalStrikes,
+    avgPointsPerStrike: Math.round(average(strikeFramePoints) * 10) / 10,
+    totalSpares,
+    avgPointsPerSpare: Math.round(average(spareFramePoints) * 10) / 10,
+  };
+}
+
+function formatCompactPercent(value: number) {
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(1);
+}
+
+function formatOneDecimal(value: number) {
+  if (Number.isInteger(value)) return value.toFixed(1);
+  return value.toFixed(1);
+}
+
+function formatSignedPercent(value: number) {
+  if (value === 0) return '±0%';
+  const rounded = Math.round(value * 10) / 10;
+  return `${rounded > 0 ? '+' : ''}${rounded}%`;
+}
+
 function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
-  const map = new Map<string, { scores: number[]; lastPlayed: string; openFrames: number; totalFrames: number }>();
+  const map = new Map<string, { scores: number[]; wins: number; lastPlayed: string; openFrames: number; totalFrames: number }>();
   for (const game of games) {
+    const highScore = Math.max(...game.scores.map((score) => score.total_score));
     for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { scores: [], lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
+      const entry = map.get(score.player_name) ?? { scores: [], wins: 0, lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
       entry.scores.push(score.total_score);
+      if (score.total_score === highScore) entry.wins++;
       entry.openFrames += score.frames.filter(isOpenFrame).length;
       entry.totalFrames += score.frames.length;
       if (game.played_at > entry.lastPlayed) entry.lastPlayed = game.played_at;
@@ -57,9 +233,10 @@ function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
     }
   }
   return [...map.entries()]
-    .map(([name, { scores, lastPlayed, openFrames, totalFrames }]) => ({
+    .map(([name, { scores, wins, lastPlayed, openFrames, totalFrames }]) => ({
       name,
       gamesPlayed: scores.length,
+      wins,
       avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
       medianScore: Math.round(median(scores) * 10) / 10,
       maxScore: Math.max(...scores),
@@ -113,6 +290,19 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
       <p className="text-xs text-lane-600">{label}</p>
       <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
       {sub && <p className="text-xs text-lane-400">{sub}</p>}
+    </div>
+  );
+}
+
+function InsightCard({ title, value, description }: { title: string; value: string; description: string }) {
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      <div className="flex items-center gap-1.5">
+        <p className="text-xs font-semibold text-lane-600">{title}</p>
+        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-lane-300 text-[10px] font-bold text-lane-500">i</span>
+      </div>
+      <p className="mt-1 text-2xl font-black text-lane-900">{value}</p>
+      <p className="mt-1 text-xs text-lane-500">{description}</p>
     </div>
   );
 }
@@ -177,6 +367,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
 
   const playerGames = getPlayerGames(games, playerName).slice().sort((a, b) => b.played_at.localeCompare(a.played_at) || b.id - a.id);
   const summary = derivePlayerSummaries(games).find((p) => p.name === playerName);
+  const advanced = buildPlayerAdvancedStats(games, playerName);
   const trendData = buildPlayerTrendData(games, playerName);
   const gameHistoryChart = buildPlayerGameHistoryChart(games, playerName);
 
@@ -243,14 +434,69 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
           </div>
           
           {summary && (
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <StatCard label="Spiele" value={summary.gamesPlayed} />
+              <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" />
               <StatCard label="Durchschnitt" value={summary.avgScore} />
               <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} />
               <StatCard label="Bestleistung" value={summary.maxScore} />
               <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} />
             </div>
           )}
+        </div>
+
+        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+          <h2 className="text-lg font-semibold text-lane-800">Konstanz & Muster</h2>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <InsightCard
+              title="Schlussstärke"
+              value={signedDelta(advanced.finishStrength)}
+              description="10. Frame vs. Durchschnitt"
+            />
+            <InsightCard
+              title="Ermüdungsfaktor"
+              value={formatSignedPercent(advanced.fatigueFactor)}
+              description="Spiel 1 vs. spätere Spiele"
+            />
+            <InsightCard
+              title="Strike-Folge"
+              value={`${formatCompactPercent(advanced.strikeFollowRate)}%`}
+              description="Folge-Strike nach Strike"
+            />
+            <InsightCard
+              title="Comeback-Rate"
+              value={`${formatCompactPercent(advanced.comebackRate)}%`}
+              description="Strike/Spare nach offenem Frame"
+            />
+            <InsightCard
+              title="Beste Serie"
+              value={advanced.bestStrikeStreakLabel}
+              description={`${advanced.bestStrikeStreak} Strikes am Stück`}
+            />
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <InsightCard
+              title="Erster Wurf Ø"
+              value={formatOneDecimal(advanced.firstThrowAverage)}
+              description="Ø Pins mit dem 1. Wurf"
+            />
+            <InsightCard
+              title="Win/Lose"
+              value={`${advanced.wins}/${advanced.losses}`}
+              description={`${formatCompactPercent(advanced.winRate)}% Win-Rate`}
+            />
+            <InsightCard
+              title="Strikes gesamt"
+              value={String(advanced.totalStrikes)}
+              description={`Ø ${formatOneDecimal(advanced.avgPointsPerStrike)} Pins/Strike`}
+            />
+            <InsightCard
+              title="Spares gesamt"
+              value={String(advanced.totalSpares)}
+              description={`Ø ${formatOneDecimal(advanced.avgPointsPerSpare)} Pins/Spare`}
+            />
+          </div>
         </div>
 
         {trendData.length > 1 && (
