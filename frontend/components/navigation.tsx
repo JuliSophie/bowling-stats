@@ -16,17 +16,15 @@ export default function Navigation() {
 
   useEffect(() => {
     const root = document.documentElement;
-    const stored = localStorage.getItem('bowling-theme');
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const systemDark = media.matches;
-    const initialTheme = stored === 'light' || stored === 'dark' ? stored : systemDark ? 'dark' : 'light';
+    const initialTheme = systemDark ? 'dark' : 'light';
 
     root.dataset.theme = initialTheme;
     root.style.colorScheme = initialTheme;
     setTheme(initialTheme);
 
     const onSystemThemeChange = (event: MediaQueryListEvent) => {
-      if (localStorage.getItem('bowling-theme')) return;
       const nextTheme = event.matches ? 'dark' : 'light';
       root.dataset.theme = nextTheme;
       root.style.colorScheme = nextTheme;
@@ -41,7 +39,6 @@ export default function Navigation() {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = nextTheme;
     document.documentElement.style.colorScheme = nextTheme;
-    localStorage.setItem('bowling-theme', nextTheme);
     setTheme(nextTheme);
   };
 

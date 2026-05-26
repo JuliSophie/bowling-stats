@@ -1,7 +1,18 @@
 import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse, TableBuildResult } from '@/types';
 
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
+const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
+
+function resolveApiBase() {
+  // Android install checks can fail when a HTTPS web app still references HTTP API origins.
+  if (typeof window !== 'undefined' && window.location.protocol === 'https:' && /^http:\/\//i.test(RAW_API_BASE)) {
+    // Prefer same-origin reverse proxy path in secure contexts to avoid mixed content.
+    return '/api';
+  }
+  return RAW_API_BASE;
+}
+
+const API_BASE = resolveApiBase();
 
 
 async function extractErrorMessage(response: Response): Promise<string> {
