@@ -1104,44 +1104,63 @@ export default function UploadView() {
                       </thead>
                       <tbody>
                         {extractionResult.players.map((player, pIdx) => (
-                          <tr key={pIdx}>
-                            <td className="border border-lane-200 bg-lane-50 px-2 py-1.5">
-                              <input
-                                className={`w-full border-0 px-1 py-0.5 text-xs font-medium text-lane-900 outline-none focus:ring-1 focus:ring-lane-800 ${player.name.trim() ? 'bg-lane-50' : 'bg-red-100/80 text-red-700'}`}
-                                value={player.name}
-                                onChange={(e) => updatePlayerName(pIdx, e.target.value)}
-                              />
-                            </td>
-                            {player.frames.map((frame, fIdx) => {
-                              const hasError = scoreErrors.has(`${pIdx}-${fIdx}-throw1`) || scoreErrors.has(`${pIdx}-${fIdx}-throw2`) || scoreErrors.has(`${pIdx}-${fIdx}-cumulative`);
-                              return (
-                                <td
-                                  key={fIdx}
-                                  className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasError ? 'bg-red-100/80' : 'bg-lane-50'}`}
+                          <>
+                            <tr key={`${pIdx}-throws`}>
+                              <td rowSpan={2} className="border border-lane-200 bg-lane-50 px-2 py-1.5 align-middle">
+                                <input
+                                  className={`w-full border-0 px-1 py-0.5 text-xs font-medium text-lane-900 outline-none focus:ring-1 focus:ring-lane-800 ${player.name.trim() ? 'bg-lane-50' : 'bg-red-100/80 text-red-700'}`}
+                                  value={player.name}
+                                  onChange={(e) => updatePlayerName(pIdx, e.target.value)}
+                                />
+                              </td>
+                              {player.frames.map((frame, fIdx) => {
+                                const hasThrowError = scoreErrors.has(`${pIdx}-${fIdx}-throw1`) || scoreErrors.has(`${pIdx}-${fIdx}-throw2`) || (fIdx === 9 && scoreErrors.has(`${pIdx}-${fIdx}-throw3`));
+                                return (
+                                  <td
+                                    key={fIdx}
+                                    className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasThrowError ? 'bg-red-100/80' : 'bg-lane-50'}`}
+                                  >
+                                    <input
+                                      className={`w-full border-0 bg-transparent text-center text-xs font-mono outline-none focus:ring-1 focus:ring-lane-800 ${hasThrowError ? 'text-red-700' : ''}`}
+                                      value={formatCompactFrameInput(frame, fIdx === 9)}
+                                      onChange={(e) => {
+                                        const parsed = parseCompactFrameInput(e.target.value, fIdx === 9);
+                                        updateFrame(pIdx, fIdx, 'throw1', parsed.throw1);
+                                        updateFrame(pIdx, fIdx, 'throw2', parsed.throw2);
+                                        if (fIdx === 9) updateFrame(pIdx, fIdx, 'throw3', parsed.throw3);
+                                      }}
+                                    />
+                                  </td>
+                                );
+                              })}
+                              <td rowSpan={2} className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center align-middle">
+                                <button
+                                  className="rounded px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                  type="button"
+                                  onClick={() => removePlayerRow(pIdx)}
                                 >
-                                  <input
-                                    className={`w-full border-0 bg-transparent text-center text-xs font-mono outline-none focus:ring-1 focus:ring-lane-800 ${hasError ? 'text-red-700' : ''}`}
-                                    value={formatCompactFrameInput(frame, fIdx === 9)}
-                                    onChange={(e) => {
-                                      const parsed = parseCompactFrameInput(e.target.value, fIdx === 9);
-                                      updateFrame(pIdx, fIdx, 'throw1', parsed.throw1);
-                                      updateFrame(pIdx, fIdx, 'throw2', parsed.throw2);
-                                      if (fIdx === 9) updateFrame(pIdx, fIdx, 'throw3', parsed.throw3);
-                                    }}
-                                  />
-                                </td>
-                              );
-                            })}
-                            <td className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center">
-                              <button
-                                className="rounded px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100"
-                                type="button"
-                                onClick={() => removePlayerRow(pIdx)}
-                              >
-                                Löschen
-                              </button>
-                            </td>
-                          </tr>
+                                  Löschen
+                                </button>
+                              </td>
+                            </tr>
+                            <tr key={`${pIdx}-cumulative`}>
+                              {player.frames.map((frame, fIdx) => {
+                                const hasResultError = scoreErrors.has(`${pIdx}-${fIdx}-cumulative`);
+                                return (
+                                  <td
+                                    key={fIdx}
+                                    className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasResultError ? 'bg-red-100/80' : 'bg-lane-50'}`}
+                                  >
+                                    <input
+                                      className={`w-full border-0 bg-transparent text-center text-xs font-mono outline-none focus:ring-1 focus:ring-lane-800 ${hasResultError ? 'text-red-700' : ''}`}
+                                      value={frame.cumulative}
+                                      onChange={(e) => updateFrame(pIdx, fIdx, 'cumulative', e.target.value)}
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          </>
                         ))}
                       </tbody>
                     </table>
