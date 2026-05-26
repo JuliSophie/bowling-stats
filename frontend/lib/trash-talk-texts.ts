@@ -12,6 +12,7 @@ export const score = {
     'bei dem Score muss man fragen: war das überhaupt legal?',
     'Gratulation, du hast offiziell das Recht auf eine unerträgliche Siegespose.',
     'zweihundert-plus unter Hobbyisten ist wie ein Ferrari auf dem Supermarktparkplatz.',
+    'dein Score ist so hoch, die anderen überlegen, ob du noch zur Beerdigung ihrer Motivation eingeladen wirst.',
   ],
   veryStrong: [
     'da darf man ruhig kurz arrogant gucken. Sonnenbrille optional.',
@@ -20,6 +21,7 @@ export const score = {
     'das ist das Niveau, ab dem die anderen aufhören zu lachen.',
     'deine Mitspieler googeln jetzt heimlich "wie wird man besser im Bowling".',
     'stark genug, um den Rest des Abends darüber zu reden. Und das wirst du.',
+    'bei dem Score sterben Freundschaften. Nicht sofort, aber der Samen ist gesät.',
   ],
   strong: [
     'stabile Nummer — die Bahn kann heute nicht als Ausrede herhalten.',
@@ -28,6 +30,7 @@ export const score = {
     'der Score sagt: ich weiß ungefähr, was ich tue. Die Betonung liegt auf ungefähr.',
     'damit lässt sich arbeiten. Und angeben. Vor allem angeben.',
     'respektabler Score. Die Mitspieler müssen sich jetzt was einfallen lassen oder einfach traurig sein.',
+    'gut genug, um die Hoffnung der anderen langsam und qualvoll zu ersticken.',
   ],
   solid: [
     'nicht glamourös, aber immerhin keine komplette Spurensicherung nötig.',
@@ -36,6 +39,7 @@ export const score = {
     'das ist der Bereich, in dem man sagt "war okay" und es sogar stimmt.',
     'weder peinlich noch prahlwürdig. Genau die Mitte, die keiner will.',
     'reicht fürs Protokoll, reicht nicht fürs Poesiealbum.',
+    'das sportliche Äquivalent zu "er hat sich bemüht" auf dem Zeugnis.',
   ],
   casual: [
     'da ist noch Luft für weniger Chaos und mehr Absicht.',
@@ -44,6 +48,7 @@ export const score = {
     'das ist die Punktzahl, bei der man sagt "ich hatte Spaß" und meint "redet nicht drüber".',
     'immerhin: aufrecht gestanden, Kugel losgelassen, Pins getroffen. Manche davon.',
     'technisch gesehen ist das ein Score. Emotional gesehen ist das eine Baustelle.',
+    'wenn das dein Lebenslauf wäre, würde er im Papierkorb landen. Mit Anlauf.',
   ],
   needsWork: [
     'Spares und Konstanz würden hier mehr helfen als ein Exorzist.',
@@ -52,12 +57,93 @@ export const score = {
     'das ist weniger Bowling als betreutes Kugelrollen.',
     'die Rinne hat heute mehr Kontakt mit der Kugel als die Pins.',
     'Tipp: die Pins stehen am Ende der Bahn. Gerne mal in die Richtung werfen.',
+    'dein Score hat die gleiche Überlebenschance wie eine Schneeflocke in der Hölle.',
+  ],
+} as const;
+
+// --- Player-relative score: compares one score to that player's own baseline ---
+export const playerRelativeScore = {
+  baseline: (average: number) => [
+    `dein persönlicher Nullpunkt liegt bei Ø ${average}. Ab hier wird nicht mehr pauschal bewertet, sondern gegen dich selbst verhandelt.`,
+    `Ø ${average} ist deine Normalform. Alles darunter ist Beweismaterial, alles darüber darf als Angeberei eingereicht werden.`,
+    `das ist deine Hausmarke bei Ø ${average}. Die Leiste nimmt dich ab jetzt persönlich, nicht global.`,
+    `dein Durchschnitt ist hier der Maßstab. Praktisch: die Statistik kennt deine Ausreden schon vorher.`,
+  ],
+  disaster: (score: number, average: number, delta: string) => [
+    `${score} bei Ø ${average}? ${delta} Pins unter Normalform. Das war kein Ausrutscher, das war ein Treppensturz.`,
+    `${delta} Pins gegen dich selbst verloren. Die Pins mussten gar nicht gut sein, du hast das intern geregelt.`,
+    `${score} ist für dich nicht "schlechter Tag", das ist eine schriftliche Entschuldigung an die eigene Statistik.`,
+    `bei Ø ${average} ist ${score} ein Tatort. Kreideumriss um die Kugel, bitte.`,
+  ],
+  bad: (score: number, average: number, delta: string) => [
+    `${delta} Pins unter deinem Schnitt. Nicht katastrophal, aber die Normalform hat sichtbar den Bus verpasst.`,
+    `${score} ist für dich schon dünnes Eis. Und du bist mit Bowlingschuhen draufgetanzt.`,
+    `unter eigener Form. Nicht komplett peinlich, aber die Statistik schaut streng über den Brillenrand.`,
+    `bei Ø ${average} fühlt sich ${score} an wie: Kugel dabei, Fokus zuhause gelassen.`,
+  ],
+  slightlyBelow: (score: number, average: number, delta: string) => [
+    `${delta} Pins unter Ø ${average}. Kein Drama, eher ein kleiner statistischer Seufzer.`,
+    `${score} liegt knapp unter deiner Normalform. Ärgerlich, aber noch kein Grund, die Schuhe zu verbrennen.`,
+    `leicht unter Soll. Die Pins haben gewonnen, aber nur nach Punkten, nicht durch K.O.`,
+    `für dich etwas mau, aber noch im Bereich "kann passieren". Leider passiert es halt schriftlich.`,
+  ],
+  onPar: (score: number, average: number) => [
+    `${score} liegt ziemlich genau auf deinem Ø ${average}. Stabil, berechenbar, emotional mittelwarm.`,
+    `das ist deine Normalform. Nicht Feuerwerk, aber auch kein Feuerwehr-Einsatz.`,
+    `ziemlich exakt du selbst. Die Statistik nickt und sagt: ja, so kennen wir dich.`,
+    `solide im eigenen Rahmen. Niemand fällt vom Stuhl, aber auch niemand ruft den Notarzt.`,
+  ],
+  above: (score: number, average: number, delta: string) => [
+    `${delta} Pins über deinem Schnitt. Da darfst du kurz so tun, als wäre alles geplant gewesen.`,
+    `${score} ist über deiner Normalform. Die Kugel hatte offenbar heute eine Idee.`,
+    `besser als dein Ø ${average}. Nicht direkt Legende, aber die Angeberei darf leise anlaufen.`,
+    `über Soll gespielt. Die Statistik wirkt überrascht, versucht es aber höflich zu verbergen.`,
+  ],
+  great: (score: number, average: number, delta: string) => [
+    `${delta} Pins über Ø ${average}. Das ist nicht nur gut, das ist gegen deine eigene Akte ausgesagt.`,
+    `${score} ist für dich stark über Normalform. Die Pins wurden heute nicht gespielt, sie wurden verwaltet.`,
+    `deutlich über deinem Schnitt. Falls das Absicht war: bitte öfter. Falls nicht: trotzdem weitererzählen.`,
+    `starkes Spiel relativ zu dir selbst. Die Statistik muss kurz neu sortieren, wer du heute bist.`,
+  ],
+  absurd: (score: number, average: number, delta: string) => [
+    `${delta} Pins über deinem Schnitt. Das war kein Peak, das war Identitätsdiebstahl an deiner Normalform.`,
+    `${score} bei Ø ${average}? Da hat kurz jemand anderes deine Hand benutzt. Behalten.`,
+    `massiv über Normalform. Die Statistik schaut auf dich wie auf einen Druckfehler mit Selbstvertrauen.`,
+    `das ist so weit über deinem Alltag, deine Durchschnittswerte verlangen einen Vaterschaftstest.`,
+  ],
+} as const;
+
+export const playerScoreInfoTexts = {
+  average: (average: number) => [
+    `Dein Durchschnitt ist die persönliche Basislinie: Ø ${average}. Andere Spieler sind interessant, aber diese Leiste fragt vor allem: lieferst du gegen dich selbst?`,
+    `Der Schnitt zeigt deine Normalform. Ab jetzt wird jeder Score daran gemessen — fairer als pauschales "80 schlecht, 120 gut".`,
+    `Ø ${average} ist dein persönlicher Maßstab. Ein Score kann global okay sein und für dich trotzdem eine Vollbremsung.`,
+  ],
+  peak: (score: number, average: number, delta: number) => [
+    `Deine Bestleistung im Vergleich zu Ø ${average}: ${score} (${delta >= 0 ? '+' : ''}${delta}). Das zeigt, wie weit dein Dach über dem Wohnzimmer hängt.`,
+    `Peak-Potenzial relativ zu dir selbst. ${score} ist nicht nur eine Zahl, sondern die Frage: warum nicht öfter so, hm?`,
+    `Bestes Spiel gegen deine Normalform. Je größer der Abstand zu Ø ${average}, desto mehr riecht es nach "war wohl doch nicht alles Zufall".`,
+  ],
+  winningPeak: (score: number, average: number, delta: number) => [
+    `Dein höchster Sieg-Score relativ zu Ø ${average}: ${score} (${delta >= 0 ? '+' : ''}${delta}). Das ist dein Sieger-Peak, nicht deine Alltagsschicht.`,
+    `Zeigt, wie hoch du gewinnen kannst, wenn du über deiner Normalform spielst. Oder wie sehr die anderen leiden mussten.`,
+    `Bester Sieg im Eigenvergleich. Wenn der deutlich über Ø liegt, war das weniger Sieg und mehr Gruppentherapie für die anderen.`,
+  ],
+  cheapWin: (score: number, average: number, delta: number) => [
+    `Niedrigster Sieg relativ zu Ø ${average}: ${score} (${delta >= 0 ? '+' : ''}${delta}). Manchmal reicht auch Mittelmaß, wenn die anderen freundlicherweise kollabieren.`,
+    `Der billigste Sieg im Eigenvergleich. Wenn der unter deinem Schnitt liegt, hast du nicht gewonnen — die anderen haben verloren.`,
+    `Zeigt, wie wenig für einen Sieg gereicht hat. Sportlich fragwürdig, emotional trotzdem gültig.`,
+  ],
+  winningAverage: (score: number, average: number, delta: number) => [
+    `Dein Ø in gewonnenen Spielen gegen deinen Gesamt-Ø ${average}: ${score} (${delta >= 0 ? '+' : ''}${delta}). Das ist deine persönliche Sieg-Schwelle.`,
+    `Zeigt, wie viel über Normalform du meistens für Siege brauchst. Wenn kaum Abstand da ist, waren die Gegner sehr höflich.`,
+    `Siegpunkte im Eigenvergleich. Je höher über deinem Schnitt, desto mehr musst du liefern, bevor die Krone sitzt.`,
   ],
 } as const;
 
 // --- Median consistency: median vs. average gap (bar text for the median card) ---
-// Positive diff = avg > median (high outliers inflate average, typical game is worse)
-// Negative diff = median > avg (bad outliers drag average down, typical game is better)
+// Positive diff = avg > median (a few great games pull avg up — when you're good, you're really good)
+// Negative diff = median > avg (a few bad games drag avg down — normally solid but occasional disasters)
 export const medianConsistency = {
   // |gap| < 1: practically identical, scary consistent
   nearIdentical: [
@@ -66,6 +152,8 @@ export const medianConsistency = {
     'so nah beieinander, dass man fragen muss: spielst du jedes Spiel mit Autopilot?',
     'fast null Abweichung. Entweder Disziplin oder du triffst immer dieselben drei Pins.',
     'dein Scoring hat weniger Varianz als das Wetter in der Wüste.',
+    'so vorhersehbar, dein Score könnte als Alibi vor Gericht durchgehen. "Er spielt IMMER so, Euer Ehren."',
+    'null Überraschungen. Falls du mal vermisst wirst, suchen sie einfach nach jemandem, der exakt diesen Score spielt.',
   ],
   // |gap| 1-2: very consistent
   veryConsistent: [
@@ -74,6 +162,7 @@ export const medianConsistency = {
     'fast identisch. Du lieferst jedes Mal dasselbe — im Guten wie im Mittelmäßigen.',
     'konstant wie ein Uhrwerk. Oder wie jemand, der seine Komfortzone nie verlässt.',
     'eng beieinander. Keine Überraschungen, keine Dramen, keine Geschichten für später.',
+    'so berechenbar, dass deine Mitspieler deinen Score schon vor dem Spiel auf die Grabrede schreiben könnten.',
   ],
   // avg > median: when you're good, you're REALLY good — a few great games pull the average up
   avgSlightlyHigher: [
@@ -81,6 +170,7 @@ export const medianConsistency = {
     'dein Ø profitiert von ein paar Sahnetagen. Wenn du gut bist, bist du richtig gut.',
     'einzelne Highlights heben deinen Schnitt über den Alltag. Nicht schlecht, wenn man drauf steht.',
     'leicht nach oben verzerrt: du hast Ausreißer, aber die guten. Davon will man mehr.',
+    'ein paar Glanzspiele halten deinen Schnitt am Leben wie ein Defibrillator.',
   ],
   avgMuchHigher: [
     'wenn du einen guten Tag hast, geht die Post ab. Das zieht den Schnitt ordentlich hoch.',
@@ -88,6 +178,7 @@ export const medianConsistency = {
     'ein paar absolute Glanzleistungen heben den Schnitt weit über das Normalspiel.',
     'Highscorer-Typ: im Alltag solide, aber wenn es klickt, wird es kurz gefährlich für alle.',
     'dein Schnitt ist höher als das, was du normalerweise spielst — aber deine Peaks sind echt.',
+    'deine Highlights sind wie Nahtoderfahrungen für die Gegner: selten, aber unvergesslich.',
   ],
   // median > avg: normally solid, but a few really bad games drag the average down
   medianSlightlyHigher: [
@@ -95,6 +186,7 @@ export const medianConsistency = {
     'dein Normalspiel ist stärker als der Ø behauptet — einzelne Ausrutscher kosten Punkte.',
     'der Schnitt wird von ein paar Tiefschlägen runtergezogen. Die Normalform ist besser.',
     'ein paar miese Abende ruinieren die Optik. Dein typisches Spiel ist eigentlich okay.',
+    'ein paar Spiele würdest du am liebsten aus der Statistik löschen. Und aus deinem Gedächtnis.',
   ],
   medianMuchHigher: [
     'eigentlich spielst du gut, aber ein paar absolute Katastrophen versauen den Schnitt.',
@@ -102,6 +194,7 @@ export const medianConsistency = {
     'wenige richtig schlechte Spiele ziehen den Schnitt runter. Die Normalform ist deutlich besser.',
     'Aussetzer-Typ: meistens solide, aber wenn es schiefgeht, dann richtig.',
     'ohne deine schlimmsten Spiele wärst du eine andere Hausnummer. Leider zählen die trotzdem.',
+    'deine Ausreißer nach unten sind so brutal, die bräuchten einen eigenen Grabstein in der Statistik.',
   ],
 } as const;
 
@@ -113,6 +206,7 @@ export const openFrame = {
     'das ist aufgeräumt wie eine Steuerprüfung mit Bowlingkugel.',
     'dein Abräum-Game ist so sauber, das ist fast schon langweilig. Fast.',
     'die Pins bleiben nicht stehen. Du lässt sie einfach nicht.',
+    'so gründlich, man könnte dich auf Tatorten einsetzen. Keine Spuren, keine Überlebenden.',
   ],
   controlled: [
     'Fehlerquote okay, die Katastrophenabteilung hat Pause.',
@@ -120,6 +214,7 @@ export const openFrame = {
     'kontrolliertes Chaos. Also quasi Bowling mit Sicherheitsgurt.',
     'ein paar offene Frames für den Charakter, aber insgesamt sauber.',
     'genug Abräumer, um nicht in die Verlegenheit zu kommen, sich erklären zu müssen.',
+    'ein paar Pins überleben, aber nicht genug, um davon zu erzählen.',
   ],
   shaky: [
     'ein paar Frames machen noch unnötig Theater wie im Vorabendprogramm.',
@@ -127,6 +222,7 @@ export const openFrame = {
     'das ist noch keine Katastrophe, aber der Rauchmelder piept schon.',
     'jeder zweite Frame ist offen. Das ist keine Strategie, das ist Punkte-Tourette.',
     'die Pins sagen danke und stehen einfach weiter rum.',
+    'so viele offene Frames, dein Scoresheet sieht aus wie ein Schweizer Käse nach einer Schießerei.',
   ],
   tooMany: [
     'offene Frames verteilen Punkte wie Gratisproben im Supermarkt.',
@@ -135,6 +231,7 @@ export const openFrame = {
     'du lässt so viel stehen, die Pins könnten Miete zahlen.',
     'offene Frames am laufenden Band. Das ist kein Bowling, das ist Entwicklungshilfe für die Gegner.',
     'der zweite Wurf ist bei dir eher eine Formalie als eine Rettung.',
+    'die Pins stehen am Ende noch aufrechter als dein Selbstbewusstsein.',
   ],
 } as const;
 
@@ -146,6 +243,7 @@ export const winRate = {
     'heute eher Endgegner als Mitspieler.',
     'deine Mitspieler sind im Grunde Statisten in deiner Heldengeschichte.',
     'so viele Siege, dass die anderen langsam aufhören, dich einzuladen.',
+    'deine Siegquote ist so hoch, die anderen fragen sich, ob die Freundschaft das wert ist.',
   ],
   winning: [
     'mehr gewinnen als verlieren: simpel, unangenehm effektiv.',
@@ -153,6 +251,7 @@ export const winRate = {
     'genug Siege, um laut zu sein, aber bitte nicht zu laut.',
     'über 50% Winrate sagt: du bist statistisch der Feind.',
     'Gewinner-Mentalität. Oder Gegner-Schwäche. Egal, Sieg ist Sieg.',
+    'du gewinnst öfter als du verlierst. Die anderen sterben jedes Mal ein bisschen innerlich.',
   ],
   balanced: [
     'oft im Rennen, selten komplett im Graben.',
@@ -160,6 +259,7 @@ export const winRate = {
     'mal Jäger, mal Verkehrshütchen — spannend bleibt es.',
     'die Siegchancen sind da, sie brauchen nur öfter die richtige Abfahrt.',
     'knapp dran, aber knapp ist bei Bowling auch nur ein anderes Wort für verloren.',
+    'du schwebst zwischen Held und Opfer. Schrödinger bowlt.',
   ],
   chasing: [
     'aktuell eher Beute mit Ambitionen.',
@@ -168,6 +268,7 @@ export const winRate = {
     'Siege sind für dich eher seltene Naturereignisse als Routine.',
     'die anderen gewinnen. Du gewinnst an Erfahrung. Nicht das gleiche.',
     'Jäger ohne Munition. Motivation ist da, der Rest kommt hoffentlich noch.',
+    'deine Siegquote ist so niedrig, die könnte sich auf dem Friedhof bewerben.',
   ],
 } as const;
 
@@ -179,6 +280,7 @@ export const strikeFollow = {
     'das ist nicht mehr Zufall, das ist schon leicht verdächtig.',
     'Strike-Serien wie am Fließband. Die Bahn hat Angst.',
     'wenn du einmal warm bist, wird es für alle unbequem.',
+    'wenn du in Serie bist, haben die Pins weniger Überlebenschance als ein Schneemann im Juli.',
   ],
   good: [
     'du wandelst Strikes oft in Serien um — nicht nur Glücksblitz mit Zeugen.',
@@ -199,6 +301,7 @@ export const strikeFollow = {
     'Serienfähigkeit aktuell im Praktikum.',
     'Folge-Strike? Kennt dein Arm nicht. Der macht nach einem Strike erstmal Pause.',
     'deine Strikes sind wie Sternschnuppen: schön, selten, und sofort vorbei.',
+    'deine Strikes sterben einsam. Kein Nachfolger, keine Trauerfeier, nur Stille.',
   ],
 } as const;
 
@@ -210,6 +313,7 @@ export const comeback = {
     'Fehler werden hier nicht adoptiert, sondern rausgeworfen.',
     'du bist wie ein Stehaufmännchen mit Bowlingkugel.',
     'die Fehlerverarbeitung ist schneller als bei manchen Menschen die Trauer.',
+    'du begräbst deine Fehler sofort und tanzt auf dem Grab. Eiskalt.',
   ],
   goodReaction: [
     'solide Bounce-back-Quote — Stolpern ja, Liegenbleiben nein.',
@@ -231,6 +335,7 @@ export const comeback = {
     'Fehler kommen in Rudeln. Dein Bowling hat Herdentrieb.',
     'ein offener Frame ist bei dir nicht das Ende, sondern erst der Anfang des Elends.',
     'nach Fehlern folgt bei dir oft ein mentaler Rohrbruch.',
+    'deine Fehler vermehren sich schneller als Kaninchen. Und sind genauso schwer einzufangen.',
   ],
 } as const;
 
@@ -242,6 +347,7 @@ export const finish = {
     'der 10. Frame klopft an und du öffnest mit Stahlkappe.',
     'Clutch-Gen vorhanden. Im letzten Frame wachsen dir offenbar zusätzliche Finger.',
     'wenn es drauf ankommt, lieferst du. Der Rest des Spiels ist nur Aufwärmung.',
+    'im 10. Frame wirst du zum Sensenmann. Die Pins hatten keine Chance.',
   ],
   stable: [
     'kein Schlussabfall — Puls noch vorhanden, Hände brauchbar.',
@@ -256,6 +362,7 @@ export const finish = {
     'am Ende wird es weich wie überkochte Nudeln.',
     'der 10. Frame hat leichte Angstsymptome.',
     'unter Druck schmilzt der Score wie Eis in der Mikrowelle.',
+    'im letzten Frame stirbt leise die Hoffnung. Und ein paar Punkte gleich mit.',
   ],
   weak: [
     'am Ende verschwinden Punkte wie Socken in der Waschmaschine.',
@@ -264,6 +371,7 @@ export const finish = {
     'im letzten Frame packt dich die Panik und dein Arm macht Urlaub.',
     'Tipp: der 10. Frame ist genauso lang wie die anderen. Einfach nochmal werfen.',
     'unter Druck wirst du nicht zum Diamanten, sondern zum Wackelpudding.',
+    'dein 10. Frame ist wie ein Autounfall in Zeitlupe. Alle schauen zu, keiner kann helfen.',
   ],
 } as const;
 
@@ -275,6 +383,7 @@ export const fatigue = {
     'du wirst später nicht schlechter. Unverschämt praktisch.',
     'Kondition wie ein Diesel. Läuft und läuft und nervt die anderen.',
     'kein Ermüdungseffekt. Du bist eine Maschine. Eine langsame, aber eine Maschine.',
+    'du wirst einfach nicht müde. Wie ein Horrorfilm-Killer. Die anderen können rennen, aber du kommst immer nach.',
   ],
   smallDrop: [
     'leichte Ermüdung — menschlich, leider nachweisbar.',
@@ -288,6 +397,7 @@ export const fatigue = {
     'der Abend kaut langsam an der Präzision.',
     'je mehr Spiele, desto mehr sieht es nach "hatte mal besser angefangen" aus.',
     'dein Arm wird müde, dein Score traurig, und deine Mitspieler froh.',
+    'dein Score stirbt einen langsamen Tod über den Abend. Kein Mord, eher natürliche Ursachen.',
   ],
   heavy: [
     'Kondition/Konzentration klauen Punkte mit Sturmmaske.',
@@ -296,6 +406,7 @@ export const fatigue = {
     'nach Spiel 1 geht es bergab wie eine Kugel in die Rinne.',
     'Tipp: weniger Bier zwischen den Spielen. Oder mehr Armtraining. Oder beides.',
     'am Ende bowlst du mit dem Ehrgeiz eines nassen Handtuchs.',
+    'am Ende des Abends ist dein Score klinisch tot. Nur die Maschine piept noch.',
   ],
 } as const;
 
@@ -308,6 +419,7 @@ export const strikesPerGame = {
     'drei plus Strikes pro Spiel ist für Hobbyisten fast schon obszön.',
     'die Pins fallen in Serie. Dein Arm hat offenbar ein Abo.',
     'Strike-Maschine. Naja, eher Strike-Halbautomatik, aber es läuft.',
+    'du richtest die Pins hin wie ein Serienkiller. Methodisch und ohne Reue.',
   ],
   solid: [
     'gute Strike-Ausbeute, noch nicht furchteinflößend, aber nervig.',
@@ -323,6 +435,7 @@ export const strikesPerGame = {
     'Strike-Rate im Bereich "angenehme Überraschung, wenn es passiert".',
     'wenn ein Strike kommt, jubelt die ganze Gruppe. Weil es so selten ist.',
     'Tipp: die Kugel soll ALLE Pins treffen, nicht nur die, die Lust haben.',
+    'deine Strike-Rate liegt im Bereich "vom Aussterben bedroht". Der WWF wurde informiert.',
   ],
 } as const;
 
@@ -334,6 +447,7 @@ export const sparesPerGame = {
     'die Müllabfuhr kommt zuverlässig.',
     'Abräumen auf hohem Niveau. Sexy ist anders, aber es funktioniert.',
     'der zweite Wurf ist bei dir kein Trostpreis, sondern ein Werkzeug.',
+    'du räumst ab wie ein Bestatter: gründlich, emotionslos, professionell.',
   ],
   solid: [
     'ordentliche Spare-Ausbeute, die Müllabfuhr kommt regelmäßig.',
@@ -349,6 +463,7 @@ export const sparesPerGame = {
     'Spare? Kenne ich nicht. — dein zweiter Wurf, wahrscheinlich.',
     'du lässt stehen wie ein Möbelhaus. Schön anzuschauen, aber punktelos.',
     'der zweite Wurf geht bei dir oft ins Leere. Oder in die Rinne. Oder beides.',
+    'du lässt so viele Pins stehen, die könnten einen Friedhof gründen. Hier ruhen die nie abgeräumten.',
   ],
 } as const;
 
@@ -360,6 +475,7 @@ export const firstThrow = {
     'viel fällt direkt. Effizient und ein bisschen angeberisch.',
     'der erste Wurf macht den Job. Der zweite muss nur noch nicht alles ruinieren.',
     'starke Eröffnung. Die Pins fallen wie Dominosteine — naja, fast.',
+    'dein erster Ball ist wie der Tod: unausweichlich und gründlich.',
   ],
   good: [
     'solide Grundlage, noch kein Denkmal, aber Fundament steht.',
@@ -382,6 +498,7 @@ export const firstThrow = {
     'der erste Wurf ist bei dir eher eine Ankündigung als eine Aktion.',
     'Tipp: Ziel ist das dreieckige Ding aus Pins. Nicht der Bereich daneben.',
     'dein erster Wurf erschreckt die Pins nicht mal. Die lachen.',
+    'dein erster Ball trifft so wenig, er könnte auf der Vermisstenanzeige für Präzision stehen.',
   ],
 } as const;
 
@@ -394,6 +511,7 @@ export const streak = {
     'vier oder mehr am Stück? Unter Hobbyisten ist das quasi ein Verbrechen.',
     'da war jemand kurz in einem anderen Bewusstseinszustand.',
     'deine Mitspieler haben aufgehört zu zählen und angefangen zu fluchen.',
+    'vier Strikes am Stück. Die Pins wurden nicht besiegt, sie wurden ausgelöscht. Ganze Generationen, weg.',
   ],
   turkey: [
     'kurz sah es nach Profi-Cosplay aus.',
@@ -401,6 +519,7 @@ export const streak = {
     'drei am Stück — die Arroganz darf kurz die Jacke ausziehen.',
     'Turkey! Für den Moment warst du der beste Bowler im Raum. Vielleicht sogar absichtlich.',
     'drei Strikes in Folge: offiziell berechtigt, den ganzen Abend davon zu erzählen.',
+    'Turkey. Drei Strikes, drei Trauerfeiern für die Pins. Gedenkminute gibt es nicht.',
   ],
   double: [
     'solide Serienfähigkeit. Kurz war Musik drin.',
@@ -422,10 +541,11 @@ export const streak = {
     'da ist noch viel Platz zwischen Wunsch und Wirklichkeit.',
     'kein einziger Strike? Nicht mal einen? Dein Arm und die Pins müssen sich dringend kennenlernen.',
     'Serie: null. Aber hey, du hast Spaß. Das zählt. Nur nicht in der Statistik.',
+    'null Strikes. Stille. Nur das leise Weinen deines Scoresheets.',
   ],
 } as const;
 
-// --- Median vs. average: consistency indicator ---
+// --- Median vs. average: consistency indicator (info-tip) ---
 export const medianAverage = {
   avgHigher: (diff: number) => [
     `Median vs. Durchschnitt: Dein Ø liegt ${diff} Pins über dem Median. Ein paar Glanzlichter schminken die Bilanz, der Alltag kommt ungeschminkt zur Tür rein.`,
@@ -586,6 +706,7 @@ export const dayScore = {
     'das war kein Bowling, das war ein Attentat auf die Gruppenharmonie.',
     'bei dem Score fragt man sich, ob jemand heimlich einen Profi eingeschleust hat.',
     'zweihundert-plus als Hobbyist: offiziell berechtigt, den Rest des Jahres davon zu erzählen.',
+    'der Score hat die Gruppenchemie getötet. Todesursache: Überdosis Können.',
   ],
   strong: [
     'das war kein Sieg, das war eine Räumungsklage.',
@@ -621,6 +742,87 @@ export const dayScore = {
     'das Podium war heute wohl auf Rabatt.',
     'damit gewonnen zu haben ist weniger Stolz als statistischer Zufall.',
     'wenn DAS der Siegscore ist, war der Abend sportlich gesehen eine Katastrophe.',
+    'der Score ist so niedrig, er bräuchte eine Grabrede statt einer Siegesrede.',
+  ],
+} as const;
+
+// --- Loss score: score benchmark but for games you LOST (bitter/sympathetic tone) ---
+// High loss = you played well but someone was better. Low loss = just a bad game.
+export const lossScore = {
+  legendary: [
+    'über 200 gespielt und trotzdem verloren. Das ist kein Trost, das ist seelische Grausamkeit.',
+    'mit dem Score verloren? Wer auch immer gewonnen hat, schuldet dir eine Therapiesitzung.',
+    'zweihundert-plus und kein Sieg. Das ist wie eine Beförderung mit gleichzeitiger Kündigung.',
+    'damit verloren zu haben ist statistisch gesehen ein Kriegsverbrechen.',
+  ],
+  veryStrong: [
+    'starker Score, aber jemand war stärker. Das Leben ist kein Wunschkonzert, und Bowling erst recht nicht.',
+    'damit hätte man an jedem anderen Abend gewonnen. Heute nicht. Pech mit Stil.',
+    'so hoch verloren, dass die Niederlage fast schon Respekt verdient.',
+    'das war kein schlechtes Spiel, das war ein besserer Gegner. Tut trotzdem weh.',
+    'starke Leistung, falscher Abend. Dein Score weint leise in der Ecke.',
+  ],
+  strong: [
+    'ordentlich gespielt und trotzdem leer ausgegangen. Bowling hat keinen Fairness-Beauftragten.',
+    'der Score war gut, der Gegner war besser. Klassische Tragödie mit Leihschuhen.',
+    'solide Punktzahl, kein Sieg. Manchmal reicht gut einfach nicht.',
+    'stark genug zum Gewinnen, aber heute war jemand frecher.',
+    'guter Score in der falschen Runde. Timing ist alles, und deins war daneben.',
+  ],
+  solid: [
+    'mittlerer Score, keine Krone. Nicht dramatisch, aber auch nicht lustig.',
+    'solide, aber nicht solide genug. Knapp daneben ist auch vorbei.',
+    'okay gespielt, aber der Sieg ging woanders hin. Wie ein Paket an die falsche Adresse.',
+    'reicht normalerweise. Heute war normalerweise nicht genug.',
+  ],
+  shaky: [
+    'mit dem Score verlieren ist weder Überraschung noch Tragödie. Eher Routine.',
+    'nicht gewonnen, aber war das realistisch? Eher so mittel.',
+    'der Score erklärt die Niederlage. Da braucht man keinen Detektiv.',
+    'verloren, und der Score sagt: ja, war absehbar.',
+  ],
+  weak: [
+    'verloren mit einem Score, der schon im Stehen tot war.',
+    'mit dem Score zu verlieren ist keine Niederlage, das ist eine Selbstverständlichkeit.',
+    'der Score war schon vor dem Ergebnis eine Beerdigung. Der Sieg hätte ein Wunder gebraucht.',
+    'hier gibt es nichts zu retten. Der Score war Komplize der Niederlage.',
+  ],
+} as const;
+
+// --- Day loss score: same as lossScore but for the day stats view ---
+export const dayLossScore = {
+  legendary: [
+    'über 200 und verloren? Der Gewinner hat entweder geschummelt oder einen Pakt geschlossen.',
+    'damit verloren zu haben ist eine olympische Disziplin in Ungerechtigkeit.',
+    'so hoch verloren — das tut weh auf einem Level, das Worte kaum beschreiben.',
+  ],
+  strong: [
+    'starker Score, aber heute reichte stark nicht. Das Scoreboard kennt kein Mitleid.',
+    'damit verloren? Irgendwer hatte heute einen unanständig guten Abend.',
+    'gute Leistung, kein Pokal. Willkommen im Club der bitteren Zweiten.',
+    'die Niederlage mit diesem Score ist wie ein Fünf-Sterne-Menü im falschen Restaurant.',
+  ],
+  good: [
+    'ordentlicher Score, aber der Sieg ging an jemand anderen. Trostpreis: Charakter.',
+    'gut gespielt, schlecht abgeschnitten. Das Universum hat Humor.',
+    'der Score war respektabel. Die Platzierung leider nicht.',
+    'genug Punkte für Stolz, zu wenig für den Sieg. Die bitterste Kombination.',
+  ],
+  solid: [
+    'solider Score, der heute eben nicht gereicht hat. Kein Drama, aber auch kein Spaß.',
+    'mittlere Punktzahl, keine Krone. Das Mittelfeld ist ein einsamer Ort.',
+    'reicht an guten Tagen. Heute war kein guter Tag.',
+  ],
+  shaky: [
+    'mit dem Score war der Sieg eher Wunschdenken als Strategie.',
+    'verloren, und ehrlich gesagt: der Score hatte es verdient.',
+    'Niederlage bei dem Score ist wie Regen im November. Erwartet und trotzdem unangenehm.',
+  ],
+  cheap: [
+    'mit dem Score verlieren ist keine Nachricht, das ist Normalzustand.',
+    'der Score war so niedrig, selbst die Niederlage fühlt sich teilnahmslos an.',
+    'verloren, und der Score sagt: was hast du erwartet?',
+    'bei dem Score ist die Frage nicht warum verloren, sondern warum überhaupt angetreten.',
   ],
 } as const;
 
@@ -632,6 +834,7 @@ export const games = {
     'genug Spiele, um jede Ausrede mehrfach zu testen.',
     'sechs plus Spiele? Das ist kein Bowling mehr, das ist ein Ausdauersport mit Snacks.',
     'ab Spiel 6 bowlt nicht mehr der Arm, sondern der Sturkopf.',
+    'so viele Spiele, dass die Bahn langsam dein Grab wird. Hier ruht dein Arm.',
   ],
   decent: [
     'genug Daten, um Ausreden schwerer zu machen.',
@@ -644,6 +847,7 @@ export const games = {
     'zu kurz für harte Urteile, aber nie zu kurz für freche Kommentare.',
     'Mini-Abend. Die Statistik trägt noch Schwimmflügel.',
     'ein bis zwei Spiele: da war jemand entweder schnell fertig oder schnell frustriert.',
+    'so wenig Spiele, die Bahn weiß nicht mal, dass du da warst. Wie ein Geist, nur schlechter.',
   ],
 } as const;
 
@@ -655,6 +859,7 @@ export const totalPins = {
     'viel gefallen, wenig Gnade.',
     'kollektives Gemetzel. Die Pins brauchen nach diesem Abend einen Therapeuten.',
     'so viele Pins gefallen, dass man fast Mitleid bekommt. Fast.',
+    'Massengrab auf Bahn 3. Keine Überlebenden unter den Pins.',
   ],
   solid: [
     'viel gefallen, wenig peinlich.',
@@ -668,6 +873,7 @@ export const totalPins = {
     'da blieb zu viel stehen und zu wenig Stolz übrig.',
     'die Pins hatten heute einen entspannten Abend. Ihr offenbar auch.',
     'wenig Zerstörung. Die Pins haben sich untereinander gelangweilt.',
+    'die Pins haben den Abend unbeschadet überlebt. Glückwunsch — an die Pins.',
   ],
 } as const;
 
@@ -697,6 +903,7 @@ export const avgPerGame = {
     'das war gemeinschaftliches Kugelschubsen mit Ergebnisbeilage.',
     'gemeinsam schlecht ist auch zusammen. Teambuilding mal anders.',
     'unter 90 pro Kopf: der Abend war offensichtlich mehr Gesellschaftsevent als Sport.',
+    'kollektives Versagen. Immerhin: niemand muss sich alleine schämen.',
   ],
 } as const;
 
@@ -708,6 +915,7 @@ export const underdog = {
     'unerwartet stark. Der Zufall verlangt Credits.',
     '20% über dem eigenen Schnitt? Das ist kein Bowling, das ist ein Wunder mit Leihschuhen.',
     'entweder wurde heimlich trainiert oder die Sterne standen richtig. Oder das Bier.',
+    'Auferstehung auf der Bowlingbahn. Lazarus hätte applaudiert.',
   ],
   overperformed: [
     'deutlich besser als sonst — verdächtig, aber erlaubt.',
@@ -727,6 +935,7 @@ export const underdog = {
     'die Überraschung blieb im Auto.',
     'kein Märchen, eher Verwaltungsakt.',
     'niemand hat heute über sich hinausgewachsen. Schade, aber ehrlich.',
+    'keine Underdog-Story. Nur die kalte, unbarmherzige Wahrheit der Zahlen.',
   ],
 } as const;
 
@@ -787,6 +996,7 @@ export const playerDay = {
     `👑 Platz 1, und zwar mit Abstand. ${gap} Pins Vorsprung sind kein Sieg, das ist eine Demütigung.`,
     `👑 Dominiert. ${gap} Pins Vorsprung — die anderen können ihre Kugeln auch direkt in die Rinne werfen, spart Zeit.`,
     `👑 +${gap} auf Platz 2. Du hast nicht gewonnen, du hast die anderen zerstört.`,
+    `👑 ${gap} Pins. Du hast die anderen nicht geschlagen, du hast ihren Lebenswillen gebrochen.`,
   ] as const,
   // Leader with comfortable gap (15-29 pins)
   leaderComfortable: (gap: number) => [
@@ -817,6 +1027,7 @@ export const playerDay = {
     `Schlusslicht mit ${gap} Pins Rückstand. Immerhin: irgendjemand muss die anderen besser aussehen lassen.`,
     `Platz ${rank + 1} mit ${gap} Pins Distanz zur Spitze. Das ist keine Niederlage, das ist eine andere Sportart.`,
     `${gap} Pins hinten. Du hast heute nicht verloren, du hast an einem anderen Wettbewerb teilgenommen.`,
+    `${gap} Pins Rückstand. Dein Score liegt so tief, der bräuchte eine Bergungsmannschaft.`,
   ] as const,
   // Last place with noticeable gap (15-29 pins behind)
   lastNoticeableGap: (gap: number, rank: number) => [
@@ -831,6 +1042,7 @@ export const playerDay = {
     `${gap} Pins fehlen zur Krone. Ein Spare mehr und die Geschichte wäre anders.`,
     `Platz ${rank + 1}, aber nur ${gap} Pins zurück. Knapper geht kaum. Der Schmerz auch nicht.`,
     `Hauchdünn hinter dem Ersten. ${gap} Pins — das sind ein bis zwei bessere Würfe. Ärgerlich.`,
+    `${gap} Pins. So stirbt Hoffnung: langsam, knapp, und vor Publikum.`,
   ] as const,
   // In striking distance (6-15 pins behind)
   strikingDistance: (gap: number, rank: number) => [

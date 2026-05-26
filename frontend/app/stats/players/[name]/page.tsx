@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { fetchGames, renamePlayer } from '@/lib/api';
@@ -10,14 +11,17 @@ import {
   comebackInfo,
   countPerGameBenchmark,
   deltaBenchmark,
+  highestLossInfo,
   medianConsistencyBenchmark,
   finishStrengthInfo,
   firstThrowBenchmark,
   firstThrowInfo,
   medianAverageInfo,
   openFrameBenchmark,
+  playerLossScoreBenchmark,
+  playerScoreBenchmark,
+  playerScoreInfo,
   rateBenchmark,
-  scoreBenchmark,
   spareInfo,
   streakBenchmark,
   strikeFollowInfo,
@@ -350,6 +354,20 @@ function buildPlayerGameHistoryChart(games: GameRead[], playerName: string) {
 
 function InfoTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
+
+  const positionPanel = (button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect();
+    const margin = 16;
+    const width = Math.min(256, window.innerWidth - margin * 2);
+    const left = Math.min(Math.max(rect.right - width, margin), window.innerWidth - width - margin);
+    if (rect.bottom + 190 > window.innerHeight && rect.top > window.innerHeight / 2) {
+      setPanelPosition({ left, bottom: window.innerHeight - rect.top + 8, width });
+    } else {
+      setPanelPosition({ left, top: rect.bottom + 8, width });
+    }
+  };
+
   return (
     <span className="relative inline-flex">
       <button
@@ -358,17 +376,22 @@ function InfoTip({ text }: { text: string }) {
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (!open) positionPanel(event.currentTarget);
           setOpen((value) => !value);
         }}
-        onBlur={() => setOpen(false)}
+        onBlur={() => {
+          setOpen(false);
+          setPanelPosition(null);
+        }}
         aria-label="Info"
       >
         i
       </button>
-      {open && (
-        <span className="info-tip-panel">
+      {open && panelPosition && createPortal(
+        <span className="info-tip-panel" style={{ left: panelPosition.left, top: panelPosition.top, bottom: panelPosition.bottom, width: panelPosition.width }}>
           {text}
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );
@@ -546,9 +569,9 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <StatCard label="Spiele" value={summary.gamesPlayed} info="Anzahl gespeicherter Spiele. Je mehr Spiele, desto aussagekräftiger werden Durchschnitt und Prozentwerte." benchmark={{ percent: clampPercent((summary.gamesPlayed / 30) * 100), label: summary.gamesPlayed >= 20 ? 'Sehr belastbar' : summary.gamesPlayed >= 10 ? 'Gute Datenbasis' : 'Noch kleine Stichprobe', detail: 'Skala bis 30 Spiele', tone: summary.gamesPlayed >= 10 ? 'okay' : 'neutral' }} />
               <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" info="Zählt Spiele, in denen du den höchsten Score hattest. Bei Gleichstand zählt es ebenfalls als Sieg." benchmark={rateBenchmark(summary.gamesPlayed > 0 ? (summary.wins / summary.gamesPlayed) * 100 : 0, 'win')} />
-              <StatCard label="Durchschnitt" value={summary.avgScore} info="Dein mittlerer Score pro Spiel. Gut für die Gesamtform — aber einzelne Sahnetage können ihn auch hübscher schminken, als er ist." benchmark={scoreBenchmark(summary.avgScore)} />
+              <StatCard label="Durchschnitt" value={summary.avgScore} info={playerScoreInfo(summary.avgScore, summary.avgScore, 'average')} benchmark={playerScoreBenchmark(summary.avgScore, summary.avgScore, 'average')} />
               <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} info={medianAverageInfo(summary.avgScore, summary.medianScore)} benchmark={medianConsistencyBenchmark(summary.avgScore, summary.medianScore)} />
-              <StatCard label="Bestleistung" value={summary.maxScore} info="Dein höchstes gespeichertes Spiel. Das zeigt dein aktuelles Peak-Potenzial, nicht deine normale Leistung." benchmark={scoreBenchmark(summary.maxScore)} />
+              <StatCard label="Bestleistung" value={summary.maxScore} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak')} />
               <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} info="Anteil Frames ohne Strike oder Spare. Niedriger ist besser; offene Frames sind die freundliche Punkte-Spende an alle anderen." benchmark={openFrameBenchmark(summary.openFrameRate)} />
             </div>
           )}
@@ -630,29 +653,29 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               title="Bester Punkt-Sieg"
               value={formatNullableScore(advanced.bestWinningPoints)}
               description="Höchste Punktzahl bei einem Sieg"
-              info="Dein höchster Score in einem Spiel, das du gewonnen hast. Zeigt, wie hoch dein Sieger-Peak war."
-              benchmark={advanced.bestWinningPoints === null ? undefined : scoreBenchmark(advanced.bestWinningPoints)}
+              info={advanced.bestWinningPoints === null || !summary ? 'Dein höchster Score in einem Spiel, das du gewonnen hast. Zeigt, wie hoch dein Sieger-Peak war.' : playerScoreInfo(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
+              benchmark={advanced.bestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
             />
             <InsightCard
               title="Niedrigster Punkt-Sieg"
               value={formatNullableScore(advanced.lowestWinningPoints)}
               description="Niedrigste Punktzahl, die noch gewonnen hat"
-              info="Der niedrigste Score, der in deinem Feld noch gereicht hat. Das sagt mehr über den Spielkontext als über Peak-Leistung."
-              benchmark={advanced.lowestWinningPoints === null ? undefined : scoreBenchmark(advanced.lowestWinningPoints)}
+              info={advanced.lowestWinningPoints === null || !summary ? 'Der niedrigste Score, der in deinem Feld noch gereicht hat. Das sagt mehr über den Spielkontext als über Peak-Leistung.' : playerScoreInfo(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
+              benchmark={advanced.lowestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
             />
             <InsightCard
               title="Ø Siegpunkte"
               value={formatNullableScore(advanced.averageWinningPoints)}
               description="Durchschnitt aller gewonnenen Spiele"
-              info="Dein durchschnittlicher Score in gewonnenen Spielen. Das ist deine typische Sieg-Schwelle gegen diese Mitspieler."
-              benchmark={advanced.averageWinningPoints === null ? undefined : scoreBenchmark(advanced.averageWinningPoints)}
+              info={advanced.averageWinningPoints === null || !summary ? 'Dein durchschnittlicher Score in gewonnenen Spielen. Das ist deine typische Sieg-Schwelle gegen diese Mitspieler.' : playerScoreInfo(advanced.averageWinningPoints, summary.avgScore, 'winningAverage')}
+              benchmark={advanced.averageWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.averageWinningPoints, summary.avgScore, 'winningAverage')}
             />
             <InsightCard
               title="Höchste Niederlage"
               value={formatNullableScore(advanced.highestLosingPoints)}
               description="Beste Punktzahl ohne Sieg"
-              info="Dein höchster Score, der trotzdem nicht zum Sieg gereicht hat. Hohe Werte bedeuten: stark gespielt, aber jemand war besser."
-              benchmark={advanced.highestLosingPoints === null ? undefined : scoreBenchmark(advanced.highestLosingPoints)}
+              info={highestLossInfo(advanced.highestLosingPoints, advanced.averageWinningPoints)}
+              benchmark={advanced.highestLosingPoints === null || !summary ? undefined : playerLossScoreBenchmark(advanced.highestLosingPoints, summary.avgScore)}
             />
           </div>
         </div>

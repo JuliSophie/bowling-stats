@@ -41,6 +41,18 @@ function formatCompactPercent(value: number) {
   return value.toFixed(1);
 }
 
+function roundOne(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function formatSignedPins(value: number) {
+  const rounded = roundOne(value);
+  if (rounded === 0) return '±0';
+  return rounded > 0 ? `+${rounded}` : String(rounded);
+}
+
+export type PlayerScoreKind = 'average' | 'peak' | 'winningPeak' | 'cheapWin' | 'winningAverage';
+
 // --- Score: (60–220 scale) overall game score ---
 export function scoreBenchmark(score: number): StatBenchmark {
   const percent = clampPercent(((score - 60) / 160) * 100);
@@ -50,6 +62,81 @@ export function scoreBenchmark(score: number): StatBenchmark {
   if (score >= 115) return { percent, label: 'Solide', detail: pick(T.score.solid), tone: 'okay' };
   if (score >= 90) return { percent, label: 'Casual', detail: pick(T.score.casual), tone: 'neutral' };
   return { percent, label: 'Ausbaufähig', detail: pick(T.score.needsWork), tone: 'warn' };
+}
+
+// --- Player-relative score: compares a score to that player's own average ---
+export function playerScoreBenchmark(score: number, playerAverage: number, kind: PlayerScoreKind = 'peak'): StatBenchmark {
+  if (!Number.isFinite(playerAverage) || playerAverage <= 0) return scoreBenchmark(score);
+
+  const roundedAverage = roundOne(playerAverage);
+  const delta = roundOne(score - roundedAverage);
+  const percent = kind === 'average'
+    ? scoreBenchmark(score).percent
+    : clampPercent(50 + (delta / 50) * 45);
+
+  if (kind === 'average') {
+    const absolute = scoreBenchmark(score);
+    return {
+      percent,
+      label: 'Deine Basis',
+      detail: pick(T.playerRelativeScore.baseline(roundedAverage)),
+      tone: absolute.tone,
+    };
+  }
+
+  if (delta <= -35 || score / roundedAverage <= 0.72) {
+    return { percent, label: 'Form vermisst', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta))), tone: 'warn' };
+  }
+  if (delta <= -20 || score / roundedAverage <= 0.84) {
+    return { percent, label: 'Unter Form', detail: pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta))), tone: 'warn' };
+  }
+  if (delta <= -8) {
+    return { percent, label: 'Knapp drunter', detail: pick(T.playerRelativeScore.slightlyBelow(score, roundedAverage, formatSignedPins(delta))), tone: 'neutral' };
+  }
+  if (delta < 8) {
+    return { percent, label: 'Normalform', detail: pick(T.playerRelativeScore.onPar(score, roundedAverage)), tone: 'okay' };
+  }
+  if (delta < 20) {
+    return { percent, label: 'Über Form', detail: pick(T.playerRelativeScore.above(score, roundedAverage, formatSignedPins(delta))), tone: 'good' };
+  }
+  if (delta < 35) {
+    return { percent, label: 'Stark über Form', detail: pick(T.playerRelativeScore.great(score, roundedAverage, formatSignedPins(delta))), tone: 'good' };
+  }
+  return { percent, label: 'Peak-Alarm', detail: pick(T.playerRelativeScore.absurd(score, roundedAverage, formatSignedPins(delta))), tone: 'good' };
+}
+
+export function playerLossScoreBenchmark(score: number, playerAverage: number): StatBenchmark {
+  if (!Number.isFinite(playerAverage) || playerAverage <= 0) return lossScoreBenchmark(score);
+
+  const roundedAverage = roundOne(playerAverage);
+  const delta = roundOne(score - roundedAverage);
+  const ratio = score / roundedAverage;
+  const percent = clampPercent(50 + (delta / 50) * 45);
+
+  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: pick(T.lossScore.legendary), tone: 'warn' };
+  if (delta >= 35 || ratio >= 1.35) return { percent, label: 'Tragisch stark', detail: pick(T.lossScore.veryStrong), tone: 'warn' };
+  if (delta >= 20 || ratio >= 1.2) return { percent, label: 'Stark, aber RIP', detail: pick(T.lossScore.strong), tone: 'warn' };
+  if (delta >= 8 || ratio >= 1.08) return { percent, label: 'Über Form verloren', detail: pick(T.lossScore.solid), tone: 'neutral' };
+  if (delta >= -8) return { percent, label: 'Normalform verloren', detail: pick(T.lossScore.shaky), tone: 'neutral' };
+  if (delta >= -20) return { percent, label: 'Unter Form verloren', detail: pick(T.lossScore.shaky), tone: 'warn' };
+  if (delta <= -60 || ratio <= 0.65) return { percent, label: 'Totalschaden', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta))), tone: 'warn' };
+  if (delta <= -35 || ratio <= 0.78) return { percent, label: 'Absturz verloren', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta))), tone: 'warn' };
+  if (delta <= -25 || ratio <= 0.86) return { percent, label: 'Schmerzhaft drunter', detail: pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta))), tone: 'warn' };
+
+  return {
+    percent,
+    label: 'Kein Wunder',
+    detail: pick(T.lossScore.weak),
+    tone: 'warn',
+  };
+}
+
+export function playerScoreInfo(score: number, playerAverage: number, kind: PlayerScoreKind) {
+  if (!Number.isFinite(playerAverage) || playerAverage <= 0) return 'Bewertet den Score gegen deine bisherige Datenbasis. Mehr Spiele machen diesen Kontext deutlich fairer.';
+  const average = roundOne(playerAverage);
+  const delta = roundOne(score - average);
+  if (kind === 'average') return pick(T.playerScoreInfoTexts.average(average));
+  return pick(T.playerScoreInfoTexts[kind](score, average, delta));
 }
 
 // --- Median consistency: median-average gap as consistency/skew indicator ---
@@ -199,6 +286,17 @@ export function strikeFollowInfo(strikeFollowRate: number, bestStrikeStreak: num
   return pick(T.strikeFollowInfoTexts.normal);
 }
 
+// --- Loss score: score benchmark for games you LOST (bitter tone, inverted feel) ---
+export function lossScoreBenchmark(score: number): StatBenchmark {
+  const percent = clampPercent(((score - 60) / 160) * 100);
+  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: pick(T.lossScore.legendary), tone: 'warn' };
+  if (score >= 170) return { percent, label: 'Stark, aber chancenlos', detail: pick(T.lossScore.veryStrong), tone: 'neutral' };
+  if (score >= 145) return { percent, label: 'Guter Score, kein Sieg', detail: pick(T.lossScore.strong), tone: 'neutral' };
+  if (score >= 115) return { percent, label: 'Solide, aber zu wenig', detail: pick(T.lossScore.solid), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Erwartbare Niederlage', detail: pick(T.lossScore.shaky), tone: 'neutral' };
+  return { percent, label: 'Kein Wunder', detail: pick(T.lossScore.weak), tone: 'warn' };
+}
+
 // --- Day score: winning/losing score benchmark for day stats ---
 export function dayScoreBenchmark(score: number | null): StatBenchmark | undefined {
   if (score === null) return undefined;
@@ -209,6 +307,18 @@ export function dayScoreBenchmark(score: number | null): StatBenchmark | undefin
   if (score >= 115) return { percent, label: 'Solide', detail: pick(T.dayScore.solid), tone: 'okay' };
   if (score >= 90) return { percent, label: 'Wacklig', detail: pick(T.dayScore.shaky), tone: 'neutral' };
   return { percent, label: 'Billiger Sieg', detail: pick(T.dayScore.cheap), tone: 'warn' };
+}
+
+// --- Day loss score: loss benchmark for day stats view ---
+export function dayLossScoreBenchmark(score: number | null): StatBenchmark | undefined {
+  if (score === null) return undefined;
+  const percent = clampPercent(((score - 60) / 160) * 100);
+  if (score >= 200) return { percent, label: 'Tragödie', detail: pick(T.dayLossScore.legendary), tone: 'warn' };
+  if (score >= 170) return { percent, label: 'Bitter', detail: pick(T.dayLossScore.strong), tone: 'neutral' };
+  if (score >= 145) return { percent, label: 'Gut, aber verloren', detail: pick(T.dayLossScore.good), tone: 'neutral' };
+  if (score >= 115) return { percent, label: 'Solide, nicht genug', detail: pick(T.dayLossScore.solid), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Erwartbar', detail: pick(T.dayLossScore.shaky), tone: 'neutral' };
+  return { percent, label: 'Kein Wunder', detail: pick(T.dayLossScore.cheap), tone: 'warn' };
 }
 
 // --- Games played: session length ---

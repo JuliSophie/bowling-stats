@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { fetchGames } from '@/lib/api';
 import {
   averagePerGameBenchmark,
   benchmarkToneClass,
+  dayLossScoreBenchmark,
   dayScoreBenchmark,
   gamesBenchmark,
   highestLossInfo,
@@ -154,6 +156,20 @@ function formatNullableScore(value: number | null) {
 
 function InfoTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
+
+  const positionPanel = (button: HTMLButtonElement) => {
+    const rect = button.getBoundingClientRect();
+    const margin = 16;
+    const width = Math.min(256, window.innerWidth - margin * 2);
+    const left = Math.min(Math.max(rect.right - width, margin), window.innerWidth - width - margin);
+    if (rect.bottom + 190 > window.innerHeight && rect.top > window.innerHeight / 2) {
+      setPanelPosition({ left, bottom: window.innerHeight - rect.top + 8, width });
+    } else {
+      setPanelPosition({ left, top: rect.bottom + 8, width });
+    }
+  };
+
   return (
     <span className="relative inline-flex">
       <button
@@ -162,14 +178,23 @@ function InfoTip({ text }: { text: string }) {
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (!open) positionPanel(event.currentTarget);
           setOpen((value) => !value);
         }}
-        onBlur={() => setOpen(false)}
+        onBlur={() => {
+          setOpen(false);
+          setPanelPosition(null);
+        }}
         aria-label="Info"
       >
         i
       </button>
-      {open && <span className="info-tip-panel">{text}</span>}
+      {open && panelPosition && createPortal(
+        <span className="info-tip-panel" style={{ left: panelPosition.left, top: panelPosition.top, bottom: panelPosition.bottom, width: panelPosition.width }}>
+          {text}
+        </span>,
+        document.body,
+      )}
     </span>
   );
 }
@@ -519,7 +544,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             <StatCard label="Bester Sieg" value={formatNullableScore(dayWinningPointStats.bestWinningPoints)} info="Höchster Score, der heute ein Spiel gewonnen hat. Das ist der Abend-Peak — die Stelle, an der jemand kurz unangenehm gut war." benchmark={dayScoreBenchmark(dayWinningPointStats.bestWinningPoints)} />
             <StatCard label="Niedrigster Sieg" value={formatNullableScore(dayWinningPointStats.lowestWinningPoints)} info={lowestWinInfo(dayWinningPointStats.lowestWinningPoints, dayWinningPointStats.highestLosingPoints)} benchmark={dayScoreBenchmark(dayWinningPointStats.lowestWinningPoints)} />
             <StatCard label="Ø Siegpunkte" value={formatNullableScore(dayWinningPointStats.averageWinningPoints)} info="Durchschnitt aller Sieg-Scores heute. Das ist die Tages-Schwelle zwischen 'gewonnen' und 'nett versucht'." benchmark={dayScoreBenchmark(dayWinningPointStats.averageWinningPoints)} />
-            <StatCard label="Höchste Niederlage" value={formatNullableScore(dayWinningPointStats.highestLosingPoints)} info={highestLossInfo(dayWinningPointStats.highestLosingPoints, dayWinningPointStats.averageWinningPoints)} benchmark={dayScoreBenchmark(dayWinningPointStats.highestLosingPoints)} />
+            <StatCard label="Höchste Niederlage" value={formatNullableScore(dayWinningPointStats.highestLosingPoints)} info={highestLossInfo(dayWinningPointStats.highestLosingPoints, dayWinningPointStats.averageWinningPoints)} benchmark={dayLossScoreBenchmark(dayWinningPointStats.highestLosingPoints)} />
           </div>
         </div>
 
