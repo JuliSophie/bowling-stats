@@ -4,6 +4,18 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { fetchGames } from '@/lib/api';
+import {
+  averagePerGameBenchmark,
+  benchmarkToneClass,
+  dayScoreBenchmark,
+  gamesBenchmark,
+  highestLossInfo,
+  lowestWinInfo,
+  playerDayContext,
+  totalPinsBenchmark,
+  underdogBenchmark,
+  type StatBenchmark,
+} from '@/lib/trash-talk';
 import type { FrameData, GameRead } from '@/types';
 import {
   Area,
@@ -138,6 +150,55 @@ function signedPercent(value: number) {
 function formatNullableScore(value: number | null) {
   if (value === null) return '–';
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        className="info-tip-button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        onBlur={() => setOpen(false)}
+        aria-label="Info"
+      >
+        i
+      </button>
+      {open && <span className="info-tip-panel">{text}</span>}
+    </span>
+  );
+}
+
+function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
+  return (
+    <div className="mt-2">
+      <div className="h-1.5 overflow-hidden rounded-full bg-lane-200">
+        <div className={`h-full rounded-full ${benchmarkToneClass(benchmark.tone)}`} style={{ width: `${benchmark.percent}%` }} />
+      </div>
+      <p className="mt-1 text-[0.68rem] font-semibold text-lane-500">
+        {benchmark.label}{benchmark.detail ? ` · ${benchmark.detail}` : ''}
+      </p>
+    </div>
+  );
+}
+
+function StatCard({ label, value, sub, info, benchmark }: { label: string; value: string | number; sub?: string; info: string; benchmark?: StatBenchmark }) {
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-lane-600">{label}</p>
+        <InfoTip text={info} />
+      </div>
+      <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
+      {sub && <p className="text-xs text-lane-600">{sub}</p>}
+      {benchmark && <BenchmarkBar benchmark={benchmark} />}
+    </div>
+  );
 }
 
 function computeWinningPointStats(games: GameRead[], playerName?: string): WinningPointStats {
@@ -421,29 +482,10 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           <p className="text-sm text-lane-600 mt-2">{dayGames.length} Spiel{dayGames.length !== 1 ? 'e' : ''} · Ort: {dayGames[0].location}</p>
           
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Gesamtpunkte</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{totalPins}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Spiele</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{dayGames.length}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Ø pro Spiel</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{avgPinsPerGame}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Underdog des Abends</p>
-              {underdog ? (
-                <>
-                  <p className="mt-1 text-lg font-bold text-lane-900">{underdog.name}</p>
-                  <p className="text-xs text-lane-600">{signedPercent(underdog.upliftPercent)} vs Ø ({underdog.dayAverage} / {underdog.globalAverage})</p>
-                </>
-              ) : (
-                <p className="mt-1 text-sm text-lane-600">Nicht genug Daten</p>
-              )}
-            </div>
+            <StatCard label="Gesamtpunkte" value={totalPins} info="Alle Pins des Tages zusammen. Viel Zahl heißt nicht automatisch Kunst, aber immerhin viel Lärm auf der Bahn." benchmark={totalPinsBenchmark(totalPins, dayPlayers.length, dayGames.length)} />
+            <StatCard label="Spiele" value={dayGames.length} info="Anzahl Spiele an diesem Tag. Je mehr Spiele, desto weniger kann man alles auf 'war nur Warmwerfen' schieben." benchmark={gamesBenchmark(dayGames.length)} />
+            <StatCard label="Ø pro Spiel" value={avgPinsPerGame} info="Gesamtpins pro Spiel über alle Spieler. Pro Kopf betrachtet zeigt es, ob der Abend sportlich war oder nur betreutes Kugelrollen." benchmark={averagePerGameBenchmark(avgPinsPerGame, dayPlayers.length)} />
+            <StatCard label="Underdog des Abends" value={underdog?.name ?? 'Nicht genug Daten'} sub={underdog ? `${signedPercent(underdog.upliftPercent)} vs Ø (${underdog.dayAverage} / ${underdog.globalAverage})` : undefined} info="Wer heute am stärksten über dem eigenen Schnitt gespielt hat. Also: wer plötzlich so tat, als wäre das normal." benchmark={underdogBenchmark(underdog)} />
           </div>
         </div>
 
@@ -459,6 +501,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
                     {i === 0 && <span className="text-sm">👑</span>}
                   </div>
                   <p className="text-xs text-lane-600 mt-1">{player.gamesCount} Spiel{player.gamesCount !== 1 ? 'e' : ''} · Median {player.medianScore} · {player.openFrameRate}% offen</p>
+                  <p className="mt-1 text-xs font-semibold text-lane-500">{playerDayContext(player, dayPlayers, i, globalAverages.get(player.name))}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-lane-900">{player.totalPins} Pins</p>
@@ -473,22 +516,10 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
           <p className="mt-1 text-xs text-lane-600">Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war.</p>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Bester Sieg</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.bestWinningPoints)}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Niedrigster Sieg</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.lowestWinningPoints)}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Ø Siegpunkte</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.averageWinningPoints)}</p>
-            </div>
-            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-              <p className="text-xs text-lane-600">Höchste Niederlage</p>
-              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.highestLosingPoints)}</p>
-            </div>
+            <StatCard label="Bester Sieg" value={formatNullableScore(dayWinningPointStats.bestWinningPoints)} info="Höchster Score, der heute ein Spiel gewonnen hat. Das ist der Abend-Peak — die Stelle, an der jemand kurz unangenehm gut war." benchmark={dayScoreBenchmark(dayWinningPointStats.bestWinningPoints)} />
+            <StatCard label="Niedrigster Sieg" value={formatNullableScore(dayWinningPointStats.lowestWinningPoints)} info={lowestWinInfo(dayWinningPointStats.lowestWinningPoints, dayWinningPointStats.highestLosingPoints)} benchmark={dayScoreBenchmark(dayWinningPointStats.lowestWinningPoints)} />
+            <StatCard label="Ø Siegpunkte" value={formatNullableScore(dayWinningPointStats.averageWinningPoints)} info="Durchschnitt aller Sieg-Scores heute. Das ist die Tages-Schwelle zwischen 'gewonnen' und 'nett versucht'." benchmark={dayScoreBenchmark(dayWinningPointStats.averageWinningPoints)} />
+            <StatCard label="Höchste Niederlage" value={formatNullableScore(dayWinningPointStats.highestLosingPoints)} info={highestLossInfo(dayWinningPointStats.highestLosingPoints, dayWinningPointStats.averageWinningPoints)} benchmark={dayScoreBenchmark(dayWinningPointStats.highestLosingPoints)} />
           </div>
         </div>
 

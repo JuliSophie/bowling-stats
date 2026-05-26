@@ -4,6 +4,25 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { fetchGames, renamePlayer } from '@/lib/api';
+import {
+  benchmarkToneClass,
+  clampPercent,
+  comebackInfo,
+  countPerGameBenchmark,
+  deltaBenchmark,
+  medianConsistencyBenchmark,
+  finishStrengthInfo,
+  firstThrowBenchmark,
+  firstThrowInfo,
+  medianAverageInfo,
+  openFrameBenchmark,
+  rateBenchmark,
+  scoreBenchmark,
+  spareInfo,
+  streakBenchmark,
+  strikeFollowInfo,
+  type StatBenchmark,
+} from '@/lib/trash-talk';
 import type { GameRead, FrameData } from '@/types';
 import {
   Line,
@@ -35,6 +54,7 @@ type PlayerAdvancedStats = {
   bestStrikeStreak: number;
   bestStrikeStreakLabel: string;
   firstThrowAverage: number;
+  secondThrowZeroRate: number;
   wins: number;
   losses: number;
   winRate: number;
@@ -141,6 +161,8 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
   let comebackOpportunities = 0;
   let comebackSuccesses = 0;
   let bestStrikeStreak = 0;
+  let secondThrowAttempts = 0;
+  let secondThrowZeroes = 0;
 
   for (const game of playerGames) {
     const playerScore = game.scores.find((score) => score.player_name === playerName);
@@ -163,8 +185,15 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
       const strike = isStrikeFrame(frame);
       const spare = isSpareFrame(frame);
       const open = !strike && !spare;
+      const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
+      const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
 
       firstThrowPins.push(getFirstThrowPins(frame));
+
+      if (throw1 !== 'x' && throw2) {
+        secondThrowAttempts++;
+        if (throw2 === '-' || throw2 === '0' || throw2 === 'f') secondThrowZeroes++;
+      }
 
       if (strike) {
         totalStrikes++;
@@ -222,6 +251,7 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
     bestStrikeStreak,
     bestStrikeStreakLabel: buildBestStrikeStreakLabel(bestStrikeStreak),
     firstThrowAverage: Math.round(average(firstThrowPins) * 10) / 10,
+    secondThrowZeroRate: secondThrowAttempts > 0 ? Math.round((secondThrowZeroes / secondThrowAttempts) * 1000) / 10 : 0,
     wins,
     losses,
     winRate: wins + losses > 0 ? Math.round((wins / (wins + losses)) * 1000) / 10 : 0,
@@ -318,25 +348,69 @@ function buildPlayerGameHistoryChart(games: GameRead[], playerName: string) {
   return { data, lines };
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-      <p className="text-xs text-lane-600">{label}</p>
-      <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
-      {sub && <p className="text-xs text-lane-400">{sub}</p>}
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        className="info-tip-button"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+        onBlur={() => setOpen(false)}
+        aria-label="Info"
+      >
+        i
+      </button>
+      {open && (
+        <span className="info-tip-panel">
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
+  return (
+    <div className="mt-2">
+      <div className="h-1.5 overflow-hidden rounded-full bg-lane-200">
+        <div className={`h-full rounded-full ${benchmarkToneClass(benchmark.tone)}`} style={{ width: `${benchmark.percent}%` }} />
+      </div>
+      <p className="mt-1 text-[0.68rem] font-semibold text-lane-500">
+        {benchmark.label}{benchmark.detail ? ` · ${benchmark.detail}` : ''}
+      </p>
     </div>
   );
 }
 
-function InsightCard({ title, value, description }: { title: string; value: string; description: string }) {
+function StatCard({ label, value, sub, info, benchmark }: { label: string; value: string | number; sub?: string; info?: string; benchmark?: StatBenchmark }) {
   return (
     <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-lane-600">{label}</p>
+        {info && <InfoTip text={info} />}
+      </div>
+      <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
+      {sub && <p className="text-xs text-lane-400">{sub}</p>}
+      {benchmark && <BenchmarkBar benchmark={benchmark} />}
+    </div>
+  );
+}
+
+function InsightCard({ title, value, description, info, benchmark }: { title: string; value: string; description: string; info: string; benchmark?: StatBenchmark }) {
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      <div className="flex items-center justify-between gap-1.5">
         <p className="text-xs font-semibold text-lane-600">{title}</p>
-        <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-lane-300 text-[10px] font-bold text-lane-500">i</span>
+        <InfoTip text={info} />
       </div>
       <p className="mt-1 text-2xl font-black text-lane-900">{value}</p>
       <p className="mt-1 text-xs text-lane-500">{description}</p>
+      {benchmark && <BenchmarkBar benchmark={benchmark} />}
     </div>
   );
 }
@@ -404,6 +478,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
   const advanced = buildPlayerAdvancedStats(games, playerName);
   const trendData = buildPlayerTrendData(games, playerName);
   const gameHistoryChart = buildPlayerGameHistoryChart(games, playerName);
+  const gamesPlayed = summary?.gamesPlayed ?? playerGames.length;
 
   return (
     <>
@@ -469,12 +544,12 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
           
           {summary && (
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-              <StatCard label="Spiele" value={summary.gamesPlayed} />
-              <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" />
-              <StatCard label="Durchschnitt" value={summary.avgScore} />
-              <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} />
-              <StatCard label="Bestleistung" value={summary.maxScore} />
-              <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} />
+              <StatCard label="Spiele" value={summary.gamesPlayed} info="Anzahl gespeicherter Spiele. Je mehr Spiele, desto aussagekräftiger werden Durchschnitt und Prozentwerte." benchmark={{ percent: clampPercent((summary.gamesPlayed / 30) * 100), label: summary.gamesPlayed >= 20 ? 'Sehr belastbar' : summary.gamesPlayed >= 10 ? 'Gute Datenbasis' : 'Noch kleine Stichprobe', detail: 'Skala bis 30 Spiele', tone: summary.gamesPlayed >= 10 ? 'okay' : 'neutral' }} />
+              <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" info="Zählt Spiele, in denen du den höchsten Score hattest. Bei Gleichstand zählt es ebenfalls als Sieg." benchmark={rateBenchmark(summary.gamesPlayed > 0 ? (summary.wins / summary.gamesPlayed) * 100 : 0, 'win')} />
+              <StatCard label="Durchschnitt" value={summary.avgScore} info="Dein mittlerer Score pro Spiel. Gut für die Gesamtform — aber einzelne Sahnetage können ihn auch hübscher schminken, als er ist." benchmark={scoreBenchmark(summary.avgScore)} />
+              <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} info={medianAverageInfo(summary.avgScore, summary.medianScore)} benchmark={medianConsistencyBenchmark(summary.avgScore, summary.medianScore)} />
+              <StatCard label="Bestleistung" value={summary.maxScore} info="Dein höchstes gespeichertes Spiel. Das zeigt dein aktuelles Peak-Potenzial, nicht deine normale Leistung." benchmark={scoreBenchmark(summary.maxScore)} />
+              <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} info="Anteil Frames ohne Strike oder Spare. Niedriger ist besser; offene Frames sind die freundliche Punkte-Spende an alle anderen." benchmark={openFrameBenchmark(summary.openFrameRate)} />
             </div>
           )}
         </div>
@@ -486,26 +561,36 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               title="Schlussstärke"
               value={signedDelta(advanced.finishStrength)}
               description="10. Frame vs. Durchschnitt"
+              info={finishStrengthInfo(advanced.finishStrength)}
+              benchmark={deltaBenchmark(advanced.finishStrength, 'finish')}
             />
             <InsightCard
               title="Ermüdungsfaktor"
               value={formatSignedPercent(advanced.fatigueFactor)}
               description="Spiel 1 vs. spätere Spiele"
+              info="Zeigt, wie stark spätere Spiele gegenüber deinem ersten Spiel abfallen. Positive Werte bedeuten Ermüdung, negative Werte bedeuten spätere Steigerung."
+              benchmark={deltaBenchmark(advanced.fatigueFactor, 'fatigue')}
             />
             <InsightCard
               title="Strike-Folge"
               value={`${formatCompactPercent(advanced.strikeFollowRate)}%`}
               description="Folge-Strike nach Strike"
+              info={strikeFollowInfo(advanced.strikeFollowRate, advanced.bestStrikeStreak)}
+              benchmark={rateBenchmark(advanced.strikeFollowRate, 'strikeFollow')}
             />
             <InsightCard
               title="Comeback-Rate"
               value={`${formatCompactPercent(advanced.comebackRate)}%`}
               description="Strike/Spare nach offenem Frame"
+              info={summary ? comebackInfo(advanced.comebackRate, summary.openFrameRate) : 'Misst, wie oft nach einem offenen Frame direkt Strike oder Spare folgt. Fehlerverarbeitung statt schöner Ausreden.'}
+              benchmark={rateBenchmark(advanced.comebackRate, 'comeback')}
             />
             <InsightCard
               title="Beste Serie"
               value={advanced.bestStrikeStreakLabel}
               description={`${advanced.bestStrikeStreak} Strikes am Stück`}
+              info="Deine längste Strike-Serie. Ein Turkey ist der Moment, in dem man kurz so tut, als wäre alles Absicht."
+              benchmark={streakBenchmark(advanced.bestStrikeStreak)}
             />
           </div>
 
@@ -514,21 +599,29 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               title="Erster Wurf Ø"
               value={formatOneDecimal(advanced.firstThrowAverage)}
               description="Ø Pins mit dem 1. Wurf"
+              info={firstThrowInfo(advanced.firstThrowAverage, advanced.secondThrowZeroRate)}
+              benchmark={firstThrowBenchmark(advanced.firstThrowAverage)}
             />
             <InsightCard
               title="Win/Lose"
               value={`${advanced.wins}/${advanced.losses}`}
               description={`${formatCompactPercent(advanced.winRate)}% Win-Rate`}
+              info="Direkter Vergleich gegen die anderen Spieler im selben Spiel. Die Prozentzahl ist deine Siegquote."
+              benchmark={rateBenchmark(advanced.winRate, 'win')}
             />
             <InsightCard
               title="Strikes gesamt"
               value={String(advanced.totalStrikes)}
               description={`Ø ${formatOneDecimal(advanced.avgPointsPerStrike)} Pins/Strike`}
+              info="Gesamtzahl deiner Strike-Frames. Die Leiste bewertet fairer pro Spiel, weil reine Gesamtzahl von der Spielanzahl abhängt."
+              benchmark={countPerGameBenchmark(advanced.totalStrikes, gamesPlayed, 'strike')}
             />
             <InsightCard
               title="Spares gesamt"
               value={String(advanced.totalSpares)}
               description={`Ø ${formatOneDecimal(advanced.avgPointsPerSpare)} Pins/Spare`}
+              info={summary ? spareInfo(summary.openFrameRate, advanced.secondThrowZeroRate) : spareInfo(0, advanced.secondThrowZeroRate)}
+              benchmark={countPerGameBenchmark(advanced.totalSpares, gamesPlayed, 'spare')}
             />
           </div>
 
@@ -537,21 +630,29 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               title="Bester Punkt-Sieg"
               value={formatNullableScore(advanced.bestWinningPoints)}
               description="Höchste Punktzahl bei einem Sieg"
+              info="Dein höchster Score in einem Spiel, das du gewonnen hast. Zeigt, wie hoch dein Sieger-Peak war."
+              benchmark={advanced.bestWinningPoints === null ? undefined : scoreBenchmark(advanced.bestWinningPoints)}
             />
             <InsightCard
               title="Niedrigster Punkt-Sieg"
               value={formatNullableScore(advanced.lowestWinningPoints)}
               description="Niedrigste Punktzahl, die noch gewonnen hat"
+              info="Der niedrigste Score, der in deinem Feld noch gereicht hat. Das sagt mehr über den Spielkontext als über Peak-Leistung."
+              benchmark={advanced.lowestWinningPoints === null ? undefined : scoreBenchmark(advanced.lowestWinningPoints)}
             />
             <InsightCard
               title="Ø Siegpunkte"
               value={formatNullableScore(advanced.averageWinningPoints)}
               description="Durchschnitt aller gewonnenen Spiele"
+              info="Dein durchschnittlicher Score in gewonnenen Spielen. Das ist deine typische Sieg-Schwelle gegen diese Mitspieler."
+              benchmark={advanced.averageWinningPoints === null ? undefined : scoreBenchmark(advanced.averageWinningPoints)}
             />
             <InsightCard
               title="Höchste Niederlage"
               value={formatNullableScore(advanced.highestLosingPoints)}
               description="Beste Punktzahl ohne Sieg"
+              info="Dein höchster Score, der trotzdem nicht zum Sieg gereicht hat. Hohe Werte bedeuten: stark gespielt, aber jemand war besser."
+              benchmark={advanced.highestLosingPoints === null ? undefined : scoreBenchmark(advanced.highestLosingPoints)}
             />
           </div>
         </div>

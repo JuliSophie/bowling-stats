@@ -173,6 +173,25 @@ select {
     border-color: var(--border);
   }
 
+  .info-tip-button {
+    @apply inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] font-black leading-none transition;
+    color: var(--muted);
+    background: var(--surface-strong);
+    border-color: var(--border);
+  }
+
+  .info-tip-button:hover {
+    color: var(--foreground);
+    background: var(--surface-soft);
+  }
+
+  .info-tip-panel {
+    @apply absolute right-0 top-6 z-30 w-64 rounded-xl border p-3 text-left text-xs font-normal leading-relaxed shadow-xl backdrop-blur-md;
+    color: var(--foreground);
+    background: var(--surface-strong);
+    border-color: var(--border);
+  }
+
   .hero-card .secondary-action {
     color: #fff4e6;
     background: rgba(255, 255, 255, 0.1);
