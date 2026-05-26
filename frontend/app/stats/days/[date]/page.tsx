@@ -7,9 +7,11 @@ import { fetchGames } from '@/lib/api';
 import type { FrameData, GameRead } from '@/types';
 import {
   CartesianGrid,
+  LabelList,
   Line,
   LineChart,
   ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
@@ -83,6 +85,34 @@ function buildDayGameHistoryChart(games: GameRead[]) {
   return { data, lines, legend };
 }
 
+function buildSessionScoreChart(games: GameRead[]) {
+  const sortedGames = games.slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const playerColorIndex = new Map<string, number>();
+
+  const data: Record<string, string | number>[] = sortedGames.map((game, index) => {
+    const point: Record<string, string | number> = {
+      game: `Spiel ${index + 1}`,
+      gameNumber: index + 1,
+      location: game.location,
+    };
+
+    game.scores.forEach((score) => {
+      if (!playerColorIndex.has(score.player_name)) playerColorIndex.set(score.player_name, playerColorIndex.size);
+      point[score.player_name] = score.total_score;
+    });
+
+    return point;
+  });
+
+  const lines = [...playerColorIndex.entries()].map(([name, index]) => ({
+    key: name,
+    name,
+    color: PLAYER_COLORS[index % PLAYER_COLORS.length],
+  }));
+
+  return { data, lines };
+}
+
 export default function DayDetailPage({ params }: { params: Promise<{ date: string }> }) {
   const [games, setGames] = useState<GameRead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,6 +160,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const totalPins = dayPlayers.reduce((sum, p) => sum + p.totalPins, 0);
   const avgPinsPerGame = Math.round((totalPins / dayGames.length) * 10) / 10;
   const dayGameHistoryChart = buildDayGameHistoryChart(dayGames);
+  const sessionScoreChart = buildSessionScoreChart(dayGames);
 
   const toggleDayPlayer = (name: string) => {
     setHiddenDayPlayers((current) => {
@@ -189,6 +220,44 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             ))}
           </div>
         </div>
+
+        {sessionScoreChart.lines.length > 0 && dayGames.length > 1 && (
+          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-lane-800">Session-Verlauf nach Endscore</h2>
+              <p className="text-xs text-lane-600">Finale Punktzahl je Spiel, damit Trends über den ganzen Bowling-Tag sichtbar werden.</p>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
+              {sessionScoreChart.lines.map((line) => (
+                <span key={line.key} className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+                  {line.name}
+                </span>
+              ))}
+            </div>
+            <div style={{ touchAction: 'none' }}>
+              <ResponsiveContainer width="100%" height={320}>
+                <LineChart data={sessionScoreChart.data} margin={{ top: 22, right: 24, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                  <XAxis dataKey="game" tick={{ fontSize: 12 }} label={{ value: 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
+                  <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
+                  <Tooltip
+                    labelFormatter={(_, payload) => {
+                      const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
+                      return item ? `${item.game} · ${item.location}` : '';
+                    }}
+                    formatter={(value: number, name: string) => [value, name]}
+                  />
+                  {sessionScoreChart.lines.map((line) => (
+                    <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={{ r: 4 }} activeDot={{ r: 6 }} name={line.name}>
+                      <LabelList dataKey={line.key} position="top" fontSize={11} fill={line.color} />
+                    </Line>
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
 
         {dayGameHistoryChart.lines.length > 1 && (
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
