@@ -6,8 +6,9 @@ import Navigation from '@/components/navigation';
 import { fetchGames } from '@/lib/api';
 import type { FrameData, GameRead } from '@/types';
 import {
+  Area,
   CartesianGrid,
-  LabelList,
+  ComposedChart,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -33,6 +34,16 @@ type DayUnderdog = {
   dayAverage: number;
   globalAverage: number;
   upliftPercent: number;
+};
+
+type CumulativeChartMode = 'frames' | 'rounds';
+type OpenChartSection = 'cumulative' | 'history' | null;
+
+type WinningPointStats = {
+  bestWinningPoints: number | null;
+  lowestWinningPoints: number | null;
+  averageWinningPoints: number | null;
+  highestLosingPoints: number | null;
 };
 
 function isOpenFrame(frame: FrameData) {
@@ -124,11 +135,135 @@ function signedPercent(value: number) {
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
+function formatNullableScore(value: number | null) {
+  if (value === null) return '–';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function computeWinningPointStats(games: GameRead[], playerName?: string): WinningPointStats {
+  const winningScores: number[] = [];
+  const losingScores: number[] = [];
+
+  for (const game of games) {
+    if (game.scores.length === 0) continue;
+    const highScore = Math.max(...game.scores.map((score) => score.total_score));
+
+    for (const score of game.scores) {
+      if (playerName && score.player_name !== playerName) continue;
+      if (score.total_score === highScore) winningScores.push(score.total_score);
+      else losingScores.push(score.total_score);
+    }
+  }
+
+  return {
+    bestWinningPoints: winningScores.length > 0 ? Math.max(...winningScores) : null,
+    lowestWinningPoints: winningScores.length > 0 ? Math.min(...winningScores) : null,
+    averageWinningPoints: winningScores.length > 0 ? Math.round((winningScores.reduce((sum, score) => sum + score, 0) / winningScores.length) * 10) / 10 : null,
+    highestLosingPoints: losingScores.length > 0 ? Math.max(...losingScores) : null,
+  };
+}
+
+function toChartKey(name: string) {
+  return `player_${name}`.replace(/[^a-zA-Z0-9_]/g, '_');
+}
+
+function parseCumulative(frame: FrameData) {
+  const value = parseInt(String(frame.cumulative ?? ''), 10);
+  return Number.isNaN(value) ? null : value;
+}
+
+function buildCumulativeDayChart(games: GameRead[], mode: CumulativeChartMode) {
+  const sortedGames = games.slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const playerColorIndex = new Map<string, number>();
+  const playerKeys = new Map<string, string>();
+  const runningTotals = new Map<string, number>();
+  const data: Record<string, string | number>[] = [];
+
+  sortedGames.forEach((game) => {
+    game.scores.forEach((score) => {
+      if (!playerColorIndex.has(score.player_name)) playerColorIndex.set(score.player_name, playerColorIndex.size);
+      if (!playerKeys.has(score.player_name)) playerKeys.set(score.player_name, toChartKey(score.player_name));
+    });
+  });
+
+  sortedGames.forEach((game, gameIndex) => {
+    const scoreMap = new Map(game.scores.map((score) => [score.player_name, score]));
+
+    if (mode === 'frames') {
+      const frameCount = Math.max(...game.scores.map((score) => score.frames.length), 0);
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+        const point: Record<string, string | number> = {
+          label: `S${gameIndex + 1} F${frameIndex + 1}`,
+          step: data.length + 1,
+          game: `Spiel ${gameIndex + 1}`,
+          frame: frameIndex + 1,
+          location: game.location,
+        };
+
+        for (const [playerName, key] of playerKeys.entries()) {
+          const base = runningTotals.get(playerName);
+          const score = scoreMap.get(playerName);
+          if (score) {
+            const cumulative = score.frames[frameIndex] ? parseCumulative(score.frames[frameIndex] as FrameData) : null;
+            point[key] = (base ?? 0) + (cumulative ?? 0);
+          } else if (base !== undefined) {
+            point[key] = base;
+          }
+        }
+
+        data.push(point);
+      }
+    }
+
+    for (const score of game.scores) {
+      runningTotals.set(score.player_name, (runningTotals.get(score.player_name) ?? 0) + score.total_score);
+    }
+
+    if (mode === 'rounds') {
+      const point: Record<string, string | number> = {
+        label: `Spiel ${gameIndex + 1}`,
+        step: gameIndex + 1,
+        game: `Spiel ${gameIndex + 1}`,
+        location: game.location,
+      };
+
+      for (const [playerName, key] of playerKeys.entries()) {
+        const total = runningTotals.get(playerName);
+        if (total !== undefined) point[key] = total;
+      }
+
+      data.push(point);
+    }
+  });
+
+  const lines = [...playerColorIndex.entries()].map(([name, index]) => ({
+    key: playerKeys.get(name) ?? toChartKey(name),
+    name,
+    color: PLAYER_COLORS[index % PLAYER_COLORS.length],
+  }));
+
+  return { data, lines };
+}
+
+function ChartModeButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`chart-toggle rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? 'border-lane-700 bg-lane-800 text-white shadow-sm' : 'border-lane-300 bg-white/70 text-lane-700 hover:bg-lane-50'}`}
+    >
+      {label}
+    </button>
+  );
+}
+
 function buildDayGameHistoryChart(games: GameRead[]) {
   const sortedGames = games.slice().sort((a, b) => a.id - b.id);
   const playerColorIndex = new Map<string, number>();
   const lines: { key: string; name: string; color: string; playerName: string }[] = [];
   const data: Record<string, string | number>[] = Array.from({ length: 10 }, (_, frameIndex) => ({ frame: `${frameIndex + 1}`, roundNumber: (frameIndex + 1) * 10 }));
+  const rangeValues = new Map<string, { min: number[]; max: number[] }>();
 
   sortedGames.forEach((game, gameIndex) => {
     game.scores.forEach((score) => {
@@ -136,16 +271,37 @@ function buildDayGameHistoryChart(games: GameRead[]) {
       const colorIndex = playerColorIndex.get(score.player_name) ?? 0;
       const key = `game_${game.id}_${score.player_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
       lines.push({ key, name: `Spiel ${gameIndex + 1} · ${score.player_name}`, color: PLAYER_COLORS[colorIndex % PLAYER_COLORS.length], playerName: score.player_name });
+      const range = rangeValues.get(score.player_name) ?? { min: Array(10).fill(Number.POSITIVE_INFINITY), max: Array(10).fill(Number.NEGATIVE_INFINITY) };
 
       score.frames.forEach((frame, frameIndex) => {
         const cumulative = parseInt(String((frame as FrameData).cumulative ?? ''), 10);
-        if (!Number.isNaN(cumulative) && data[frameIndex]) data[frameIndex][key] = cumulative;
+        if (!Number.isNaN(cumulative) && data[frameIndex]) {
+          data[frameIndex][key] = cumulative;
+          range.min[frameIndex] = Math.min(range.min[frameIndex], cumulative);
+          range.max[frameIndex] = Math.max(range.max[frameIndex], cumulative);
+        }
       });
+      rangeValues.set(score.player_name, range);
     });
   });
 
   const legend = [...playerColorIndex.entries()].map(([name, index]) => ({ name, color: PLAYER_COLORS[index % PLAYER_COLORS.length] }));
-  return { data, lines, legend };
+  const ranges = legend.map((item) => {
+    const lowKey = `range_${item.name}_low`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const diffKey = `range_${item.name}_diff`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const range = rangeValues.get(item.name);
+    if (range) {
+      range.min.forEach((min, frameIndex) => {
+        const max = range.max[frameIndex];
+        if (Number.isFinite(min) && Number.isFinite(max)) {
+          data[frameIndex][lowKey] = min;
+          data[frameIndex][diffKey] = max - min;
+        }
+      });
+    }
+    return { playerName: item.name, color: item.color, lowKey, diffKey };
+  });
+  return { data, lines, legend, ranges };
 }
 
 function buildSessionScoreChart(games: GameRead[]) {
@@ -181,6 +337,8 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState<string | null>(null);
   const [hiddenDayPlayers, setHiddenDayPlayers] = useState<Set<string>>(() => new Set());
+  const [cumulativeChartMode, setCumulativeChartMode] = useState<CumulativeChartMode>('frames');
+  const [openChartSection, setOpenChartSection] = useState<OpenChartSection>('cumulative');
 
   useEffect(() => {
     params.then(({ date }) => {
@@ -207,8 +365,8 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
       <>
         <Navigation />
         <main className="app-main max-w-5xl">
-          <Link href="/" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-            ← Home
+          <Link href="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
+            ← Spiele
           </Link>
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Keine Spiele für diesen Tag gefunden.</p>
@@ -222,9 +380,24 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const totalPins = dayPlayers.reduce((sum, p) => sum + p.totalPins, 0);
   const avgPinsPerGame = Math.round((totalPins / dayGames.length) * 10) / 10;
   const dayGameHistoryChart = buildDayGameHistoryChart(dayGames);
-  const sessionScoreChart = buildSessionScoreChart(dayGames);
+  const cumulativeDayChart = buildCumulativeDayChart(dayGames, cumulativeChartMode);
   const globalAverages = buildGlobalAverageMap(games);
   const underdog = computeDayUnderdog(dayPlayers, globalAverages);
+  const dayWinningPointStats = computeWinningPointStats(dayGames);
+  const showCumulativeChart = cumulativeDayChart.lines.length > 0 && dayGames.length > 1;
+  const showHistoryChart = dayGameHistoryChart.lines.length > 1;
+  const visibleChartCount = Number(showCumulativeChart) + Number(showHistoryChart);
+  const effectiveOpenChartSection = visibleChartCount === 1
+    ? showCumulativeChart ? 'cumulative' : 'history'
+    : openChartSection;
+
+  const toggleChartSection = (section: OpenChartSection) => {
+    if (visibleChartCount <= 1) {
+      setOpenChartSection(section);
+      return;
+    }
+    setOpenChartSection(openChartSection === section ? null : section);
+  };
 
   const toggleDayPlayer = (name: string) => {
     setHiddenDayPlayers((current) => {
@@ -239,8 +412,8 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <Link href="/" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-          ← Home
+        <Link href="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
+          ← Spiele
         </Link>
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
@@ -296,80 +469,117 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           </div>
         </div>
 
-        {sessionScoreChart.lines.length > 0 && dayGames.length > 1 && (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-lane-800">Session-Verlauf nach Endscore</h2>
-              <p className="text-xs text-lane-600">Finale Punktzahl je Spiel, damit Trends über den ganzen Bowling-Tag sichtbar werden.</p>
+        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+          <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
+          <p className="mt-1 text-xs text-lane-600">Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war.</p>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+              <p className="text-xs text-lane-600">Bester Sieg</p>
+              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.bestWinningPoints)}</p>
             </div>
-            <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
-              {sessionScoreChart.lines.map((line) => (
-                <span key={line.key} className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold">
-                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
-                  {line.name}
-                </span>
-              ))}
+            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+              <p className="text-xs text-lane-600">Niedrigster Sieg</p>
+              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.lowestWinningPoints)}</p>
             </div>
-            <div style={{ touchAction: 'none' }}>
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={sessionScoreChart.data} margin={{ top: 22, right: 24, bottom: 5, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-                  <XAxis dataKey="game" tick={{ fontSize: 12 }} label={{ value: 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
-                  <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                  <Tooltip
-                    labelFormatter={(_, payload) => {
-                      const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
-                      return item ? `${item.game} · ${item.location}` : '';
-                    }}
-                    formatter={(value: number, name: string) => [value, name]}
-                  />
-                  {sessionScoreChart.lines.map((line) => (
-                    <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={{ r: 4 }} activeDot={{ r: 6 }} name={line.name}>
-                      <LabelList dataKey={line.key} position="top" fontSize={11} fill={line.color} />
-                    </Line>
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
+            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+              <p className="text-xs text-lane-600">Ø Siegpunkte</p>
+              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.averageWinningPoints)}</p>
+            </div>
+            <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+              <p className="text-xs text-lane-600">Höchste Niederlage</p>
+              <p className="mt-1 text-lg font-bold text-lane-900">{formatNullableScore(dayWinningPointStats.highestLosingPoints)}</p>
             </div>
           </div>
+        </div>
+
+        {showCumulativeChart && (
+          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+            <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('cumulative')}>
+              <div>
+                <h2 className="text-lg font-semibold text-lane-800">Kumulative Punkte über den Spielabend</h2>
+              </div>
+              <span className={`mt-1 text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'cumulative' ? 'rotate-180' : ''}`}>⌄</span>
+            </button>
+            {effectiveOpenChartSection === 'cumulative' && <div className="px-5 pb-5">
+              <div className="mb-4 flex flex-wrap justify-end gap-2">
+                <ChartModeButton active={cumulativeChartMode === 'frames'} label="Jedes Frame" onClick={() => setCumulativeChartMode('frames')} />
+                <ChartModeButton active={cumulativeChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setCumulativeChartMode('rounds')} />
+              </div>
+              <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
+                {cumulativeDayChart.lines.map((line) => (
+                  <span key={line.key} className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+                    {line.name}
+                  </span>
+                ))}
+              </div>
+              <div style={{ touchAction: 'none' }}>
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={cumulativeDayChart.data} margin={{ top: 12, right: 24, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} label={{ value: cumulativeChartMode === 'frames' ? 'Spiel / Frame' : 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
+                    <Tooltip
+                      labelFormatter={(_, payload) => {
+                        const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
+                        if (!item) return '';
+                        return cumulativeChartMode === 'frames' ? `${item.game} · Frame ${item.frame} · ${item.location}` : `${item.game} · ${item.location}`;
+                      }}
+                      formatter={(value: number, name: string) => [value, cumulativeDayChart.lines.find((line) => line.key === name)?.name ?? name]}
+                    />
+                    {cumulativeDayChart.lines.map((line) => (
+                      <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={cumulativeChartMode === 'rounds' ? { r: 4 } : false} activeDot={{ r: 6 }} name={line.name} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>}
+          </section>
         )}
 
-        {dayGameHistoryChart.lines.length > 1 && (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
-            <div className="mb-4">
+        {showHistoryChart && (
+          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+            <button type="button" className="flex w-full cursor-pointer items-center justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('history')}>
               <h2 className="text-lg font-semibold text-lane-800">Alle Spielverläufe des Tages</h2>
-            </div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              {dayGameHistoryChart.legend.map((item) => {
-                const hidden = hiddenDayPlayers.has(item.name);
-                return (
-                  <button
-                    key={item.name}
-                    type="button"
-                    aria-pressed={!hidden}
-                    onClick={() => toggleDayPlayer(item.name)}
-                    className={`chart-toggle rounded-full border px-3 py-1.5 text-xs font-semibold transition ${hidden ? 'border-lane-300 bg-white/70 text-lane-500 opacity-60' : 'border-lane-300 bg-white/70 text-lane-700'}`}
-                  >
-                    <span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                    {item.name}
-                  </button>
-                );
-              })}
-            </div>
-            <div style={{ touchAction: 'none' }}>
-              <ResponsiveContainer width="100%" height={340}>
-                <LineChart data={dayGameHistoryChart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-                  <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                  <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" />
-                  {dayGameHistoryChart.lines.map((line) => (
-                    <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={1.8} dot={false} activeDot={false} name={line.name} opacity={0.48} hide={hiddenDayPlayers.has(line.playerName)} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+              <span className={`text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'history' ? 'rotate-180' : ''}`}>⌄</span>
+            </button>
+            {effectiveOpenChartSection === 'history' && <div className="px-5 pb-5">
+              <div className="mb-3 flex flex-wrap gap-2">
+                {dayGameHistoryChart.legend.map((item) => {
+                  const hidden = hiddenDayPlayers.has(item.name);
+                  return (
+                    <button
+                      key={item.name}
+                      type="button"
+                      aria-pressed={!hidden}
+                      onClick={() => toggleDayPlayer(item.name)}
+                      className={`chart-toggle rounded-full border px-3 py-1.5 text-xs font-semibold transition ${hidden ? 'border-lane-300 bg-white/70 text-lane-500 opacity-60' : 'border-lane-300 bg-white/70 text-lane-700'}`}
+                    >
+                      <span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                      {item.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ touchAction: 'none' }}>
+                <ResponsiveContainer width="100%" height={340}>
+                  <ComposedChart data={dayGameHistoryChart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
+                    {dayGameHistoryChart.ranges.flatMap((range) => [
+                      <Area key={range.lowKey} type="monotone" dataKey={range.lowKey} stackId={`range-${range.playerName}`} stroke="none" fill="transparent" hide={hiddenDayPlayers.has(range.playerName)} name={`${range.playerName} Untergrenze`} />,
+                      <Area key={range.diffKey} type="monotone" dataKey={range.diffKey} stackId={`range-${range.playerName}`} stroke="none" fill={range.color} fillOpacity={0.12} hide={hiddenDayPlayers.has(range.playerName)} name={`${range.playerName} Spielbereich`} />,
+                    ])}
+                    <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" tooltipType="none" />
+                    {dayGameHistoryChart.lines.map((line) => (
+                      <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={1.8} dot={false} activeDot={false} name={line.name} opacity={0.48} hide={hiddenDayPlayers.has(line.playerName)} />
+                    ))}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>}
+          </section>
         )}
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">

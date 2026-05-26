@@ -1,4 +1,4 @@
-import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RectifiedPreview, StatsResponse, TableBuildResult } from '@/types';
+import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, RectifiedPreview, StatsResponse, TableBuildResult } from '@/types';
 
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
@@ -174,6 +174,12 @@ export async function renamePlayer(payload: PlayerRenameRequest): Promise<Player
 
 export async function fetchGames(): Promise<GameRead[]> {
   return requestJson<GameRead[]>(`${API_BASE}/games`);
+}
+
+
+export async function fetchRecentPlayerNames(hours = 2): Promise<string[]> {
+  const response = await requestJson<RecentPlayerNamesResponse>(`${API_BASE}/games/recent-player-names?hours=${encodeURIComponent(String(hours))}`);
+  return response.names;
 }
 
 

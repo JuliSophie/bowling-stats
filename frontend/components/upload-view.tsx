@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-import { buildTable, checkApiHealth, createGame, extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
+import { buildTable, checkApiHealth, createGame, extractScorecard, fetchRecentPlayerNames, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
 import type { ExtractionResult, FrameData, GameRead, LineSegment, ManualCorner, RectifiedPreview, TableBuildResult } from '@/types';
 
 type TableSubView = 'morph-horizontal' | 'morph-vertical' | 'bw';
@@ -21,6 +21,10 @@ const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#
 
 function normalizePlayerName(name: string): string {
   return name.trim().replace(/\s+/g, ' ');
+}
+
+function isPlaceholderPlayerName(name: string): boolean {
+  return /\d\s*$/.test(normalizePlayerName(name));
 }
 
 type FrameType = 'strike' | 'spare' | 'normal';
@@ -236,76 +240,128 @@ function scanBand(data: ImageData, startPos: number, fixedCoord: number, scanAxi
   return [lo, hi];
 }
 
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function findMorphCenterNear(
+  data: ImageData,
+  variableCoord: number,
+  predictedFixedCoord: number,
+  orientation: 'h' | 'v',
+  searchRadius: number,
+): number | null {
+  const fixedLimit = orientation === 'h' ? data.height : data.width;
+  const fixedAxis: 'x' | 'y' = orientation === 'h' ? 'y' : 'x';
+  const start = Math.max(0, Math.round(predictedFixedCoord - searchRadius));
+  const end = Math.min(fixedLimit - 1, Math.round(predictedFixedCoord + searchRadius));
+
+  let bestCoord = -1;
+  let bestDistance = Infinity;
+  for (let fixedCoord = start; fixedCoord <= end; fixedCoord++) {
+    const brightness = orientation === 'h'
+      ? getMorphBrightness(data, variableCoord, fixedCoord)
+      : getMorphBrightness(data, fixedCoord, variableCoord);
+    if (brightness < MORPH_BRIGHT) continue;
+    const distance = Math.abs(fixedCoord - predictedFixedCoord);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestCoord = fixedCoord;
+    }
+  }
+  if (bestCoord < 0) return null;
+
+  const [lo, hi] = scanBand(data, bestCoord, variableCoord, fixedAxis);
+  return (lo + hi) / 2;
+}
+
+function traceMorphLinePoints(data: ImageData, hitX: number, hitY: number, orientation: 'h' | 'v'): [number, number][] {
+  const isHorizontal = orientation === 'h';
+  const axisLimit = isHorizontal ? data.width : data.height;
+  const fixedLimit = isHorizontal ? data.height : data.width;
+  const startAxis = isHorizontal ? hitX : hitY;
+  const startFixed = isHorizontal ? hitY : hitX;
+  const fixedAxis: 'x' | 'y' = isHorizontal ? 'y' : 'x';
+  const searchRadius = Math.max(10, Math.floor(fixedLimit * 0.035));
+  const maxGap = Math.max(8, Math.floor(axisLimit * 0.025));
+  const step = Math.max(1, Math.floor(axisLimit / 700));
+
+  const [startLo, startHi] = scanBand(data, startFixed, startAxis, fixedAxis);
+  const startCenter = (startLo + startHi) / 2;
+  const leftOrTop: [number, number][] = [];
+  const rightOrBottom: [number, number][] = [];
+
+  const walk = (direction: -1 | 1, out: [number, number][]) => {
+    let predictedFixed = startCenter;
+    let gap = 0;
+    for (let axis = startAxis + direction * step; axis >= 0 && axis < axisLimit; axis += direction * step) {
+      const center = findMorphCenterNear(data, axis, predictedFixed, orientation, searchRadius);
+      if (center === null) {
+        gap += step;
+        if (gap > maxGap) break;
+        continue;
+      }
+      predictedFixed = center;
+      gap = 0;
+      out.push(isHorizontal ? [axis, center] : [center, axis]);
+    }
+  };
+
+  walk(-1, leftOrTop);
+  walk(1, rightOrBottom);
+  return [...leftOrTop.reverse(), isHorizontal ? [startAxis, startCenter] : [startCenter, startAxis], ...rightOrBottom];
+}
+
+function fitHorizontalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
+  const points = traceMorphLinePoints(data, hitX, hitY, 'h');
+  if (points.length < 2) return null;
+  const minX = Math.min(...points.map(([x]) => x));
+  const maxX = Math.max(...points.map(([x]) => x));
+  if (maxX - minX + 1 < data.width * 0.35) return null;
+
+  const n = points.length;
+  let sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (const [x, y] of points) { sx += x; sy += y; sxx += x * x; sxy += x * y; }
+  const det = n * sxx - sx * sx;
+  if (Math.abs(det) <= 1e-6) return null;
+  const slope = (n * sxy - sx * sy) / det;
+  const intercept = (sy - slope * sx) / n;
+  const yAtLeft = intercept;
+  const yAtRight = slope * (data.width - 1) + intercept;
+  return { x1: 0, y1: clamp01(yAtLeft / (data.height - 1)), x2: 1, y2: clamp01(yAtRight / (data.height - 1)) };
+}
+
+function fitVerticalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
+  const points = traceMorphLinePoints(data, hitX, hitY, 'v');
+  if (points.length < 2) return null;
+  const minY = Math.min(...points.map(([, y]) => y));
+  const maxY = Math.max(...points.map(([, y]) => y));
+  if (maxY - minY + 1 < data.height * 0.35) return null;
+
+  const n = points.length;
+  let sx = 0, sy = 0, syy = 0, sxy = 0;
+  for (const [x, y] of points) { sx += x; sy += y; syy += y * y; sxy += x * y; }
+  const det = n * syy - sy * sy;
+  if (Math.abs(det) <= 1e-6) return null;
+  const slope = (n * sxy - sx * sy) / det;
+  const intercept = (sx - slope * sy) / n;
+  const xAtTop = intercept;
+  const xAtBottom = slope * (data.height - 1) + intercept;
+  return { x1: clamp01(xAtTop / (data.width - 1)), y1: 0, x2: clamp01(xAtBottom / (data.width - 1)), y2: 1 };
+}
+
 function scanHorizontalLine(data: ImageData, nx: number, ny: number): LineSegment | null {
   const w = data.width, h = data.height;
   const hit = findWhitePixelNear(data, Math.round(nx * (w - 1)), Math.round(ny * (h - 1)));
   if (!hit) return null;
-
-  const [bandTop, bandBot] = scanBand(data, hit[1], hit[0], 'y');
-  if (bandBot - bandTop + 1 > h * 0.08) return null;
-  const cy = Math.round((bandTop + bandBot) / 2);
-
-  const gapTol = Math.max(5, Math.floor(w * 0.02));
-  const [left, right] = scanBand(data, hit[0], cy, 'x', gapTol);
-  const runLen = right - left + 1;
-
-  if (runLen >= w * 0.5) {
-    const pts: [number, number][] = [];
-    const step = Math.max(1, Math.floor(runLen / 30));
-    for (let x = left; x <= right; x += step) {
-      if (getMorphBrightness(data, x, cy) < MORPH_BRIGHT) continue;
-      const [t, b] = scanBand(data, cy, x, 'y');
-      pts.push([x, (t + b) / 2]);
-    }
-    if (pts.length >= 2) {
-      const n = pts.length;
-      let sx = 0, sy = 0, sxx = 0, sxy = 0;
-      for (const [xi, yi] of pts) { sx += xi; sy += yi; sxx += xi * xi; sxy += xi * yi; }
-      const det = n * sxx - sx * sx;
-      if (Math.abs(det) > 1e-6) {
-        const slope = (n * sxy - sx * sy) / det;
-        const intercept = (sy - slope * sx) / n;
-        return { x1: 0, y1: intercept / h, x2: 1, y2: (slope * (w - 1) + intercept) / h };
-      }
-    }
-  }
-  return { x1: 0, y1: cy / h, x2: 1, y2: cy / h };
+  return fitHorizontalMorphLine(data, hit[0], hit[1]);
 }
 
 function scanVerticalLine(data: ImageData, nx: number, ny: number): LineSegment | null {
   const w = data.width, h = data.height;
   const hit = findWhitePixelNear(data, Math.round(nx * (w - 1)), Math.round(ny * (h - 1)));
   if (!hit) return null;
-
-  const [bandL, bandR] = scanBand(data, hit[0], hit[1], 'x');
-  if (bandR - bandL + 1 > w * 0.08) return null;
-  const cx = Math.round((bandL + bandR) / 2);
-
-  const gapTol = Math.max(5, Math.floor(h * 0.02));
-  const [top, bot] = scanBand(data, hit[1], cx, 'y', gapTol);
-  const runLen = bot - top + 1;
-
-  if (runLen >= h * 0.5) {
-    const pts: [number, number][] = [];
-    const step = Math.max(1, Math.floor(runLen / 30));
-    for (let y = top; y <= bot; y += step) {
-      if (getMorphBrightness(data, cx, y) < MORPH_BRIGHT) continue;
-      const [l, r] = scanBand(data, cx, y, 'x');
-      pts.push([(l + r) / 2, y]);
-    }
-    if (pts.length >= 2) {
-      const n = pts.length;
-      let sx = 0, sy = 0, syy = 0, sxy = 0;
-      for (const [xi, yi] of pts) { sx += xi; sy += yi; syy += yi * yi; sxy += xi * yi; }
-      const det = n * syy - sy * sy;
-      if (Math.abs(det) > 1e-6) {
-        const slope = (n * sxy - sx * sy) / det;
-        const intercept = (sx - slope * sy) / n;
-        return { x1: intercept / w, y1: 0, x2: (slope * (h - 1) + intercept) / w, y2: 1 };
-      }
-    }
-  }
-  return { x1: cx / w, y1: 0, x2: cx / w, y2: 1 };
+  return fitVerticalMorphLine(data, hit[0], hit[1]);
 }
 
 export default function UploadView() {
@@ -337,6 +393,7 @@ export default function UploadView() {
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [bwThreshold, setBwThreshold] = useState(75);
+  const [showRowCrops, setShowRowCrops] = useState(true);
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [saveDate, setSaveDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [saveLocation, setSaveLocation] = useState('Squash House');
@@ -748,8 +805,20 @@ export default function UploadView() {
     if (!uploadedFile || manualCorners.length !== 4) return;
     setExtracting(true); setErrorMessage('');
     try {
-      const result = await extractScorecard(uploadedFile, manualCorners, selectedHLines, selectedVLines, bwThreshold);
-      setExtractionResult(result);
+      const [result, recentNames] = await Promise.all([
+        extractScorecard(uploadedFile, manualCorners, selectedHLines, selectedVLines, bwThreshold),
+        fetchRecentPlayerNames(2).catch(() => []),
+      ]);
+      setExtractionResult({
+        ...result,
+        players: result.players.map((player, idx) => {
+          const detectedName = normalizePlayerName(player.name);
+          const name = !detectedName || isPlaceholderPlayerName(detectedName)
+            ? (recentNames[idx] ?? '')
+            : detectedName;
+          return { ...player, name };
+        }),
+      });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'OCR-Extraktion fehlgeschlagen.');
     } finally {
@@ -1092,6 +1161,21 @@ export default function UploadView() {
                 {/* Extraction results table */}
                 {extractionResult ? (
                   <div className="mt-4 overflow-x-auto rounded-[1.3rem] border border-lane-200 bg-lane-50/80 p-4 -mx-1 sm:mx-0">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-lane-800">Textextraktion prüfen</h3>
+                        <p className="mt-0.5 text-xs text-lane-600">Die Quellenbilder stehen direkt über den passenden Frame-Spalten.</p>
+                      </div>
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-lane-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-lane-700 transition hover:bg-white">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-lane-800"
+                          checked={showRowCrops}
+                          onChange={(e) => setShowRowCrops(e.target.checked)}
+                        />
+                        Zeilenbilder anzeigen
+                      </label>
+                    </div>
                     <table className="min-w-[700px] w-full border-collapse text-xs">
                       <thead>
                         <tr>
@@ -1104,7 +1188,29 @@ export default function UploadView() {
                       </thead>
                       <tbody>
                         {extractionResult.players.map((player, pIdx) => (
-                          <>
+                          <Fragment key={`player-row-${pIdx}`}>
+                            {showRowCrops ? (
+                              <tr key={`${pIdx}-crop`}>
+                                <td className="border border-lane-200 bg-white px-2 py-2 align-middle">
+                                  <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-lane-400">Quelle</span>
+                                </td>
+                                {Array.from({ length: 10 }, (_, fIdx) => {
+                                  const frameCrop = player.frame_crop_data_urls?.[fIdx];
+                                  return (
+                                    <td key={fIdx} className="border border-lane-200 bg-white px-1 py-2 align-middle">
+                                      {frameCrop ? (
+                                        <a href={frameCrop} target="_blank" rel="noreferrer" title={`Frame ${fIdx + 1} groß öffnen`} className="block overflow-hidden rounded border border-lane-200 bg-white transition hover:border-lane-400">
+                                          <img src={frameCrop} alt={`Quellenbild für Spielerzeile ${pIdx + 1}, Frame ${fIdx + 1}`} className="mx-auto max-h-16 w-full object-contain [image-rendering:pixelated]" />
+                                        </a>
+                                      ) : (
+                                        <div className="min-h-10 rounded border border-dashed border-lane-200 bg-lane-50" />
+                                      )}
+                                    </td>
+                                  );
+                                })}
+                                <td className="border border-lane-200 bg-white px-2 py-2" />
+                              </tr>
+                            ) : null}
                             <tr key={`${pIdx}-throws`}>
                               <td rowSpan={2} className="border border-lane-200 bg-lane-50 px-2 py-1.5 align-middle">
                                 <input
@@ -1160,7 +1266,7 @@ export default function UploadView() {
                                 );
                               })}
                             </tr>
-                          </>
+                          </Fragment>
                         ))}
                       </tbody>
                     </table>

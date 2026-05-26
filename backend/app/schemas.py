@@ -57,12 +57,18 @@ class FrameData(BaseModel):
 class PlayerData(BaseModel):
     name: str = ""
     frames: list[FrameData] = Field(default_factory=list)
+    row_crop_data_url: str | None = None
+    frame_crop_data_urls: list[str | None] = Field(default_factory=list)
 
 
 class ExtractionResult(BaseModel):
     filename: str
     players: list[PlayerData] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class RecentPlayerNamesResponse(BaseModel):
+    names: list[str] = Field(default_factory=list)
 
 
 class ConfirmedScore(BaseModel):

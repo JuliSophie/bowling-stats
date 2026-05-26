@@ -1,10 +1,12 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Game, Player, Score
-from app.schemas import GameCreate, GameRead, PlayerRenameRequest, PlayerRenameResponse, StoredScore
+from app.schemas import GameCreate, GameRead, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, StoredScore
 
 
 router = APIRouter(tags=["games"])
@@ -46,6 +48,27 @@ def list_games(db: Session = Depends(get_db)) -> list[GameRead]:
             scores=[StoredScore(player_name=s[0], total_score=s[1], frames=s[2] or []) for s in scores],
         ))
     return result
+
+
+@router.get("/games/recent-player-names", response_model=RecentPlayerNamesResponse)
+def recent_player_names(hours: float = 2.0, db: Session = Depends(get_db)) -> RecentPlayerNamesResponse:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max(0.0, min(hours, 24.0)))
+    game = db.scalars(
+        select(Game)
+        .where(Game.created_at.is_not(None), Game.created_at >= cutoff)
+        .order_by(desc(Game.created_at), desc(Game.id))
+        .limit(1)
+    ).first()
+    if game is None:
+        return RecentPlayerNamesResponse(names=[])
+
+    names = db.scalars(
+        select(Player.name)
+        .join(Score, Score.player_id == Player.id)
+        .where(Score.game_id == game.id)
+        .order_by(Score.id)
+    ).all()
+    return RecentPlayerNamesResponse(names=list(names))
 
 
 @router.post("/games", response_model=GameRead, status_code=status.HTTP_201_CREATED)

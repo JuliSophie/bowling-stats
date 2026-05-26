@@ -10,24 +10,38 @@ const NAV_ITEMS = [
   { href: '/stats/players', label: 'Bestenliste', icon: '🏆' },
 ];
 
+const THEME_STORAGE_KEY = 'bowling-theme';
+type Theme = 'light' | 'dark';
+
+function isTheme(value: string | null): value is Theme {
+  return value === 'light' || value === 'dark';
+}
+
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function applyTheme(theme: Theme) {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+}
+
 export default function Navigation() {
   const pathname = usePathname();
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
-    const root = document.documentElement;
     const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const systemDark = media.matches;
-    const initialTheme = systemDark ? 'dark' : 'light';
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    const initialTheme = isTheme(savedTheme) ? savedTheme : getSystemTheme();
 
-    root.dataset.theme = initialTheme;
-    root.style.colorScheme = initialTheme;
+    applyTheme(initialTheme);
     setTheme(initialTheme);
 
     const onSystemThemeChange = (event: MediaQueryListEvent) => {
+      if (isTheme(localStorage.getItem(THEME_STORAGE_KEY))) return;
       const nextTheme = event.matches ? 'dark' : 'light';
-      root.dataset.theme = nextTheme;
-      root.style.colorScheme = nextTheme;
+      applyTheme(nextTheme);
       setTheme(nextTheme);
     };
 
@@ -37,8 +51,8 @@ export default function Navigation() {
 
   const toggleTheme = () => {
     const nextTheme = theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = nextTheme;
-    document.documentElement.style.colorScheme = nextTheme;
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    applyTheme(nextTheme);
     setTheme(nextTheme);
   };
 

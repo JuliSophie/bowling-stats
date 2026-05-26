@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 
 from app.config import get_settings
 from app.database import Base, engine
@@ -17,6 +18,11 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    inspector = inspect(engine)
+    if "games" in inspector.get_table_names() and "created_at" not in {col["name"] for col in inspector.get_columns("games")}:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE games ADD COLUMN created_at DATETIME"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_games_created_at ON games (created_at)"))
     yield
 
 

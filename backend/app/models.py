@@ -1,6 +1,6 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Date, ForeignKey, Integer, JSON, String
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -20,6 +20,7 @@ class Game(Base):
     __tablename__ = "games"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     played_at: Mapped[date] = mapped_column(Date, index=True)
     location: Mapped[str] = mapped_column(String(120))
     mode: Mapped[str] = mapped_column(String(40), default="10-Pin")

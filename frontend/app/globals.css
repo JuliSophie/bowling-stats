@@ -255,11 +255,11 @@ select {
 :root[data-theme="dark"] .hover\:bg-lane-50:hover,
 :root[data-theme="dark"] .hover\:bg-white\/70:hover,
 :root[data-theme="dark"] .hover\:bg-white:hover {
-  background-color: rgba(255, 226, 190, 0.09) !important;
+  background-color: rgba(255, 226, 190, 0.08) !important;
 }
 
 :root[data-theme="dark"] .hover\:bg-lane-100:hover {
-  background-color: rgba(255, 226, 190, 0.12) !important;
+  background-color: rgba(255, 226, 190, 0.10) !important;
 }
 
 :root[data-theme="dark"] .bg-red-100,
@@ -309,6 +309,35 @@ select {
 
 :root[data-theme="dark"] td.bg-slate-200\/60 {
   background-color: rgba(148, 163, 184, 0.17) !important;
+}
+
+.recharts-default-tooltip {
+  background-color: rgba(255, 252, 247, 0.48) !important;
+  border: 1px solid rgba(111, 67, 30, 0.18) !important;
+  border-radius: 0.9rem !important;
+  box-shadow: 0 14px 36px rgba(21, 12, 5, 0.14) !important;
+  color: #241309 !important;
+  backdrop-filter: blur(6px);
+}
+
+.recharts-tooltip-label {
+  color: inherit !important;
+  font-weight: 700;
+}
+
+.recharts-tooltip-label:empty {
+  display: none;
+}
+
+:root[data-theme="dark"] .recharts-default-tooltip {
+  background-color: rgba(20, 11, 4, 0.64) !important;
+  border-color: rgba(255, 226, 190, 0.18) !important;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.30) !important;
+  color: #fff4e6 !important;
+}
+
+:root[data-theme="dark"] .recharts-tooltip-item {
+  color: inherit !important;
 }
 
 :root[data-theme="dark"] input,

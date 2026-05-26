@@ -36,12 +36,18 @@ export type FrameData = {
 export type PlayerData = {
   name: string;
   frames: FrameData[];
+  row_crop_data_url?: string | null;
+  frame_crop_data_urls?: (string | null)[];
 };
 
 export type ExtractionResult = {
   filename: string;
   players: PlayerData[];
   warnings: string[];
+};
+
+export type RecentPlayerNamesResponse = {
+  names: string[];
 };
 
 export type RectifiedPreview = {

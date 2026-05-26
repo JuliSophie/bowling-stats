@@ -257,21 +257,59 @@ class ImagePreprocessor:
                 return ocr_img[0:0, 0:0]
             return ocr_img[y:b, x:r]
 
+        def row_crop(row: int) -> str | None:
+            row_cells = [cell for (cell_row, col), cells in grid.items() if cell_row == row and col > 0 for cell in cells.values()]
+            if not row_cells:
+                return None
+
+            left = min(int(cell["x"] * img_w) for cell in row_cells)
+            top = min(int(cell["y"] * img_h) for cell in row_cells)
+            right = max(int((cell["x"] + cell["w"]) * img_w) for cell in row_cells)
+            bottom = max(int((cell["y"] + cell["h"]) * img_h) for cell in row_cells)
+            pad_x = max(4, int((right - left) * 0.01))
+            pad_y = max(3, int((bottom - top) * 0.12))
+            x = max(0, left - pad_x)
+            y = max(0, top - pad_y)
+            r = min(img_w, right + pad_x)
+            b = min(img_h, bottom + pad_y)
+            if r <= x or b <= y:
+                return None
+            return ImagePreprocessor.encode_image_data_url(ocr_img[y:b, x:r])
+
+        def frame_crop(row: int, col: int) -> str | None:
+            frame_cells = list(grid.get((row, col), {}).values())
+            if not frame_cells:
+                return None
+
+            left = min(int(cell["x"] * img_w) for cell in frame_cells)
+            top = min(int(cell["y"] * img_h) for cell in frame_cells)
+            right = max(int((cell["x"] + cell["w"]) * img_w) for cell in frame_cells)
+            bottom = max(int((cell["y"] + cell["h"]) * img_h) for cell in frame_cells)
+            pad_x = max(2, int((right - left) * 0.02))
+            pad_y = max(3, int((bottom - top) * 0.12))
+            x = max(0, left - pad_x)
+            y = max(0, top - pad_y)
+            r = min(img_w, right + pad_x)
+            b = min(img_h, bottom + pad_y)
+            if r <= x or b <= y:
+                return None
+            return ImagePreprocessor.encode_image_data_url(ocr_img[y:b, x:r])
+
         players: list[dict] = []
         for row in rows:
             if row == 0:
                 continue
 
             name_cell = grid.get((row, 0), {}).get(0)
-            if not name_cell:
-                continue
-            name_crop = crop(name_cell)
-            if not ImagePreprocessor._has_content(name_crop, threshold=0.02):
-                continue
-            raw_name = ImagePreprocessor._ocr_crop(name_crop)
+            raw_name = ""
+            if name_cell:
+                name_crop = crop(name_cell)
+                if ImagePreprocessor._has_content(name_crop, threshold=0.02):
+                    raw_name = ImagePreprocessor._ocr_crop(name_crop)
             name = "" if raw_name and raw_name[-1].isdigit() else raw_name
 
             frames: list[dict] = []
+            row_has_frame_content = False
             for col in frame_cols:
                 col_cells = grid.get((row, col), {})
                 is_last = col == max(frame_cols)
@@ -283,6 +321,7 @@ class ImagePreprocessor:
                     if sc:
                         cr = crop(sc)
                         if ImagePreprocessor._has_content(cr, threshold=0.01):
+                            row_has_frame_content = True
                             throws.append(ImagePreprocessor._ocr_crop(cr, allowlist=throw_chars, content_threshold=0.01))
                         else:
                             throws.append("")
@@ -294,6 +333,7 @@ class ImagePreprocessor:
                 if cum_cell:
                     cr = crop(cum_cell)
                     if ImagePreprocessor._has_content(cr, threshold=0.012):
+                        row_has_frame_content = True
                         cum = ImagePreprocessor._ocr_crop(cr, allowlist=score_chars, content_threshold=0.012)
 
                 if is_last:
@@ -310,12 +350,21 @@ class ImagePreprocessor:
                         cumulative=cum,
                     ).model_dump())
 
+            if not row_has_frame_content and not name.strip():
+                continue
+
             while len(frames) < 10:
                 frames.append(FrameData().model_dump())
+
+            frame_crop_data_urls = [frame_crop(row, col) for col in frame_cols[:10]]
+            while len(frame_crop_data_urls) < 10:
+                frame_crop_data_urls.append(None)
 
             players.append(PlayerData(
                 name=name,
                 frames=[FrameData(**f) for f in frames[:10]],
+                row_crop_data_url=row_crop(row),
+                frame_crop_data_urls=frame_crop_data_urls[:10],
             ).model_dump())
 
         return players

@@ -543,7 +543,7 @@ function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
             <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-            <Tooltip />
+            <Tooltip labelFormatter={() => ''} />
             <Legend />
             {game.scores.map((score, i) => (
               <Line
@@ -660,7 +660,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
               <XAxis type="number" tick={{ fontSize: 12 }} domain={['dataMin - 10', 'dataMax + 10']} />
               <YAxis type="category" dataKey="location" tick={{ fontSize: 11 }} width={120} />
-              <Tooltip formatter={(value: number) => [`${value}`, '⌀']} />
+              <Tooltip labelFormatter={() => ''} formatter={(value: number) => [`${value}`, '⌀']} />
               <Bar dataKey="avg" radius={[0, 6, 6, 0]} barSize={20}>
                 {s.venueStats.map((_, i) => <Cell key={i} fill={PLAYER_COLORS[i % PLAYER_COLORS.length]} />)}
               </Bar>
@@ -1024,7 +1024,7 @@ function DaySessionContent({ dayGames, players }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.split('-')[1]} interval={0} />
                     <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                    <Tooltip labelFormatter={(v: string) => `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
+                    <Tooltip labelFormatter={() => ''} />
                     <Legend />
                     {cumAllFrames.gameBoundaries.map((boundary) => (
                       <ReferenceLine key={boundary} x={boundary} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1.5} />
@@ -1040,7 +1040,7 @@ function DaySessionContent({ dayGames, players }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="game" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                    <Tooltip />
+                    <Tooltip labelFormatter={() => ''} />
                     <Legend />
                     {allPlayerNames.map((name, i) => (
                       <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2.5} dot={{ r: 5 }} activeDot={{ r: 7 }} />
@@ -1077,7 +1077,7 @@ function DaySessionContent({ dayGames, players }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.includes('gap') ? '' : v.split('-')[1]} interval={0} />
                     <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                    <Tooltip labelFormatter={(v: string) => v.includes('gap') ? '' : `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
+                    <Tooltip labelFormatter={() => ''} />
                     <Legend />
                     {allFrames.gameBoundaries.map((boundary) => (
                       <ReferenceLine key={boundary} x={boundary} stroke="#94a3b8" strokeDasharray="4 4" strokeWidth={1.5} />
@@ -1093,7 +1093,7 @@ function DaySessionContent({ dayGames, players }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="game" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                    <Tooltip />
+                    <Tooltip labelFormatter={() => ''} />
                     <Legend />
                     {allPlayerNames.map((name, i) => (
                       <Line key={name} type="monotone" dataKey={name} stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2.5} dot={{ r: 5 }} activeDot={{ r: 7 }} />
@@ -1467,18 +1467,15 @@ export default function StatsView() {
                 <XAxis dataKey="index" tick={{ fontSize: 12 }} label={{ value: 'Spiel #', position: 'insideBottomRight', offset: -5 }} />
                 <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                 <Tooltip
-                  labelFormatter={(_, payload) => {
-                    const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
-                    return item?.label ?? '';
-                  }}
-                  formatter={(value: number, name: string) => [value, name === 'Rundenzahl' ? 'Rundenzahl' : 'Punkte']}
+                  labelFormatter={() => ''}
+                  formatter={(value: number) => [value, 'Punkte']}
                 />
                 <Legend />
                 {showPersonalBest && summary && (
                   <ReferenceLine y={summary.maxScore} stroke="#f59e0b" strokeDasharray="5 5" label={{ value: 'Bestspiel', position: 'insideTopRight', fill: '#92400e', fontSize: 12 }} />
                 )}
                 {showPersonalGame && <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name="Personal Spiel" />}
-                {showRoundNumber && <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Rundenzahl" />}
+                {showRoundNumber && <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" tooltipType="none" />}
                 </LineChart>
               </ResponsiveContainer>
             </div>

@@ -232,9 +232,9 @@ function GameChart({ game, allGames }: { game: GameRead; allGames: GameRead[] })
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
               <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-              <Tooltip />
+              <Tooltip labelFormatter={() => ''} />
               <Legend onClick={(entry) => toggleLegendLine(entry.dataKey)} wrapperStyle={{ cursor: 'pointer' }} />
-              {showRoundNumber && <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Rundenzahl" hide={hiddenLines.has('roundNumber')} />}
+              {showRoundNumber && <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Rundenzahl" tooltipType="none" hide={hiddenLines.has('roundNumber')} />}
               {showOpenFrames && <Line type="stepAfter" dataKey="openFrameRate" stroke="#f97316" strokeWidth={2} strokeDasharray="3 4" dot={false} name="Offene Frames %" hide={hiddenLines.has('openFrameRate')} />}
               {game.scores.map((score, i) => (
                 <Line

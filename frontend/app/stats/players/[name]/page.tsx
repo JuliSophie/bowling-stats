@@ -42,6 +42,10 @@ type PlayerAdvancedStats = {
   avgPointsPerStrike: number;
   totalSpares: number;
   avgPointsPerSpare: number;
+  bestWinningPoints: number | null;
+  lowestWinningPoints: number | null;
+  averageWinningPoints: number | null;
+  highestLosingPoints: number | null;
 };
 
 function isOpenFrame(frame: FrameData) {
@@ -71,13 +75,22 @@ function parseThrowPins(value: unknown) {
 }
 
 function isStrikeFrame(frame: FrameData) {
-  return String(frame.throw1 ?? '').trim().toLowerCase() === 'x';
+  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
+  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
+  return throw1 === 'x' || throw2 === 'x';
 }
 
 function isSpareFrame(frame: FrameData) {
   const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
   const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 !== 'x' && throw2 === '/';
+  return throw1 !== 'x' && throw2 !== 'x' && throw2 === '/';
+}
+
+function getFirstThrowPins(frame: FrameData) {
+  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
+  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
+  if (!throw1 && throw2 === 'x') return 10;
+  return parseThrowPins(frame.throw1);
 }
 
 function getFramePoints(frame: FrameData, previousCumulative: number) {
@@ -89,6 +102,16 @@ function getFramePoints(frame: FrameData, previousCumulative: number) {
 function average(values: number[]) {
   if (values.length === 0) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function averageOrNull(values: number[]) {
+  if (values.length === 0) return null;
+  return Math.round(average(values) * 10) / 10;
+}
+
+function formatNullableScore(value: number | null) {
+  if (value === null) return '–';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function buildBestStrikeStreakLabel(streak: number) {
@@ -106,6 +129,8 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
   const strikeFramePoints: number[] = [];
   const spareFramePoints: number[] = [];
   const gameScores: number[] = [];
+  const winningScores: number[] = [];
+  const losingScores: number[] = [];
 
   let wins = 0;
   let losses = 0;
@@ -122,8 +147,13 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
     if (!playerScore) continue;
 
     const highScore = Math.max(...game.scores.map((score) => score.total_score));
-    if (playerScore.total_score === highScore) wins++;
-    else losses++;
+    if (playerScore.total_score === highScore) {
+      wins++;
+      winningScores.push(playerScore.total_score);
+    } else {
+      losses++;
+      losingScores.push(playerScore.total_score);
+    }
     gameScores.push(playerScore.total_score);
 
     let runningStrikeStreak = 0;
@@ -134,7 +164,7 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
       const spare = isSpareFrame(frame);
       const open = !strike && !spare;
 
-      firstThrowPins.push(parseThrowPins(frame.throw1));
+      firstThrowPins.push(getFirstThrowPins(frame));
 
       if (strike) {
         totalStrikes++;
@@ -199,6 +229,10 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
     avgPointsPerStrike: Math.round(average(strikeFramePoints) * 10) / 10,
     totalSpares,
     avgPointsPerSpare: Math.round(average(spareFramePoints) * 10) / 10,
+    bestWinningPoints: winningScores.length > 0 ? Math.max(...winningScores) : null,
+    lowestWinningPoints: winningScores.length > 0 ? Math.min(...winningScores) : null,
+    averageWinningPoints: averageOrNull(winningScores),
+    highestLosingPoints: losingScores.length > 0 ? Math.max(...losingScores) : null,
   };
 }
 
@@ -497,6 +531,29 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               description={`Ø ${formatOneDecimal(advanced.avgPointsPerSpare)} Pins/Spare`}
             />
           </div>
+
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <InsightCard
+              title="Bester Punkt-Sieg"
+              value={formatNullableScore(advanced.bestWinningPoints)}
+              description="Höchste Punktzahl bei einem Sieg"
+            />
+            <InsightCard
+              title="Niedrigster Punkt-Sieg"
+              value={formatNullableScore(advanced.lowestWinningPoints)}
+              description="Niedrigste Punktzahl, die noch gewonnen hat"
+            />
+            <InsightCard
+              title="Ø Siegpunkte"
+              value={formatNullableScore(advanced.averageWinningPoints)}
+              description="Durchschnitt aller gewonnenen Spiele"
+            />
+            <InsightCard
+              title="Höchste Niederlage"
+              value={formatNullableScore(advanced.highestLosingPoints)}
+              description="Beste Punktzahl ohne Sieg"
+            />
+          </div>
         </div>
 
         {trendData.length > 1 && (
@@ -509,10 +566,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
                   <XAxis dataKey="index" tick={{ fontSize: 12 }} label={{ value: 'Spiel #', position: 'insideBottomRight', offset: -5 }} />
                   <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                   <Tooltip
-                    labelFormatter={(_, payload) => {
-                      const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
-                      return item?.label ?? '';
-                    }}
+                    labelFormatter={() => ''}
                     formatter={(value: number) => [value, 'Punkte']}
                   />
                   <Legend onClick={() => setShowScoreTrend((value) => !value)} wrapperStyle={{ cursor: 'pointer' }} />
@@ -534,7 +588,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                   <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
                   <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                  <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" />
+                  <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" tooltipType="none" />
                   {gameHistoryChart.lines.map((line) => (
                     <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={1.7} dot={false} activeDot={false} name={line.name} opacity={0.35} />
                   ))}
