@@ -5,16 +5,13 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 
 import { buildTable, checkApiHealth, createGame, extractScorecard, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
 import type { ExtractionResult, FrameData, GameRead, LineSegment, ManualCorner, RectifiedPreview, TableBuildResult } from '@/types';
-import StatsView from './stats-view';
 
-type AppTab = 'upload' | 'stats';
+type TableSubView = 'morph-horizontal' | 'morph-vertical' | 'bw';
 
 const PIPELINE_STEPS = [
   { title: 'Monitor finden' },
   { title: 'Tabelle & Ergebnis' },
 ];
-
-type TableSubView = 'morph-horizontal' | 'morph-vertical' | 'bw';
 
 const MAGNIFIER_SIZE = 140;
 const MAGNIFIER_ZOOM = 4;
@@ -32,25 +29,6 @@ function getFrameType(frame: FrameData): FrameType {
   if (frame.throw1.trim().toLowerCase() === 'x' || frame.throw2.trim().toLowerCase() === 'x') return 'strike';
   if (frame.throw2.trim() === '/') return 'spare';
   return 'normal';
-}
-
-function buildCumulativeChartData(scores: GameRead['scores']): Record<string, string | number>[] {
-  const frameCount = Math.max(...scores.map((s) => s.frames.length), 0);
-  const data: Record<string, string | number>[] = [];
-  for (let f = 0; f < frameCount; f++) {
-    const point: Record<string, string | number> = { frame: `${f + 1}` };
-    for (const score of scores) {
-      if (f < score.frames.length) {
-        const cum = parseInt(String(score.frames[f].cumulative ?? ''), 10);
-        if (!isNaN(cum)) {
-          point[score.player_name] = cum;
-          point[`${score.player_name}_type`] = getFrameType(score.frames[f]);
-        }
-      }
-    }
-    data.push(point);
-  }
-  return data;
 }
 
 function FrameDot({ cx, cy, payload, dataKey, stroke }: {
@@ -290,10 +268,8 @@ function scanVerticalLine(data: ImageData, nx: number, ny: number): LineSegment 
   return { x1: cx / w, y1: 0, x2: cx / w, y2: 1 };
 }
 
-
-export default function BowlingApp() {
+export default function UploadView() {
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
-  const [appTab, setAppTab] = useState<AppTab>('upload');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [manualCorners, setManualCorners] = useState<ManualCorner[]>([]);
@@ -814,402 +790,401 @@ export default function BowlingApp() {
     : [...(rectifiedPreview?.warnings ?? []), ...(tableBuildResult?.warnings ?? []), ...(extractionResult?.warnings ?? [])];
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
-      <section className="panel overflow-hidden rounded-[2.4rem] border border-lane-200/60 p-6 sm:p-8">
-        <div className="flex items-center justify-between">
-          <p className="text-sm uppercase tracking-[0.36em] text-lane-500">bowling.sophiealexandra.de</p>
-          <span className="flex items-center gap-1.5 text-xs text-lane-500">
-            API
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${apiOnline === true ? 'bg-emerald-400' : apiOnline === false ? 'bg-red-400' : 'bg-lane-300 animate-pulse'}`} />
-          </span>
-        </div>
-        <h1 className="mt-3 text-3xl font-semibold leading-tight text-lane-900 sm:text-4xl">Bowling Stats</h1>
-        <div className="mt-4 flex gap-2">
-          <button type="button" className={`rounded-full px-4 py-2 text-sm font-medium transition ${appTab === 'upload' ? 'bg-lane-800 text-white' : 'border border-lane-300 text-lane-700 hover:bg-white/70'}`} onClick={() => setAppTab('upload')}>Upload</button>
-          <button type="button" className={`rounded-full px-4 py-2 text-sm font-medium transition ${appTab === 'stats' ? 'bg-lane-800 text-white' : 'border border-lane-300 text-lane-700 hover:bg-white/70'}`} onClick={() => setAppTab('stats')}>Statistiken</button>
-        </div>
-      </section>
+    <>
+      <nav className="flex items-center gap-1.5 rounded-[2rem] bg-[rgba(41,24,9,0.92)] p-2.5 text-white sm:gap-2 sm:p-3">
+        {PIPELINE_STEPS.map(({ title }, index) => {
+          const number = index + 1;
+          const isActive = step === number;
+          const isReachable = number === 1 || (number === 2 && !!rectifiedPreview);
+          return (
+            <button key={number} type="button"
+              className={`flex-1 rounded-2xl px-2 py-2.5 text-center text-xs font-medium transition sm:px-3 sm:text-sm ${isActive ? 'bg-white/20 text-white' : isReachable ? 'text-lane-200 hover:bg-white/10' : 'cursor-not-allowed text-lane-500'}`}
+              onClick={() => isReachable && goToStep(number)} disabled={!isReachable}
+            >{number}. {title}</button>
+          );
+        })}
+      </nav>
 
-      {appTab === 'stats' && <StatsView />}
-
-      {appTab === 'upload' && <>
-        <nav className="flex items-center gap-1.5 rounded-[2rem] bg-[rgba(41,24,9,0.92)] p-2.5 text-white sm:gap-2 sm:p-3">
-          {PIPELINE_STEPS.map(({ title }, index) => {
-            const number = index + 1;
-            const isActive = step === number;
-            const isReachable = number === 1 || (number === 2 && !!rectifiedPreview);
-            return (
-              <button key={number} type="button"
-                className={`flex-1 rounded-2xl px-2 py-2.5 text-center text-xs font-medium transition sm:px-3 sm:text-sm ${isActive ? 'bg-white/20 text-white' : isReachable ? 'text-lane-200 hover:bg-white/10' : 'cursor-not-allowed text-lane-500'}`}
-                onClick={() => isReachable && goToStep(number)} disabled={!isReachable}
-              >{number}. {title}</button>
-            );
-          })}
-        </nav>
-
-        <section className="panel rounded-[2rem] p-5 sm:p-6">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Schritt {step} von {PIPELINE_STEPS.length}</p>
-              <h2 className="mt-1.5 text-xl font-semibold text-lane-800 sm:text-2xl">{PIPELINE_STEPS[step - 1].title}</h2>
-            </div>
-            {step === 1 && (
-              <span className="rounded-full bg-lane-100 px-3 py-1 text-sm font-medium text-lane-700">
-                {guessingCorners ? 'Suche...' : manualCorners.length === 4 ? '4 Ecken gesetzt' : `${manualCorners.length}/4 Ecken`}
-              </span>
-            )}
-            {step === 2 && !tableConfirmed && (
-              <span className="rounded-full bg-lane-100 px-3 py-1 text-sm font-medium text-lane-700">
-                H: {selectedHLines.length} / V: {selectedVLines.length}
-              </span>
-            )}
+      <section className="panel rounded-[2rem] p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-lane-500">Schritt {step} von {PIPELINE_STEPS.length}</p>
+            <h2 className="mt-1.5 text-xl font-semibold text-lane-800 sm:text-2xl">{PIPELINE_STEPS[step - 1].title}</h2>
           </div>
+          {step === 1 && (
+            <span className="rounded-full bg-lane-100 px-3 py-1 text-sm font-medium text-lane-700">
+              {guessingCorners ? 'Suche...' : manualCorners.length === 4 ? '4 Ecken gesetzt' : `${manualCorners.length}/4 Ecken`}
+            </span>
+          )}
+          {step === 2 && !tableConfirmed && (
+            <span className="rounded-full bg-lane-100 px-3 py-1 text-sm font-medium text-lane-700">
+              H: {selectedHLines.length} / V: {selectedVLines.length}
+            </span>
+          )}
+        </div>
 
-          {errorMessage ? (
-            <div className="mb-4 rounded-[1.3rem] border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
-              <div className="flex items-start justify-between gap-3">
-                <div><p className="font-semibold">Fehler</p><p className="mt-1 whitespace-pre-wrap">{errorMessage}</p></div>
-                <button className="rounded-full border border-red-200 px-3 py-1 text-xs font-medium text-red-700 transition hover:bg-white" type="button" onClick={() => setErrorMessage('')}>Schließen</button>
-              </div>
+        {errorMessage ? (
+          <div className="mb-4 rounded-[1.3rem] border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+            <div className="flex items-start justify-between gap-3">
+              <div><p className="font-semibold">Fehler</p><p className="mt-1 whitespace-pre-wrap">{errorMessage}</p></div>
+              <button className="rounded-full border border-red-200 px-3 py-1 text-xs font-medium text-red-700 transition hover:bg-white" type="button" onClick={() => setErrorMessage('')}>Schließen</button>
             </div>
-          ) : null}
+          </div>
+        ) : null}
 
-          {statusMessage ? (
-            <div className="mb-4 rounded-[1.3rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-700">{statusMessage}</div>
-          ) : null}
+        {statusMessage ? (
+          <div className="mb-4 rounded-[1.3rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-700">{statusMessage}</div>
+        ) : null}
 
-          {currentWarnings.length > 0 ? (
-            <ul className="mb-4 grid gap-2">
-              {currentWarnings.map((warning) => (
-                <li key={warning} className="rounded-[1.2rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-800">{warning}</li>
+        {currentWarnings.length > 0 ? (
+          <ul className="mb-4 grid gap-2">
+            {currentWarnings.map((warning) => (
+              <li key={warning} className="rounded-[1.2rem] border border-lane-200 bg-lane-50 px-4 py-3 text-sm text-lane-800">{warning}</li>
+            ))}
+          </ul>
+        ) : null}
+
+        {/* Step 1: Corner selection */}
+        {step === 1 && !previewUrl ? (
+          <label className="flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-lane-300 bg-white/50 px-4 py-14 text-center transition hover:border-lane-500 hover:bg-white/70">
+            <span className="text-lg font-medium text-lane-800">Bild auswählen</span>
+            <span className="mt-2 text-sm text-lane-600">PNG oder JPG direkt vom Bowling-Monitor</span>
+            <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
+          </label>
+        ) : null}
+
+        {step === 1 && previewUrl ? (
+          <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
+            <div className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
+              onClick={handleCornerPreviewClick} onMouseMove={handleCornerMouseMove} onPointerMove={handlePointerMove}
+              onMouseUp={stopCornerDrag} onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
+              onTouchStart={handleCornerTouchStart} onTouchMove={handleCornerTouchMove}
+              onTouchEnd={(e) => { e.preventDefault(); stopCornerDrag(); }}
+              onPointerUp={stopCornerDrag} onContextMenu={(e) => e.preventDefault()}
+              role="button" tabIndex={0} style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.preventDefault(); }}
+            >
+              <img ref={cornerImageRef} alt="Bowling-Monitor Farbvorschau" className="block max-h-[40rem] w-full object-contain" src={previewUrl} />
+              {manualCorners.length >= 2 ? (
+                <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+                  {manualCorners.length === 4
+                    ? <polygon fill="rgba(31,111,235,0.10)" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />
+                    : <polyline fill="none" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />}
+                </svg>
+              ) : null}
+              {manualCorners.map((corner, index) => (
+                <button key={`${corner.x}-${corner.y}-${index}`}
+                  className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-xs font-semibold shadow-lg ${activeCornerIndex === index ? 'bg-lane-800 text-white' : 'bg-blue-600 text-white'}`}
+                  style={{ left: `${corner.x * 100}%`, top: `${corner.y * 100}%` }} type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingCornerIndex(index); setActiveCornerIndex(index); }}
+                  onPointerDown={(e) => handleButtonPointerDown(e, index)} onPointerUp={(e) => handleButtonPointerUp(e)}
+                  onClick={(e) => { e.stopPropagation(); setActiveCornerIndex(index); }} onContextMenu={(e) => e.preventDefault()}
+                >{index + 1}</button>
               ))}
-            </ul>
-          ) : null}
+              {magnifierPos && (
+                <div className="pointer-events-none absolute z-20 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
+                  style={{ left: magnifierPos.px + (magnifierPos.px > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), top: magnifierPos.py + (magnifierPos.py > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE }}>
+                  <canvas ref={magnifierCanvasRef} width={MAGNIFIER_SIZE} height={MAGNIFIER_SIZE} className="block bg-black" />
+                </div>
+              )}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={handleConfirmCorners} disabled={manualCorners.length !== 4 || rectifying}>
+                {rectifying ? 'Verarbeite...' : 'Ecken bestätigen →'}
+              </button>
+              <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
+                onClick={() => { setManualCorners([]); setActiveCornerIndex(null); setDraggingCornerIndex(null); }}>Zurücksetzen</button>
+              <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60" type="button"
+                onClick={() => { setManualCorners((c) => c.slice(0, -1)); setActiveCornerIndex(null); setDraggingCornerIndex(null); }} disabled={!manualCorners.length}>Letzten Punkt entfernen</button>
+              <label className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
+                Neues Bild<input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
+              </label>
+            </div>
+          </div>
+        ) : null}
 
-          {/* Step 1: Corner selection */}
-          {step === 1 && !previewUrl ? (
-            <label className="flex cursor-pointer flex-col items-center justify-center rounded-[1.75rem] border border-dashed border-lane-300 bg-white/50 px-4 py-14 text-center transition hover:border-lane-500 hover:bg-white/70">
-              <span className="text-lg font-medium text-lane-800">Bild auswählen</span>
-              <span className="mt-2 text-sm text-lane-600">PNG oder JPG direkt vom Bowling-Monitor</span>
-              <input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
-            </label>
-          ) : null}
-
-          {step === 1 && previewUrl ? (
-            <div className="rounded-[1.5rem] bg-[rgba(255,255,255,0.74)] p-4">
-              <div className="relative mt-4 overflow-hidden rounded-[1.2rem] border border-lane-200 bg-white"
-                onClick={handleCornerPreviewClick} onMouseMove={handleCornerMouseMove} onPointerMove={handlePointerMove}
-                onMouseUp={stopCornerDrag} onMouseLeave={() => { setMagnifierPos(null); stopCornerDrag(); }}
-                onTouchStart={handleCornerTouchStart} onTouchMove={handleCornerTouchMove}
-                onTouchEnd={(e) => { e.preventDefault(); stopCornerDrag(); }}
-                onPointerUp={stopCornerDrag} onContextMenu={(e) => e.preventDefault()}
-                role="button" tabIndex={0} style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.preventDefault(); }}
-              >
-                <img ref={cornerImageRef} alt="Bowling-Monitor Farbvorschau" className="block max-h-[40rem] w-full object-contain" src={previewUrl} />
-                {manualCorners.length >= 2 ? (
-                  <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100">
-                    {manualCorners.length === 4
-                      ? <polygon fill="rgba(31,111,235,0.10)" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />
-                      : <polyline fill="none" points={polygonPoints(manualCorners)} stroke="rgba(31,111,235,0.90)" strokeWidth="0.6" />}
-                  </svg>
-                ) : null}
-                {manualCorners.map((corner, index) => (
-                  <button key={`${corner.x}-${corner.y}-${index}`}
-                    className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-xs font-semibold shadow-lg ${activeCornerIndex === index ? 'bg-lane-800 text-white' : 'bg-blue-600 text-white'}`}
-                    style={{ left: `${corner.x * 100}%`, top: `${corner.y * 100}%` }} type="button"
-                    onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingCornerIndex(index); setActiveCornerIndex(index); }}
-                    onPointerDown={(e) => handleButtonPointerDown(e, index)} onPointerUp={(e) => handleButtonPointerUp(e)}
-                    onClick={(e) => { e.stopPropagation(); setActiveCornerIndex(index); }} onContextMenu={(e) => e.preventDefault()}
-                  >{index + 1}</button>
+        {/* Step 2: Line selection + BW/OCR */}
+        {step === 2 && rectifiedPreview ? (
+          <div className="grid gap-4">
+            {/* Sub-view tabs */}
+            <div className="flex items-center gap-2 self-start flex-wrap">
+              <div className="flex items-center gap-1 rounded-full border border-lane-200 bg-white/90 p-1">
+                {(['morph-horizontal', 'morph-vertical'] as const).map((key) => (
+                  <button key={key} type="button"
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${tableSubView === key ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                    onClick={() => { setTableSubView(key); setFocusedLine(null); setMovingLine(false); setDraggingEndpoint(null); }}>
+                    {key === 'morph-horizontal' ? `H (${selectedHLines.length}/10)` : `V (${selectedVLines.length}/12)`}
+                  </button>
                 ))}
-                {magnifierPos && (
-                  <div className="pointer-events-none absolute z-20 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
-                    style={{ left: magnifierPos.px + (magnifierPos.px > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), top: magnifierPos.py + (magnifierPos.py > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE }}>
-                    <canvas ref={magnifierCanvasRef} width={MAGNIFIER_SIZE} height={MAGNIFIER_SIZE} className="block bg-black" />
-                  </div>
+                {tableConfirmed && (
+                  <button type="button"
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${tableSubView === 'bw' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
+                    onClick={() => setTableSubView('bw')}>S/W</button>
                 )}
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={handleConfirmCorners} disabled={manualCorners.length !== 4 || rectifying}>
-                  {rectifying ? 'Verarbeite...' : 'Ecken bestätigen →'}
-                </button>
-                <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
-                  onClick={() => { setManualCorners([]); setActiveCornerIndex(null); setDraggingCornerIndex(null); }}>Zurücksetzen</button>
-                <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60" type="button"
-                  onClick={() => { setManualCorners((c) => c.slice(0, -1)); setActiveCornerIndex(null); setDraggingCornerIndex(null); }} disabled={!manualCorners.length}>Letzten Punkt entfernen</button>
-                <label className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
-                  Neues Bild<input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
-                </label>
-              </div>
             </div>
-          ) : null}
 
-          {/* Step 2: Line selection + BW/OCR */}
-          {step === 2 && rectifiedPreview ? (
-            <div className="grid gap-4">
-              {/* Sub-view tabs */}
-              <div className="flex items-center gap-2 self-start flex-wrap">
-                <div className="flex items-center gap-1 rounded-full border border-lane-200 bg-white/90 p-1">
-                  {(['morph-horizontal', 'morph-vertical'] as const).map((key) => (
-                    <button key={key} type="button"
-                      className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${tableSubView === key ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
-                      onClick={() => { setTableSubView(key); setFocusedLine(null); setMovingLine(false); setDraggingEndpoint(null); }}>
-                      {key === 'morph-horizontal' ? `H (${selectedHLines.length}/10)` : `V (${selectedVLines.length}/12)`}
-                    </button>
-                  ))}
-                  {tableConfirmed && (
-                    <button type="button"
-                      className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${tableSubView === 'bw' ? 'bg-lane-800 text-white' : 'text-lane-700 hover:bg-lane-50'}`}
-                      onClick={() => setTableSubView('bw')}>S/W</button>
+            {/* Morph views */}
+            {(tableSubView === 'morph-horizontal' || tableSubView === 'morph-vertical') && morphSrc ? (
+              <>
+                <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5 text-xs font-medium text-lane-600">
+                  {movingLine
+                    ? 'Linie verschieben: Ziehen und loslassen'
+                    : 'Auf eine Morph-Linie klicken um sie auszuwählen'}
+                </div>
+
+                <div className={`relative overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white ${movingLine || draggingEndpoint ? 'cursor-grabbing' : 'cursor-crosshair'}`}
+                  onClick={handleMorphClick}
+                  onPointerMove={handleMorphPointerMove}
+                  onPointerUp={handleMorphPointerUp}
+                  style={{ touchAction: 'none' }}
+                >
+                  <img ref={morphImageRef} alt="Morph-Ansicht" className="block max-h-[42rem] w-full object-contain" src={morphSrc} />
+                  {rectifiedPreview?.bw_image_data_url && (
+                    <img alt="" className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-20 mix-blend-lighten" src={rectifiedPreview.bw_image_data_url} />
+                  )}
+                  <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1 1">
+                    {(() => {
+                      const enough = currentOrientation === 'h' ? selectedHLines.length >= 10 : selectedVLines.length >= 12;
+                      return currentSelected.map((seg, i) => {
+                        const isFocused = focusedLine?.orientation === currentOrientation && focusedLine?.index === i;
+                        const normalColor = enough ? 'rgba(0,220,80,0.85)' : 'rgba(220,50,50,0.85)';
+                        return (
+                          <g key={`s-${i}`}>
+                            <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} stroke="transparent" strokeWidth="0.02" style={{ cursor: 'pointer' }} />
+                            <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2}
+                              stroke={isFocused ? 'rgba(255,200,0,0.95)' : normalColor}
+                              strokeWidth={isFocused ? '0.006' : '0.004'} />
+                          </g>
+                        );
+                      });
+                    })()}
+                  </svg>
+                  {focusedLine && focusedLine.orientation === currentOrientation && currentSelected[focusedLine.index] && (() => {
+                    const seg = currentSelected[focusedLine.index];
+                    return (
+                      <>
+                        <button
+                          className="absolute z-10 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-yellow-400 shadow-lg cursor-grab active:cursor-grabbing"
+                          style={{ left: `${seg.x1 * 100}%`, top: `${seg.y1 * 100}%`, touchAction: 'none' }}
+                          type="button"
+                          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingEndpoint('start'); }}
+                        />
+                        <button
+                          className="absolute z-10 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-yellow-400 shadow-lg cursor-grab active:cursor-grabbing"
+                          style={{ left: `${seg.x2 * 100}%`, top: `${seg.y2 * 100}%`, touchAction: 'none' }}
+                          type="button"
+                          onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingEndpoint('end'); }}
+                        />
+                      </>
+                    );
+                  })()}
+                  {focusedLine && focusPosition && focusedLine.orientation === currentOrientation && (
+                    <div className="absolute z-20 flex items-center gap-1 rounded-full border border-lane-300 bg-lane-200 px-1.5 py-1 shadow-lg"
+                      style={{
+                        left: `${Math.max(10, Math.min(90, focusPosition.x * 100))}%`,
+                        top: `${focusPosition.y * 100}%`,
+                        transform: focusPosition.y > 0.5 ? 'translate(-50%, calc(-100% - 14px))' : 'translate(-50%, 14px)',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button className="rounded-full px-2.5 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100" type="button" onClick={handleDeleteFocusedLine}>Löschen</button>
+                      <button className="rounded-full px-2.5 py-1 text-xs font-medium text-lane-600 transition hover:bg-lane-100" type="button"
+                        onClick={() => { setFocusedLine(null); setMovingLine(false); setDraggingEndpoint(null); setFocusPosition(null); }}>&#x2715;</button>
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* Morph views */}
-              {(tableSubView === 'morph-horizontal' || tableSubView === 'morph-vertical') && morphSrc ? (
-                <>
-                  <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5 text-xs font-medium text-lane-600">
-                    {movingLine
-                      ? 'Linie verschieben: Ziehen und loslassen'
-                      : 'Auf eine Morph-Linie klicken um sie auszuwählen'}
-                  </div>
+                <div className="flex flex-wrap items-center gap-3">
+                  <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => goToStep(1)}>← Zurück zu Monitor</button>
+                  <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    type="button" onClick={handleConfirmTable}
+                    disabled={selectedHLines.length < 2 || selectedVLines.length < 2 || buildingTable}>
+                    {buildingTable ? 'Baue Tabelle...' : 'Tabelle bestätigen →'}
+                  </button>
+                  {tableConfirmed && (
+                    <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => setTableSubView('bw')}>Zur S/W-Ansicht →</button>
+                  )}
+                </div>
+              </>
+            ) : null}
 
-                  <div className={`relative overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white ${movingLine || draggingEndpoint ? 'cursor-grabbing' : 'cursor-crosshair'}`}
-                    onClick={handleMorphClick}
-                    onPointerMove={handleMorphPointerMove}
-                    onPointerUp={handleMorphPointerUp}
-                    style={{ touchAction: 'none' }}
-                  >
-                    <img ref={morphImageRef} alt="Morph-Ansicht" className="block max-h-[42rem] w-full object-contain" src={morphSrc} />
-                    {rectifiedPreview?.bw_image_data_url && (
-                      <img alt="" className="pointer-events-none absolute inset-0 h-full w-full object-contain opacity-20 mix-blend-lighten" src={rectifiedPreview.bw_image_data_url} />
-                    )}
-                    <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1 1">
-                      {(() => {
-                        const enough = currentOrientation === 'h' ? selectedHLines.length >= 10 : selectedVLines.length >= 12;
-                        return currentSelected.map((seg, i) => {
-                          const isFocused = focusedLine?.orientation === currentOrientation && focusedLine?.index === i;
-                          const normalColor = enough ? 'rgba(0,220,80,0.85)' : 'rgba(220,50,50,0.85)';
-                          return (
-                            <g key={`s-${i}`}>
-                              <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2} stroke="transparent" strokeWidth="0.02" style={{ cursor: 'pointer' }} />
-                              <line x1={seg.x1} y1={seg.y1} x2={seg.x2} y2={seg.y2}
-                                stroke={isFocused ? 'rgba(255,200,0,0.95)' : normalColor}
-                                strokeWidth={isFocused ? '0.006' : '0.004'} />
-                            </g>
-                          );
-                        });
-                      })()}
+            {/* BW view */}
+            {tableSubView === 'bw' && tableConfirmed ? (
+              <>
+                <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
+                  <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">S/W Schwelle</label>
+                  <input id="bw-threshold" type="range" min={10} max={240} step={1} value={bwThreshold} onChange={(e) => setBwThreshold(Number(e.target.value))} className="flex-1" />
+                  <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
+                </div>
+
+                <div className="relative overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white">
+                  <canvas ref={bwCanvasRef} className={`max-h-[42rem] w-full object-contain ${bwCanvasReady ? 'block' : 'hidden'}`} />
+                  {!bwCanvasReady && tableBuildResult.rectified_bw_data_url ? (
+                    <img alt="S/W Vorschau" className="block max-h-[42rem] w-full object-contain" src={tableBuildResult.rectified_bw_data_url} />
+                  ) : null}
+                  {/* Subcell grid overlay */}
+                  {tableBuildResult.sub_cells.length > 0 ? (
+                    <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1 1">
+                      {tableBuildResult.sub_cells.map((cell, i) => {
+                        const isHeader = cell.row === 0;
+                        const isName = cell.col === 0 && !isHeader;
+                        const fill = isHeader ? 'rgba(59,130,246,0.12)' : isName ? 'rgba(245,158,11,0.12)' : 'none';
+                        const stroke = isHeader ? 'rgba(59,130,246,0.6)' : isName ? 'rgba(245,158,11,0.6)' : 'rgba(0,180,0,0.5)';
+                        return (
+                          <rect key={i} x={cell.x} y={cell.y} width={cell.w} height={cell.h}
+                            fill={fill} stroke={stroke} strokeWidth="0.002" />
+                        );
+                      })}
                     </svg>
-                    {focusedLine && focusedLine.orientation === currentOrientation && currentSelected[focusedLine.index] && (() => {
-                      const seg = currentSelected[focusedLine.index];
-                      return (
-                        <>
-                          <button
-                            className="absolute z-10 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-yellow-400 shadow-lg cursor-grab active:cursor-grabbing"
-                            style={{ left: `${seg.x1 * 100}%`, top: `${seg.y1 * 100}%`, touchAction: 'none' }}
-                            type="button"
-                            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingEndpoint('start'); }}
-                          />
-                          <button
-                            className="absolute z-10 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-yellow-400 shadow-lg cursor-grab active:cursor-grabbing"
-                            style={{ left: `${seg.x2 * 100}%`, top: `${seg.y2 * 100}%`, touchAction: 'none' }}
-                            type="button"
-                            onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); setDraggingEndpoint('end'); }}
-                          />
-                        </>
-                      );
-                    })()}
-                    {focusedLine && focusPosition && focusedLine.orientation === currentOrientation && (
-                      <div className="absolute z-20 flex items-center gap-1 rounded-full border border-lane-300 bg-lane-200 px-1.5 py-1 shadow-lg"
-                        style={{
-                          left: `${Math.max(10, Math.min(90, focusPosition.x * 100))}%`,
-                          top: `${focusPosition.y * 100}%`,
-                          transform: focusPosition.y > 0.5 ? 'translate(-50%, calc(-100% - 14px))' : 'translate(-50%, 14px)',
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button className="rounded-full px-2.5 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100" type="button" onClick={handleDeleteFocusedLine}>Löschen</button>
-                        <button className="rounded-full px-2.5 py-1 text-xs font-medium text-lane-600 transition hover:bg-lane-100" type="button"
-                          onClick={() => { setFocusedLine(null); setMovingLine(false); setDraggingEndpoint(null); setFocusPosition(null); }}>&#x2715;</button>
-                      </div>
-                    )}
-                  </div>
+                  ) : null}
+                </div>
 
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => goToStep(1)}>← Zurück zu Monitor</button>
-                    <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      type="button" onClick={handleConfirmTable}
-                      disabled={selectedHLines.length < 2 || selectedVLines.length < 2 || buildingTable}>
-                      {buildingTable ? 'Baue Tabelle...' : 'Tabelle bestätigen →'}
-                    </button>
-                    {tableConfirmed && (
-                      <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => setTableSubView('bw')}>Zur S/W-Ansicht →</button>
-                    )}
-                  </div>
-                </>
-              ) : null}
+                <div className="flex flex-wrap items-center gap-3">
+                  <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
+                    onClick={() => { setTableSubView('morph-horizontal'); }}>← Linien anpassen</button>
+                  <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    type="button" onClick={handleExtract} disabled={extracting}>
+                    {extracting ? 'Extrahiere...' : 'Text extrahieren'}
+                  </button>
+                </div>
 
-              {/* BW view */}
-              {tableSubView === 'bw' && tableConfirmed ? (
-                <>
-                  <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
-                    <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">S/W Schwelle</label>
-                    <input id="bw-threshold" type="range" min={10} max={240} step={1} value={bwThreshold} onChange={(e) => setBwThreshold(Number(e.target.value))} className="flex-1" />
-                    <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
-                  </div>
-
-                  <div className="relative overflow-hidden rounded-[1.3rem] border border-lane-200 bg-white">
-                    <canvas ref={bwCanvasRef} className={`max-h-[42rem] w-full object-contain ${bwCanvasReady ? 'block' : 'hidden'}`} />
-                    {!bwCanvasReady && tableBuildResult.rectified_bw_data_url ? (
-                      <img alt="S/W Vorschau" className="block max-h-[42rem] w-full object-contain" src={tableBuildResult.rectified_bw_data_url} />
-                    ) : null}
-                    {/* Subcell grid overlay */}
-                    {tableBuildResult.sub_cells.length > 0 ? (
-                      <svg className="pointer-events-none absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1 1">
-                        {tableBuildResult.sub_cells.map((cell, i) => {
-                          const isHeader = cell.row === 0;
-                          const isName = cell.col === 0 && !isHeader;
-                          const fill = isHeader ? 'rgba(59,130,246,0.12)' : isName ? 'rgba(245,158,11,0.12)' : 'none';
-                          const stroke = isHeader ? 'rgba(59,130,246,0.6)' : isName ? 'rgba(245,158,11,0.6)' : 'rgba(0,180,0,0.5)';
-                          return (
-                            <rect key={i} x={cell.x} y={cell.y} width={cell.w} height={cell.h}
-                              fill={fill} stroke={stroke} strokeWidth="0.002" />
-                          );
-                        })}
-                      </svg>
-                    ) : null}
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
-                      onClick={() => { setTableSubView('morph-horizontal'); }}>← Linien anpassen</button>
-                    <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
-                      type="button" onClick={handleExtract} disabled={extracting}>
-                      {extracting ? 'Extrahiere...' : 'Text extrahieren'}
-                    </button>
-                  </div>
-
-                  {/* Extraction results table */}
-                  {extractionResult ? (
-                    <div className="mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80 -mx-1 sm:mx-0">
-                      <table className="min-w-[700px] w-full border-collapse text-xs">
-                        <thead>
-                          <tr>
-                            <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
-                            {Array.from({ length: 10 }, (_, i) => (
-                              <th key={i} className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">{i + 1}</th>
-                            ))}
-                            <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">Aktion</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {extractionResult.players.map((player, pIdx) => (
-                            <tr key={pIdx}>
-                              <td className="border border-lane-200 px-1 py-1">
-                                <input className={`w-full min-w-[80px] rounded px-1 py-0.5 text-sm text-lane-900 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${player.name.trim() ? 'bg-transparent' : 'bg-red-100'}`}
-                                  value={player.name} onChange={(e) => updatePlayerName(pIdx, e.target.value)} placeholder="Name fehlt" />
-                              </td>
-                              {player.frames.map((frame, fIdx) => {
-                                const errClass = (field: string) => scoreErrors.has(`${pIdx}-${fIdx}-${field}`) ? 'bg-red-100' : 'bg-transparent';
-                                return (
-                                  <td key={fIdx} className="border border-lane-200 px-0 py-0">
-                                    <div className="flex border-b border-lane-100">
-                                      <input className={`w-1/2 border-r border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw1')}`} value={frame.throw1} onChange={(e) => updateFrame(pIdx, fIdx, 'throw1', e.target.value)} placeholder="nA" />
-                                      <input className={`w-1/2 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw2')}`} value={frame.throw2} onChange={(e) => updateFrame(pIdx, fIdx, 'throw2', e.target.value)} placeholder="nA" />
-                                      {fIdx === 9 ? <input className={`w-1/2 border-l border-lane-100 px-1 py-0.5 text-center outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('throw3')}`} value={frame.throw3} onChange={(e) => updateFrame(pIdx, fIdx, 'throw3', e.target.value)} placeholder="nA" /> : null}
-                                    </div>
-                                    <input className={`w-full px-1 py-0.5 text-center text-lane-600 outline-none focus:bg-white focus:ring-1 focus:ring-blue-400 ${errClass('cumulative')}`} value={frame.cumulative} onChange={(e) => updateFrame(pIdx, fIdx, 'cumulative', e.target.value)} placeholder="nA" />
-                                  </td>
-                                );
-                              })}
-                              <td className="border border-lane-200 px-2 py-1 align-top">
-                                <button type="button" aria-label={`Spieler ${player.name || pIdx + 1} löschen`} title="Zeile löschen"
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded border border-red-200 text-red-700 transition hover:bg-red-50"
-                                  onClick={() => removePlayerRow(pIdx)}>
-                                  <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M4 7h16" /><path d="M9 7V5.8c0-.9.7-1.6 1.6-1.6h2.8c.9 0 1.6.7 1.6 1.6V7" />
-                                    <path d="M7.2 7l.8 11c.1 1 1 1.8 2 1.8h4c1 0 1.9-.8 2-1.8l.8-11" /><path d="M10 11.2v5.6" /><path d="M14 11.2v5.6" />
-                                  </svg>
-                                </button>
-                              </td>
-                            </tr>
+                {/* Extraction results table */}
+                {extractionResult ? (
+                  <div className="mt-4 overflow-x-auto rounded-[1.3rem] p-4 border border-lane-200 bg-white/80 -mx-1 sm:mx-0">
+                    <table className="min-w-[700px] w-full border-collapse text-xs">
+                      <thead>
+                        <tr>
+                          <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
+                          {Array.from({ length: 10 }, (_, i) => (
+                            <th key={i} className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">{i + 1}</th>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+                          <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">Aktion</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {extractionResult.players.map((player, pIdx) => (
+                          <tr key={pIdx}>
+                            <td className="border border-lane-200 bg-lane-50 px-2 py-1.5">
+                              <input
+                                className="w-full border-0 bg-white px-1 py-0.5 text-xs font-medium outline-none focus:ring-1 focus:ring-lane-800"
+                                value={player.name}
+                                onChange={(e) => updatePlayerName(pIdx, e.target.value)}
+                              />
+                            </td>
+                            {player.frames.map((frame, fIdx) => {
+                              const hasError = scoreErrors.has(`${pIdx}-${fIdx}-throw1`) || scoreErrors.has(`${pIdx}-${fIdx}-throw2`) || scoreErrors.has(`${pIdx}-${fIdx}-cumulative`);
+                              return (
+                                <td
+                                  key={fIdx}
+                                  className={`border border-lane-200 px-2 py-1.5 text-center font-medium text-lane-800 ${hasError ? 'bg-red-100' : 'bg-white'}`}
+                                >
+                                  <input
+                                    className={`w-full border-0 bg-transparent text-center text-xs font-mono outline-none focus:ring-1 focus:ring-lane-800 ${hasError ? 'text-red-700' : ''}`}
+                                    value={`${frame.throw1}|${frame.throw2}${fIdx === 9 ? `|${frame.throw3}` : ''}`}
+                                    onChange={(e) => {
+                                      const parts = e.target.value.split('|');
+                                      if (parts.length >= 2) {
+                                        updateFrame(pIdx, fIdx, 'throw1', parts[0]);
+                                        updateFrame(pIdx, fIdx, 'throw2', parts[1]);
+                                        if (fIdx === 9 && parts.length >= 3) {
+                                          updateFrame(pIdx, fIdx, 'throw3', parts[2]);
+                                        }
+                                      }
+                                    }}
+                                  />
+                                </td>
+                              );
+                            })}
+                            <td className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center">
+                              <button
+                                className="rounded px-2 py-1 text-xs font-medium text-red-700 transition hover:bg-red-100"
+                                type="button"
+                                onClick={() => removePlayerRow(pIdx)}
+                              >
+                                Löschen
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
 
-                  {/* Save form */}
-                  {extractionResult && extractionResult.players.length > 0 && !savedGame ? (
-                    <div className="mt-2">
-                      {!showSaveForm ? (
-                        <div className="flex justify-end">
-                          <button className="rounded-full bg-lane-800 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button"
-                            disabled={extractionResult.players.some((p) => !p.name.trim()) || scoreErrors.size > 0}
-                            onClick={() => setShowSaveForm(true)}>Ergebnis speichern</button>
-                        </div>
-                      ) : (
-                        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
-                          <h3 className="mb-3 text-sm font-semibold text-lane-800">Spieldetails ergänzen</h3>
-                          <div className="flex flex-wrap items-end gap-3">
-                            <div className="flex flex-col gap-1">
-                              <label htmlFor="save-date" className="text-xs font-medium text-lane-600">Datum</label>
-                              <input id="save-date" type="date" value={saveDate} onChange={(e) => setSaveDate(e.target.value)} className="rounded-lg border border-lane-200 px-3 py-1.5 text-sm text-lane-900 outline-none focus:ring-1 focus:ring-blue-400" />
-                            </div>
-                            <div className="flex flex-1 flex-col gap-1">
-                              <label htmlFor="save-location" className="text-xs font-medium text-lane-600">Ort / Bowlingbahn</label>
-                              <input id="save-location" type="text" value={saveLocation} onChange={(e) => setSaveLocation(e.target.value)} placeholder="z.B. Bowling Arena Stuttgart" className="rounded-lg border border-lane-200 px-3 py-1.5 text-sm text-lane-900 outline-none focus:ring-1 focus:ring-blue-400" />
-                            </div>
-                            <button className="rounded-full bg-lane-800 px-5 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button"
-                              disabled={!saveLocation.trim() || !saveDate || saving} onClick={handleSaveGame}>{saving ? 'Speichert...' : 'Jetzt speichern'}</button>
-                            <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => setShowSaveForm(false)}>Abbrechen</button>
+                {savedGame ? (
+                  <div className="rounded-[1.3rem] border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    <p className="font-semibold">Spiel erfolgreich gespeichert!</p>
+                    <p className="mt-1 text-xs opacity-80">{saveLocation} • {saveDate}</p>
+                  </div>
+                ) : null}
+
+                {!savedGame && extractionResult ? (
+                  <div className="grid gap-3">
+                    {!showSaveForm ? (
+                      <button
+                        className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        type="button"
+                        onClick={() => setShowSaveForm(true)}
+                        disabled={extractionResult.players.length === 0}
+                      >
+                        Spiel speichern
+                      </button>
+                    ) : (
+                      <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-4">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                          <div className="grid gap-1">
+                            <label htmlFor="save-date" className="text-xs font-medium text-lane-700">
+                              Datum
+                            </label>
+                            <input
+                              id="save-date"
+                              type="date"
+                              value={saveDate}
+                              onChange={(e) => setSaveDate(e.target.value)}
+                              className="rounded-lg border border-lane-300 px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-lane-800"
+                            />
+                          </div>
+                          <div className="col-span-2 grid gap-1 sm:col-span-1">
+                            <label htmlFor="save-location" className="text-xs font-medium text-lane-700">
+                              Ort
+                            </label>
+                            <input
+                              id="save-location"
+                              type="text"
+                              value={saveLocation}
+                              onChange={(e) => setSaveLocation(e.target.value)}
+                              className="rounded-lg border border-lane-300 px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-lane-800"
+                              placeholder="z.B. Squash House"
+                            />
                           </div>
                         </div>
-                      )}
-                    </div>
-                  ) : null}
-
-                  {/* Saved game chart */}
-                  {savedGame ? (
-                    <div className="grid gap-4">
-                      <div className="rounded-[1.3rem] border border-green-300 bg-green-50 p-4 text-sm text-green-900">
-                        <p className="font-semibold">Gespeichert!</p>
-                        <p className="mt-1">Spiel #{savedGame.id} — {savedGame.location}, {savedGame.played_at} — {savedGame.scores.length} Spieler</p>
-                      </div>
-                      <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
-                        <div className="mb-3 flex items-center justify-between">
-                          <h3 className="text-sm font-semibold text-lane-800">Punkteverlauf</h3>
-                          <div className="flex items-center gap-4 text-xs text-lane-600">
-                            <span className="flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 14 14"><line x1="2" y1="2" x2="12" y2="12" stroke="#64748b" strokeWidth="2" /><line x1="12" y1="2" x2="2" y2="12" stroke="#64748b" strokeWidth="2" /></svg>Strike</span>
-                            <span className="flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 14 14"><rect x="2" y="2" width="10" height="10" fill="#64748b" rx="2" /></svg>Spare</span>
-                            <span className="flex items-center gap-1.5"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" fill="#64748b" /></svg>Normal</span>
-                          </div>
-                        </div>
-                        <div style={{ touchAction: 'none' }}>
-                          <ResponsiveContainer width="100%" height={320}>
-                            <LineChart data={buildCumulativeChartData(savedGame.scores)} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-                              <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
-                              <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                              <Tooltip /><Legend />
-                              {savedGame.scores.map((score, i) => (
-                                <Line key={score.player_name} type="monotone" dataKey={score.player_name}
-                                  stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2} dot={<FrameDot />} activeDot={{ r: 6 }} />
-                              ))}
-                            </LineChart>
-                          </ResponsiveContainer>
+                        <div className="mt-4 flex gap-3">
+                          <button
+                            className="flex-1 rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            type="button"
+                            onClick={handleSaveGame}
+                            disabled={saving}
+                          >
+                            {saving ? 'Speichere...' : 'Speichern'}
+                          </button>
+                          <button
+                            className="flex-1 rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+                            type="button"
+                            onClick={() => setShowSaveForm(false)}
+                          >
+                            Abbrechen
+                          </button>
                         </div>
                       </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-      </>}
-    </main>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+    </>
   );
 }

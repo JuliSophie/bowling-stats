@@ -137,8 +137,26 @@ function buildPlayerTrendData(games: GameRead[], playerName: string): Record<str
     .map((game, i) => ({
       label: `${game.played_at}\n${game.location}`,
       index: i + 1,
+      roundNumber: (i + 1) * 10,
       score: game.scores.find((s) => s.player_name === playerName)?.total_score ?? 0,
     }));
+}
+
+function ChartToggle({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+        active
+          ? 'border-lane-700 bg-lane-800 text-white shadow-sm'
+          : 'border-lane-300 bg-white/70 text-lane-700 hover:bg-lane-50'
+      }`}
+    >
+      {label}
+    </button>
+  );
 }
 
 function buildGameChartData(game: GameRead): Record<string, string | number>[] {
@@ -524,7 +542,7 @@ function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?
             <LineChart data={buildGameChartData(game)} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
             <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
-            <YAxis tick={{ fontSize: 12 }} />
+            <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
             <Tooltip />
             <Legend />
             {game.scores.map((score, i) => (
@@ -640,7 +658,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
           <ResponsiveContainer width="100%" height={Math.max(120, s.venueStats.length * 44)}>
             <BarChart data={s.venueStats} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-              <XAxis type="number" tick={{ fontSize: 12 }} domain={[0, 300]} />
+              <XAxis type="number" tick={{ fontSize: 12 }} domain={['dataMin - 10', 'dataMax + 10']} />
               <YAxis type="category" dataKey="location" tick={{ fontSize: 11 }} width={120} />
               <Tooltip formatter={(value: number) => [`${value}`, '⌀']} />
               <Bar dataKey="avg" radius={[0, 6, 6, 0]} barSize={20}>
@@ -1005,7 +1023,7 @@ function DaySessionContent({ dayGames, players }: {
                   <LineChart data={cumAllFrames.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.split('-')[1]} interval={0} />
-                    <YAxis tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                     <Tooltip labelFormatter={(v: string) => `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
                     <Legend />
                     {cumAllFrames.gameBoundaries.map((boundary) => (
@@ -1021,7 +1039,7 @@ function DaySessionContent({ dayGames, players }: {
                   <LineChart data={cumEndpoints} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="game" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                     <Tooltip />
                     <Legend />
                     {allPlayerNames.map((name, i) => (
@@ -1058,7 +1076,7 @@ function DaySessionContent({ dayGames, players }: {
                   <LineChart data={allFrames.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="frame" tick={{ fontSize: 10 }} tickFormatter={(v: string) => v.includes('gap') ? '' : v.split('-')[1]} interval={0} />
-                    <YAxis tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                     <Tooltip labelFormatter={(v: string) => v.includes('gap') ? '' : `Spiel ${v.split('-')[0]}, Frame ${v.split('-')[1]}`} />
                     <Legend />
                     {allFrames.gameBoundaries.map((boundary) => (
@@ -1074,7 +1092,7 @@ function DaySessionContent({ dayGames, players }: {
                   <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="game" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} domain={['dataMin - 20', 'dataMax + 20']} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                     <Tooltip />
                     <Legend />
                     {allPlayerNames.map((name, i) => (
@@ -1243,6 +1261,10 @@ export default function StatsView() {
   const [renameError, setRenameError] = useState('');
   const [renameNotice, setRenameNotice] = useState('');
   const [isEditingPlayer, setIsEditingPlayer] = useState(false);
+  const [statsView, setStatsView] = useState<'play' | 'player' | 'day'>('play');
+  const [showPersonalGame, setShowPersonalGame] = useState(true);
+  const [showRoundNumber, setShowRoundNumber] = useState(false);
+  const [showPersonalBest, setShowPersonalBest] = useState(false);
 
   useEffect(() => {
     fetchGames().then(setGames).finally(() => setLoading(false));
@@ -1290,25 +1312,78 @@ export default function StatsView() {
 
   const players = derivePlayerSummaries(games);
 
-  // ── Player detail view ──
-  if (selectedPlayer) {
+  // ── Navigation for stats views ──
+  const statsNavigation = (
+    <div className="mb-4 flex items-center gap-2 border-b border-lane-200">
+      <button
+        type="button"
+        onClick={() => {
+          setStatsView('play');
+          setSelectedPlayer(null);
+          setExpandedGameId(null);
+        }}
+        className={`px-4 py-3 text-sm font-medium transition ${
+          statsView === 'play'
+            ? 'border-b-2 border-lane-800 text-lane-800'
+            : 'text-lane-600 hover:text-lane-800'
+        }`}
+      >
+        Spiel-Statistiken
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setStatsView('player');
+          setSelectedPlayer(null);
+          setExpandedGameId(null);
+        }}
+        className={`px-4 py-3 text-sm font-medium transition ${
+          statsView === 'player'
+            ? 'border-b-2 border-lane-800 text-lane-800'
+            : 'text-lane-600 hover:text-lane-800'
+        }`}
+      >
+        Spieler-Statistiken
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setStatsView('day');
+          setSelectedPlayer(null);
+          setExpandedGameId(null);
+        }}
+        className={`px-4 py-3 text-sm font-medium transition ${
+          statsView === 'day'
+            ? 'border-b-2 border-lane-800 text-lane-800'
+            : 'text-lane-600 hover:text-lane-800'
+        }`}
+      >
+        Tages-Statistiken
+      </button>
+    </div>
+  );
+
+  // ── Player detail view (within player stats view) ──
+  if (selectedPlayer && statsView === 'player') {
     const playerGames = getPlayerGames(games, selectedPlayer)
       .slice().sort((a, b) => b.played_at.localeCompare(a.played_at) || b.id - a.id);
     const summary = players.find((p) => p.name === selectedPlayer);
     const trendData = buildPlayerTrendData(games, selectedPlayer);
 
     return (
-      <div className="grid gap-4">
-        <button type="button"
-          className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
-          onClick={() => {
-            setSelectedPlayer(null);
-            setExpandedGameId(null);
-            setIsEditingPlayer(false);
-            setRenameError('');
-            setRenameNotice('');
-          }}
-        >← Alle Spieler</button>
+      <div>
+        {statsNavigation}
+        <div className="grid gap-4">
+          <button type="button"
+            className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+            onClick={() => {
+              setSelectedPlayer(null);
+              setExpandedGameId(null);
+              setIsEditingPlayer(false);
+              setRenameError('');
+              setRenameNotice('');
+            }}
+          >← Alle Spieler</button>
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1374,21 +1449,36 @@ export default function StatsView() {
 
         {trendData.length > 1 && (
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
-            <h3 className="mb-3 text-sm font-semibold text-lane-800">Punkteentwicklung</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-lane-800">Punkte pro Spiel</h3>
+                <p className="text-xs text-lane-600">Rundenzahl = Spielnummer × 10.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <ChartToggle active={showPersonalGame} label="Personal Spiel" onClick={() => setShowPersonalGame((value) => !value)} />
+                <ChartToggle active={showRoundNumber} label="Rundenzahl" onClick={() => setShowRoundNumber((value) => !value)} />
+                <ChartToggle active={showPersonalBest} label="Bestspiel" onClick={() => setShowPersonalBest((value) => !value)} />
+              </div>
+            </div>
             <div style={{ touchAction: 'none' }}>
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={trendData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                 <XAxis dataKey="index" tick={{ fontSize: 12 }} label={{ value: 'Spiel #', position: 'insideBottomRight', offset: -5 }} />
-                <YAxis tick={{ fontSize: 12 }} domain={['dataMin - 10', 'dataMax + 10']} />
+                <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
                 <Tooltip
                   labelFormatter={(_, payload) => {
                     const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
                     return item?.label ?? '';
                   }}
-                  formatter={(value: number) => [value, 'Punkte']}
+                  formatter={(value: number, name: string) => [value, name === 'Rundenzahl' ? 'Rundenzahl' : 'Punkte']}
                 />
-                <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name={selectedPlayer} />
+                <Legend />
+                {showPersonalBest && summary && (
+                  <ReferenceLine y={summary.maxScore} stroke="#f59e0b" strokeDasharray="5 5" label={{ value: 'Bestspiel', position: 'insideTopRight', fill: '#92400e', fontSize: 12 }} />
+                )}
+                {showPersonalGame && <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name="Personal Spiel" />}
+                {showRoundNumber && <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Rundenzahl" />}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -1440,79 +1530,100 @@ export default function StatsView() {
           })}
         </div>
       </div>
-    );
-  }
+        </div>
+      );
+    }
 
-  // ── Overview ──
-  const today = new Date().toISOString().slice(0, 10);
-  const todayGameCount = games.filter((g) => g.played_at === today).length;
-  const openGameHandler = (id: number) => setExpandedGameId((prev) => (prev === id ? null : id));
-
+  // ── Main stats view ──
   return (
-    <div className="grid gap-4">
-      {todayGameCount >= 2 ? (
-        <TodaySessionSection games={games} players={players} />
-      ) : (
-        <TodaysGames games={games} onOpenGame={openGameHandler} />
+    <div>
+      {statsNavigation}
+
+      {statsView === 'play' && (
+        <div className="grid gap-4">
+          {(() => {
+            const today = new Date().toISOString().slice(0, 10);
+            const todayGameCount = games.filter((g) => g.played_at === today).length;
+            const openGameHandler = (id: number) => setExpandedGameId((prev) => (prev === id ? null : id));
+
+            return (
+              <>
+                {todayGameCount >= 2 ? (
+                  <TodaySessionSection games={games} players={players} />
+                ) : (
+                  <TodaysGames games={games} onOpenGame={openGameHandler} />
+                )}
+
+                {expandedGameId && !selectedPlayer && (() => {
+                  const game = games.find((g) => g.id === expandedGameId);
+                  if (!game) return null;
+                  return (
+                    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 border-b border-lane-200">
+                        <div>
+                          <span className="text-sm font-semibold text-lane-800">{game.location}</span>
+                          <span className="ml-2 text-xs text-lane-500">{game.played_at}</span>
+                        </div>
+                        <button type="button"
+                          className="rounded-full border border-lane-300 px-3 py-1 text-xs font-medium text-lane-700 transition hover:bg-lane-50"
+                          onClick={() => setExpandedGameId(null)}
+                        >Schließen</button>
+                      </div>
+                      <div className="p-4"><GameChart game={game} /></div>
+                    </div>
+                  );
+                })()}
+
+                <SocialStatsSection games={games} players={players} />
+
+                <PastSessionsList games={games} players={players} />
+              </>
+            );
+          })()}
+        </div>
       )}
 
-      {expandedGameId && !selectedPlayer && (() => {
-        const game = games.find((g) => g.id === expandedGameId);
-        if (!game) return null;
-        return (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-lane-200">
-              <div>
-                <span className="text-sm font-semibold text-lane-800">{game.location}</span>
-                <span className="ml-2 text-xs text-lane-500">{game.played_at}</span>
-              </div>
-              <button type="button"
-                className="rounded-full border border-lane-300 px-3 py-1 text-xs font-medium text-lane-700 transition hover:bg-lane-50"
-                onClick={() => setExpandedGameId(null)}
-              >Schließen</button>
-            </div>
-            <div className="p-4"><GameChart game={game} /></div>
-          </div>
-        );
-      })()}
-
-      <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
-        <h3 className="px-5 pt-4 pb-2 text-sm font-semibold text-lane-800">Spieler</h3>
-        {players.map((player, i) => {
-          const recentGames = getPlayerGames(games, player.name)
-            .slice().sort((a, b) => b.played_at.localeCompare(a.played_at) || b.id - a.id).slice(0, 3);
-          return (
-            <button key={player.name} type="button"
-              className={`flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition hover:bg-lane-50 ${i < players.length - 1 ? 'border-b border-lane-100' : ''}`}
-              onClick={() => { setSelectedPlayer(player.name); setExpandedGameId(null); }}
-            >
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold text-lane-900">{player.name}</h3>
-                <p className="mt-0.5 truncate text-xs text-lane-500">
-                  Zuletzt: {recentGames.map((g) => {
-                    const s = g.scores.find((s) => s.player_name === player.name);
-                    return `${s?.total_score ?? '–'} (${g.played_at})`;
-                  }).join('  ·  ')}
-                </p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <div className="text-right">
-                  <p className="text-xs text-lane-500">{player.gamesPlayed} Spiele</p>
-                  <p className="text-sm text-lane-700">
-                    <span className="font-semibold text-lane-900">⌀ {player.avgScore}</span>
-                    <span className="ml-2 text-lane-500">Max {player.maxScore}</span>
+      {statsView === 'player' && (
+        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+          <h3 className="px-5 pt-4 pb-2 text-sm font-semibold text-lane-800">Spieler</h3>
+          {players.map((player, i) => {
+            const recentGames = getPlayerGames(games, player.name)
+              .slice().sort((a, b) => b.played_at.localeCompare(a.played_at) || b.id - a.id).slice(0, 3);
+            return (
+              <button key={player.name} type="button"
+                className={`flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left transition hover:bg-lane-50 ${i < players.length - 1 ? 'border-b border-lane-100' : ''}`}
+                onClick={() => { setSelectedPlayer(player.name); setExpandedGameId(null); }}
+              >
+                <div className="min-w-0">
+                  <h3 className="text-base font-semibold text-lane-900">{player.name}</h3>
+                  <p className="mt-0.5 truncate text-xs text-lane-500">
+                    Zuletzt: {recentGames.map((g) => {
+                      const s = g.scores.find((s) => s.player_name === player.name);
+                      return `${s?.total_score ?? '–'} (${g.played_at})`;
+                    }).join('  ·  ')}
                   </p>
                 </div>
-                <span className="text-lane-400 text-sm">→</span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <p className="text-xs text-lane-500">{player.gamesPlayed} Spiele</p>
+                    <p className="text-sm text-lane-700">
+                      <span className="font-semibold text-lane-900">⌀ {player.avgScore}</span>
+                      <span className="ml-2 text-lane-500">Max {player.maxScore}</span>
+                    </p>
+                  </div>
+                  <span className="text-lane-400 text-sm">→</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      <SocialStatsSection games={games} players={players} />
-
-      <PastSessionsList games={games} players={players} />
+      {statsView === 'day' && (
+        <div>
+          <PastSessionsList games={games} players={players} />
+        </div>
+      )}
     </div>
   );
 }
