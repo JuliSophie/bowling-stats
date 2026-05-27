@@ -405,3 +405,34 @@ export function playerDayContext(
   if (player.openFrameRate <= 25) return pick(T.playerDay.fewOpen);
   return pick(T.playerDay.neutral);
 }
+
+// --- Game excitement trash talk ---
+export function excitementTrash(tensionIndex: number): string {
+  if (tensionIndex >= 3) return pick(T.excitement.insane);
+  if (tensionIndex >= 1.5) return pick(T.excitement.thrilling);
+  if (tensionIndex >= 0.5) return pick(T.excitement.decent);
+  return pick(T.excitement.boring);
+}
+
+// --- Match report trash talk ---
+export function comebackTrash(pins: number): string {
+  if (pins >= 30) return pick(T.gameComeback.epic(pins));
+  if (pins >= 15) return pick(T.gameComeback.solid(pins));
+  return pick(T.gameComeback.minor(pins));
+}
+
+export function bigLeadTrash(margin: number, playerName: string): string {
+  if (margin >= 40) return pick(T.bigLead.dominant(margin, playerName));
+  if (margin >= 20) return pick(T.bigLead.clear(margin, playerName));
+  return pick(T.bigLead.narrow(margin));
+}
+
+export function closestMomentTrash(margin: number, frame: number): string {
+  if (margin <= 3) return pick(T.closestMoment.nailBiter(margin, frame));
+  return pick(T.closestMoment.tight(margin, frame));
+}
+
+export function lateDramaTrash(leaderAfterFrame9: string, winner: string): string | null {
+  if (leaderAfterFrame9 === winner) return null;
+  return pick(T.lateDrama.leaderLost(leaderAfterFrame9, winner));
+}

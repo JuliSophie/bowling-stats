@@ -223,6 +223,65 @@ select {
     background: linear-gradient(135deg, rgba(118, 215, 211, 0.12), var(--surface-soft) 55%);
   }
 
+  .section-card {
+    @apply rounded-[1.3rem] border border-lane-200 bg-white/90;
+  }
+
+  .back-button {
+    @apply rounded-full px-4 py-2 text-sm font-medium transition;
+    color: var(--foreground);
+    background: var(--surface-soft);
+    border: 1px solid var(--border);
+  }
+
+  .back-button:hover {
+    background: var(--surface-strong);
+  }
+
+  .nav-active-pill {
+    background: #ffffff;
+    color: #241309;
+  }
+
+  :root[data-theme="dark"] .nav-active-pill {
+    background: rgba(255, 244, 230, 0.92);
+    color: #110905;
+  }
+
+  .winner-chip {
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    color: #78350f;
+  }
+
+  :root[data-theme="dark"] .winner-chip {
+    background: linear-gradient(135deg, rgba(146, 64, 14, 0.5), rgba(180, 83, 9, 0.4));
+    color: #fef3c7;
+  }
+
+  .winner-card {
+    background: linear-gradient(135deg, #fef3c7, #fde68a 40%, #fcd34d);
+    border-color: #f59e0b;
+    color: #78350f;
+  }
+
+  :root[data-theme="dark"] .winner-card {
+    background: linear-gradient(135deg, rgba(120, 53, 15, 0.5), rgba(146, 64, 14, 0.4) 40%, rgba(180, 83, 9, 0.35));
+    border-color: rgba(251, 191, 36, 0.4);
+    color: #fef3c7;
+  }
+
+  .detail-link {
+    @apply inline-flex shrink-0 items-center justify-center rounded-full px-3 py-2 text-xs font-bold transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-lane-700/20;
+    color: var(--foreground);
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+  }
+
+  .detail-link:hover {
+    background: var(--surface);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+  }
+
   .leaderboard-chip,
   .leaderboard-metric {
     @apply rounded-2xl px-3 py-2;
@@ -252,6 +311,7 @@ select {
   color: #bfa98e !important;
 }
 
+:root[data-theme="dark"] .bg-white,
 :root[data-theme="dark"] .bg-white\/90,
 :root[data-theme="dark"] .bg-white\/85,
 :root[data-theme="dark"] .bg-white\/80,
@@ -260,6 +320,7 @@ select {
 :root[data-theme="dark"] .bg-white\/50,
 :root[data-theme="dark"] .bg-lane-50,
 :root[data-theme="dark"] .bg-lane-50\/80,
+:root[data-theme="dark"] .bg-lane-50\/50,
 :root[data-theme="dark"] .bg-lane-50\/30,
 :root[data-theme="dark"] .bg-lane-100 {
   background-color: rgba(255, 255, 255, 0.07) !important;
@@ -294,6 +355,28 @@ select {
 :root[data-theme="dark"] .hover\:bg-red-100:hover,
 :root[data-theme="dark"] .hover\:bg-red-50:hover {
   background-color: rgba(153, 27, 27, 0.48) !important;
+}
+
+:root[data-theme="dark"] .bg-orange-50\/70,
+:root[data-theme="dark"] .bg-orange-50 {
+  background-color: rgba(154, 52, 18, 0.22) !important;
+}
+
+:root[data-theme="dark"] .border-orange-200 {
+  border-color: rgba(251, 146, 60, 0.25) !important;
+}
+
+:root[data-theme="dark"] .text-orange-700,
+:root[data-theme="dark"] .text-orange-900 {
+  color: #fdba74 !important;
+}
+
+:root[data-theme="dark"] .bg-blue-50 {
+  background-color: rgba(30, 64, 175, 0.2) !important;
+}
+
+:root[data-theme="dark"] .text-blue-700 {
+  color: #93c5fd !important;
 }
 
 :root[data-theme="dark"] .chart-toggle {

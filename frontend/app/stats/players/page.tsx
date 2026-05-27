@@ -5,61 +5,8 @@ import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
 import { fetchGames } from '@/lib/api';
-import type { FrameData, GameRead } from '@/types';
-
-type PlayerSummary = {
-  name: string;
-  gamesPlayed: number;
-  wins: number;
-  avgScore: number;
-  medianScore: number;
-  maxScore: number;
-  lastPlayed: string;
-  totalPins: number;
-  openFrameRate: number;
-};
-
-function isOpenFrame(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 !== 'x' && throw2 !== 'x' && throw2 !== '/';
-}
-
-function median(values: number[]) {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
-
-function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
-  const map = new Map<string, { scores: number[]; wins: number; lastPlayed: string; openFrames: number; totalFrames: number }>();
-  for (const game of games) {
-    const highScore = Math.max(...game.scores.map((score) => score.total_score));
-    for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { scores: [], wins: 0, lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
-      entry.scores.push(score.total_score);
-      if (score.total_score === highScore) entry.wins++;
-      entry.openFrames += score.frames.filter(isOpenFrame).length;
-      entry.totalFrames += score.frames.length;
-      if (game.played_at > entry.lastPlayed) entry.lastPlayed = game.played_at;
-      map.set(score.player_name, entry);
-    }
-  }
-  return [...map.entries()]
-    .map(([name, { scores, wins, lastPlayed, openFrames, totalFrames }]) => ({
-      name,
-      gamesPlayed: scores.length,
-      wins,
-      avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
-      medianScore: Math.round(median(scores) * 10) / 10,
-      maxScore: Math.max(...scores),
-      lastPlayed,
-      totalPins: scores.reduce((a, b) => a + b, 0),
-      openFrameRate: totalFrames > 0 ? Math.round((openFrames / totalFrames) * 1000) / 10 : 0,
-    }))
-    .sort((a, b) => b.avgScore - a.avgScore);
-}
+import { derivePlayerSummaries } from '@/lib/player-stats';
+import type { GameRead } from '@/types';
 
 function rankBadge(index: number) {
   if (index === 0) return { label: '1', icon: '🏆', className: 'bg-gradient-to-br from-amber-200 to-coral text-lane-950 shadow-[0_12px_30px_rgba(255,140,105,0.28)]' };
@@ -94,7 +41,7 @@ export default function PlayersListPage() {
       <Navigation />
       <main className="app-main max-w-5xl">
         <div className="flex items-center gap-3">
-          <BackButton className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
+          <BackButton className="back-button" />
           <h1 className="text-2xl font-bold text-lane-900">Bestenliste</h1>
           <span className="text-sm text-lane-600">({players.length})</span>
         </div>

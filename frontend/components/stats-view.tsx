@@ -18,19 +18,15 @@ import {
 } from 'recharts';
 
 import GamePreviewCard from '@/components/game-preview-card';
+import { PinDot, PIN_LEGEND } from '@/components/pin-dot';
+import ScoreTable from '@/components/score-table';
+import ChartToggle from '@/components/ui/chart-toggle';
 import { fetchGames, renamePlayer } from '@/lib/api';
+import { PLAYER_COLORS } from '@/lib/constants';
 import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
+import { type FrameType, getFrameType, parseCumulative, getPlayerGames } from '@/lib/frame-utils';
+import { type PlayerSummary, derivePlayerSummaries, buildPlayerTrendData } from '@/lib/player-stats';
 import type { FrameData, GameRead } from '@/types';
-
-const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
-
-type FrameType = 'strike' | 'spare' | 'normal';
-
-function getFrameType(frame: FrameData): FrameType {
-  if (String(frame.throw1).trim().toLowerCase() === 'x' || String(frame.throw2).trim().toLowerCase() === 'x') return 'strike';
-  if (String(frame.throw2).trim() === '/') return 'spare';
-  return 'normal';
-}
 
 function parseThrow1(value: string): number | null {
   const v = String(value).trim().toLowerCase();
@@ -41,126 +37,7 @@ function parseThrow1(value: string): number | null {
   return isNaN(n) || n < 0 || n > 10 ? null : n;
 }
 
-function parseCumulative(frame: FrameData): number | null {
-  const n = parseInt(String(frame.cumulative ?? ''), 10);
-  return isNaN(n) ? null : n;
-}
-
-// ── Pin dot & legend ──
-
-function PinDot({ cx, cy, payload, dataKey, stroke }: {
-  cx?: number; cy?: number; payload?: Record<string, string | number>; dataKey?: string; stroke?: string;
-}) {
-  if (cx == null || cy == null || !payload || !dataKey) return null;
-  const frameType = payload[`${dataKey}_type`] as FrameType | undefined;
-
-  if (frameType === 'strike') {
-    return (
-      <g transform={`translate(${cx},${cy})`}>
-        <ellipse cx={0} cy={2} rx={4} ry={3} fill="#FFD700" stroke="#B8860B" strokeWidth={0.8} />
-        <ellipse cx={0} cy={-3} rx={2.8} ry={2.8} fill="#FFD700" stroke="#B8860B" strokeWidth={0.8} />
-        <rect x={-1.2} y={-1} width={2.4} height={3} fill="#FFD700" rx={0.5} />
-      </g>
-    );
-  }
-
-  if (frameType === 'spare') {
-    return (
-      <g transform={`translate(${cx},${cy})`}>
-        <ellipse cx={0} cy={2} rx={3.5} ry={2.5} fill="#C0C0C0" stroke="#808080" strokeWidth={0.8} />
-        <ellipse cx={0} cy={-2.5} rx={2.4} ry={2.4} fill="#C0C0C0" stroke="#808080" strokeWidth={0.8} />
-        <rect x={-1} y={-0.5} width={2} height={2.5} fill="#C0C0C0" rx={0.5} />
-      </g>
-    );
-  }
-
-  return <circle cx={cx} cy={cy} r={4} fill={stroke} />;
-}
-
-const PIN_LEGEND = (
-  <div className="flex items-center gap-4 text-xs text-lane-600">
-    <span className="flex items-center gap-1.5">
-      <svg width="14" height="16" viewBox="-6 -7 12 14">
-        <ellipse cx={0} cy={2} rx={4} ry={3} fill="#FFD700" stroke="#B8860B" strokeWidth={0.8} />
-        <ellipse cx={0} cy={-3} rx={2.8} ry={2.8} fill="#FFD700" stroke="#B8860B" strokeWidth={0.8} />
-        <rect x={-1.2} y={-1} width={2.4} height={3} fill="#FFD700" rx={0.5} />
-      </svg>
-      Strike
-    </span>
-    <span className="flex items-center gap-1.5">
-      <svg width="14" height="16" viewBox="-6 -7 12 14">
-        <ellipse cx={0} cy={2} rx={3.5} ry={2.5} fill="#C0C0C0" stroke="#808080" strokeWidth={0.8} />
-        <ellipse cx={0} cy={-2.5} rx={2.4} ry={2.4} fill="#C0C0C0" stroke="#808080" strokeWidth={0.8} />
-        <rect x={-1} y={-0.5} width={2} height={2.5} fill="#C0C0C0" rx={0.5} />
-      </svg>
-      Spare
-    </span>
-  </div>
-);
-
 // ── Data helpers ──
-
-type PlayerSummary = {
-  name: string;
-  gamesPlayed: number;
-  avgScore: number;
-  maxScore: number;
-  lastPlayed: string;
-};
-
-function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
-  const map = new Map<string, { scores: number[]; lastPlayed: string }>();
-  for (const game of games) {
-    for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { scores: [], lastPlayed: game.played_at };
-      entry.scores.push(score.total_score);
-      if (game.played_at > entry.lastPlayed) entry.lastPlayed = game.played_at;
-      map.set(score.player_name, entry);
-    }
-  }
-  return [...map.entries()]
-    .map(([name, { scores, lastPlayed }]) => ({
-      name,
-      gamesPlayed: scores.length,
-      avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
-      maxScore: Math.max(...scores),
-      lastPlayed,
-    }))
-    .sort((a, b) => b.avgScore - a.avgScore);
-}
-
-function getPlayerGames(games: GameRead[], playerName: string): GameRead[] {
-  return games.filter((g) => g.scores.some((s) => s.player_name === playerName));
-}
-
-function buildPlayerTrendData(games: GameRead[], playerName: string): Record<string, string | number>[] {
-  return getPlayerGames(games, playerName)
-    .slice()
-    .sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id)
-    .map((game, i) => ({
-      label: `${game.played_at}\n${game.location}`,
-      index: i + 1,
-      roundNumber: (i + 1) * 10,
-      score: game.scores.find((s) => s.player_name === playerName)?.total_score ?? 0,
-    }));
-}
-
-function ChartToggle({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-        active
-          ? 'border-lane-700 bg-lane-800 text-white shadow-sm'
-          : 'border-lane-300 bg-white/70 text-lane-700 hover:bg-lane-50'
-      }`}
-    >
-      {label}
-    </button>
-  );
-}
 
 function buildGameChartData(game: GameRead): Record<string, string | number>[] {
   const frameCount = Math.max(...game.scores.map((s) => s.frames.length), 0);
@@ -499,51 +376,6 @@ function Badge({ emoji, label }: { emoji: string; label: string }) {
   );
 }
 
-function ScoreTable({ game }: { game: GameRead }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-xs">
-        <thead>
-          <tr>
-            <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
-            {Array.from({ length: 10 }, (_, i) => (
-              <th key={i} className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">{i + 1}</th>
-            ))}
-            <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">Ges.</th>
-          </tr>
-        </thead>
-        <tbody>
-          {game.scores.map((score) => {
-            const frames = score.frames as FrameData[];
-            return (
-              <tr key={score.player_name}>
-                <td className="border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">{score.player_name}</td>
-                {Array.from({ length: 10 }, (_, fIdx) => {
-                  const frame = frames[fIdx];
-                  if (!frame) return <td key={fIdx} className="border border-lane-200" />;
-                  const ft = getFrameType(frame);
-                  const bgClass = ft === 'strike' ? 'bg-amber-200/60' : ft === 'spare' ? 'bg-slate-200/60' : '';
-                  return (
-                    <td key={fIdx} className={`border border-lane-200 px-0 py-0 ${bgClass}`}>
-                      <div className="flex border-b border-lane-100">
-                        <span className="w-1/2 border-r border-lane-100 px-1 py-0.5 text-center">{frame.throw1}</span>
-                        <span className="w-1/2 px-1 py-0.5 text-center">{frame.throw2}</span>
-                        {fIdx === 9 && <span className="w-1/2 border-l border-lane-100 px-1 py-0.5 text-center">{frame.throw3}</span>}
-                      </div>
-                      <div className="px-1 py-0.5 text-center text-lane-600">{frame.cumulative}</div>
-                    </td>
-                  );
-                })}
-                <td className="border border-lane-200 px-2 py-1 text-center font-semibold text-lane-900">{score.total_score}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?: string }) {
   return (
     <div className="grid gap-4">
@@ -584,7 +416,7 @@ function TodaysGames({ games, expandedGameId, onExpandedGameChange }: { games: G
   if (todayGames.length === 0) return null;
 
   return (
-    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+    <div className="section-card p-4">
       <h3 className="mb-3 text-sm font-semibold text-lane-800">Heute gespielt</h3>
       <div className="grid gap-2">
         {todayGames.map((game, index) => (
@@ -611,7 +443,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
   return (
     <div className="grid gap-4">
       {/* Momentum */}
-      <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+      <div className="section-card p-4">
         <SectionHeader title="Momentum & Psyche" info="Diese Werte zeigen, wie du unter Druck reagierst und ob du nach guten oder schlechten Frames konstant bleibst." />
         <div className="flex flex-wrap gap-3">
           {s.closerScore !== null && (
@@ -637,7 +469,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
       </div>
 
       {/* Technical */}
-      <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+      <div className="section-card p-4">
         <SectionHeader title="Technik" info="Technische Kennzahlen zu deiner Wurfpräzision und Konstanz." />
         <div className="flex flex-wrap gap-3">
           {s.firstBallAvg !== null && (
@@ -651,7 +483,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
 
       {/* Venue */}
       {s.venueStats.length > 1 && (
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+        <div className="section-card p-4">
           <SectionHeader title="Bahnvergleich" info="Vergleicht deinen Durchschnitt pro Bowlingbahn. Unterschiede können an Ölmustern, Bahnzustand oder einfach an der Stimmung liegen." />
           <ResponsiveContainer width="100%" height={Math.max(120, s.venueStats.length * 44)}>
             <BarChart data={s.venueStats} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
@@ -669,7 +501,7 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
 
       {/* Achievements */}
       {(s.cleanGames > 0 || s.dutch200 > 0) && (
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+        <div className="section-card p-4">
           <SectionHeader title="Auszeichnungen" info="Besondere Leistungen, die du in deinen Spielen freigeschaltet hast." />
           <div className="flex flex-wrap gap-2">
             {s.cleanGames > 0 && <Badge emoji="✨" label={`Sauberes Spiel${s.cleanGames > 1 ? ` x${s.cleanGames}` : ''}`} />}
@@ -690,7 +522,7 @@ function SocialStatsSection({ games, players }: { games: GameRead[]; players: Pl
   if (!hasContent) return null;
 
   return (
-    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+    <div className="section-card p-4">
       <h3 className="mb-4 text-sm font-semibold text-lane-800">Sticheleien & Vergleiche</h3>
       <div className="grid gap-5">
         {/* Nemesis */}
@@ -1196,7 +1028,7 @@ function TodaySessionSection({ games, players }: {
   if (todayGames.length < 2) return null;
 
   return (
-    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+    <div className="section-card p-4">
       <SectionHeader
         title={`Heutige Session · ${todayGames.length} Spiele`}
         info="Übersicht über alle heutigen Spiele: Punkteverlauf, Tagessieger und Leistung im Vergleich zum persönlichen Durchschnitt."
@@ -1217,7 +1049,7 @@ function PastSessionsList({ games, players }: {
   if (multiGameDays.length === 0) return null;
 
   return (
-    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+    <div className="section-card overflow-hidden">
       <h3 className="px-5 pt-4 pb-2 text-sm font-semibold text-lane-800">Vergangene Tages-Sessions</h3>
       {multiGameDays.map((session, i) => {
         const isExpanded = expandedDate === session.date;
@@ -1376,7 +1208,7 @@ export default function StatsView() {
         {statsNavigation}
         <div className="grid gap-4">
           <button type="button"
-            className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70"
+            className="flex items-center gap-1.5 self-start back-button"
             onClick={() => {
               setSelectedPlayer(null);
               setExpandedGameId(null);
@@ -1386,7 +1218,7 @@ export default function StatsView() {
             }}
           >← Alle Spieler</button>
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               {isEditingPlayer ? (
@@ -1408,7 +1240,7 @@ export default function StatsView() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    className="back-button"
                     onClick={() => {
                       setIsEditingPlayer(false);
                       setEditingPlayerName(selectedPlayer);
@@ -1423,7 +1255,7 @@ export default function StatsView() {
                   <h2 className="text-xl font-semibold text-lane-900">{selectedPlayer}</h2>
                   <button
                     type="button"
-                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    className="back-button"
                     onClick={() => {
                       setEditingPlayerName(selectedPlayer);
                       setIsEditingPlayer(true);
@@ -1449,7 +1281,7 @@ export default function StatsView() {
         </div>
 
         {trendData.length > 1 && (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+          <div className="section-card p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold text-lane-800">Punkte pro Spiel</h3>
@@ -1532,7 +1364,7 @@ export default function StatsView() {
       )}
 
       {statsView === 'player' && (
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+        <div className="section-card overflow-hidden">
           <h3 className="px-5 pt-4 pb-2 text-sm font-semibold text-lane-800">Spieler</h3>
           {players.map((player, i) => {
             const recentGames = getPlayerGames(games, player.name)

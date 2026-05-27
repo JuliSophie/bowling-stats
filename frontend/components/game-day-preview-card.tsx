@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { useState } from 'react';
 
 import GamePreviewCard from '@/components/game-preview-card';
 import type { GameRead } from '@/types';
@@ -9,7 +12,17 @@ type GameDayPreviewCardProps = {
   allGames?: GameRead[];
   expandedGameId?: number | null;
   onExpandedGameChange?: (gameId: number | null) => void;
+  defaultOpen?: boolean;
 };
+
+const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+function formatDateDE(isoDate: string): string {
+  const date = new Date(isoDate + 'T00:00:00');
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return `${WEEKDAYS[date.getDay()]}, ${date.getDate()}. ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+}
 
 function buildDayPlayers(games: GameRead[]) {
   const playerPins = new Map<string, number>();
@@ -31,58 +44,71 @@ export default function GameDayPreviewCard({
   allGames,
   expandedGameId,
   onExpandedGameChange,
+  defaultOpen = true,
 }: GameDayPreviewCardProps) {
+  const [open, setOpen] = useState(defaultOpen);
   const sortedGames = games.slice().sort((a, b) => a.id - b.id);
   const dayPlayers = buildDayPlayers(sortedGames);
-  const winner = dayPlayers[0];
-  const totalPins = dayPlayers.reduce((sum, player) => sum + player.pins, 0);
+  const location = sortedGames[0]?.location;
+
+  const toggleOpen = (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen((v) => !v);
+  };
 
   return (
-    <section className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4 shadow-sm">
-      <div className="mb-4 flex flex-col gap-3 border-b border-lane-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-bold text-lane-900">{date}</h2>
-            <span className="rounded-full bg-lane-100 px-2.5 py-1 text-xs font-semibold text-lane-700">
-              {sortedGames.length} Spiel{sortedGames.length !== 1 ? 'e' : ''}
-            </span>
-            <span className="rounded-full bg-lane-100 px-2.5 py-1 text-xs font-semibold text-lane-700">
-              {totalPins} Pins
+    <section className="section-card overflow-hidden">
+      <div className="flex items-stretch">
+        <Link
+          href={`/stats/days/${date}`}
+          className="min-w-0 flex-1 p-4 transition hover:bg-lane-50"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-base font-bold text-lane-900">{formatDateDE(date)}</h2>
+            <span className="text-xs font-medium text-lane-500">
+              {location} · {sortedGames.length} Spiel{sortedGames.length !== 1 ? 'e' : ''}
             </span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {dayPlayers.map((player, index) => (
               <span
                 key={player.name}
-                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${index === 0 ? 'bg-lane-800 text-white' : 'bg-lane-100 text-lane-700'}`}
+                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${index === 0 ? 'winner-chip' : 'bg-lane-100 text-lane-700'}`}
               >
                 {index === 0 ? '👑 ' : ''}{player.name}: {player.pins}
               </span>
             ))}
           </div>
-        </div>
-
-        <Link
-          href={`/stats/days/${date}`}
-          className="inline-flex shrink-0 items-center justify-center rounded-full border border-lane-300 bg-white px-3 py-2 text-xs font-bold text-lane-700 transition hover:-translate-y-0.5 hover:border-lane-400 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-lane-700/20"
-        >
-          Tag Details
         </Link>
+
+        <button
+          type="button"
+          onClick={toggleOpen}
+          aria-expanded={open}
+          aria-label={open ? 'Spiele einklappen' : 'Spiele ausklappen'}
+          className="flex shrink-0 items-center px-4 transition hover:bg-lane-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-lane-700/20"
+        >
+          <span className={`text-sm font-bold text-lane-400 transition ${open ? 'rotate-180' : ''}`}>▼</span>
+        </button>
       </div>
 
-      <div className="grid gap-2">
-        {sortedGames.map((game, index) => (
-          <GamePreviewCard
-            key={game.id}
-            game={game}
-            allGames={allGames}
-            label={`Spiel ${index + 1}`}
-            showDate={false}
-            expanded={expandedGameId === game.id}
-            onExpandedChange={(nextExpanded) => onExpandedGameChange?.(nextExpanded ? game.id : null)}
-          />
-        ))}
-      </div>
+      {open && (
+        <div className="grid gap-2 border-t border-lane-100 p-3">
+          {sortedGames.map((game, index) => (
+            <GamePreviewCard
+              key={game.id}
+              game={game}
+              allGames={allGames}
+              label={`Spiel ${index + 1}`}
+              showDate={false}
+              showLocation={false}
+              expanded={expandedGameId === game.id}
+              onExpandedChange={(nextExpanded) => onExpandedGameChange?.(nextExpanded ? game.id : null)}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

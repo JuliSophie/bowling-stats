@@ -1,8 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
@@ -10,7 +8,6 @@ import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames } from '@/lib/api';
 import {
   averagePerGameBenchmark,
-  benchmarkToneClass,
   dayLossScoreBenchmark,
   dayScoreBenchmark,
   gamesBenchmark,
@@ -19,7 +16,6 @@ import {
   playerDayContext,
   totalPinsBenchmark,
   underdogBenchmark,
-  type StatBenchmark,
 } from '@/lib/trash-talk';
 import type { FrameData, GameRead } from '@/types';
 import {
@@ -33,8 +29,12 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-
-const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#be123c'];
+import { PLAYER_COLORS } from '@/lib/constants';
+import { type FrameType, getFrameType, isOpenFrame, median, parseCumulative, formatNullableScore } from '@/lib/frame-utils';
+import InfoTip from '@/components/ui/info-tip';
+import BenchmarkBar from '@/components/ui/benchmark-bar';
+import { StatCard } from '@/components/ui/stat-card';
+import ChartToggle from '@/components/ui/chart-toggle';
 
 type DayPlayerStats = {
   name: string;
@@ -70,19 +70,6 @@ type WinningPointEntry = {
   gameLabel: string;
 };
 
-function isOpenFrame(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 !== 'x' && throw2 !== 'x' && throw2 !== '/';
-}
-
-function median(values: number[]) {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
-
 function computeDayPlayerStats(games: GameRead[]): DayPlayerStats[] {
   const map = new Map<string, { pins: number; games: number; wins: number; scores: number[]; openFrames: number; totalFrames: number }>();
   
@@ -111,6 +98,75 @@ function computeDayPlayerStats(games: GameRead[]): DayPlayerStats[] {
       openFrameRate: totalFrames > 0 ? Math.round((openFrames / totalFrames) * 1000) / 10 : 0,
     }))
     .sort((a, b) => b.wins - a.wins || b.totalPins - a.totalPins);
+}
+
+type DayPlayerAnalysis = {
+  name: string;
+  totalScore: number;
+  games: number;
+  strikes: number;
+  spares: number;
+  openFrames: number;
+  cleanFrameRate: number;
+  bestFrame: { score: number; game: number; frame: number } | null;
+  avgFirstThrow: number;
+  consistency: number | null;
+};
+
+function computeDayPlayerAnalysis(dayGames: GameRead[]): DayPlayerAnalysis[] {
+  const sorted = dayGames.slice().sort((a, b) => a.id - b.id);
+  const map = new Map<string, { totalScore: number; games: number; strikes: number; spares: number; openFrames: number; totalFrames: number; bestFrame: { score: number; game: number; frame: number } | null; firstThrows: number[]; frameScores: number[] }>();
+
+  sorted.forEach((game, gameIndex) => {
+    for (const score of game.scores) {
+      const entry = map.get(score.player_name) ?? { totalScore: 0, games: 0, strikes: 0, spares: 0, openFrames: 0, totalFrames: 0, bestFrame: null, firstThrows: [], frameScores: [] };
+      entry.totalScore += score.total_score;
+      entry.games++;
+      const frames = score.frames as FrameData[];
+      let prevCum = 0;
+
+      for (let f = 0; f < frames.length; f++) {
+        const ft = getFrameType(frames[f]);
+        if (ft === 'strike') entry.strikes++;
+        else if (ft === 'spare') entry.spares++;
+        else entry.openFrames++;
+        entry.totalFrames++;
+
+        const t1 = String(frames[f].throw1 ?? '').trim().toLowerCase();
+        if (t1 === 'x') entry.firstThrows.push(10);
+        else { const n = parseInt(t1, 10); if (!Number.isNaN(n)) entry.firstThrows.push(n); }
+
+        const cum = parseCumulative(frames[f]);
+        if (cum !== null) {
+          const contribution = cum - prevCum;
+          entry.frameScores.push(contribution);
+          if (!entry.bestFrame || contribution > entry.bestFrame.score) {
+            entry.bestFrame = { score: contribution, game: gameIndex + 1, frame: f + 1 };
+          }
+          prevCum = cum;
+        }
+      }
+
+      map.set(score.player_name, entry);
+    }
+  });
+
+  return [...map.entries()].map(([name, d]) => {
+    const avg = d.frameScores.length > 0 ? d.frameScores.reduce((a, b) => a + b, 0) / d.frameScores.length : 0;
+    const variance = d.frameScores.length > 1 ? d.frameScores.reduce((sum, v) => sum + (v - avg) ** 2, 0) / d.frameScores.length : null;
+    return {
+      name,
+      totalScore: d.totalScore,
+      games: d.games,
+      strikes: d.strikes,
+      spares: d.spares,
+      openFrames: d.openFrames,
+      cleanFrameRate: d.totalFrames > 0 ? Math.round(((d.totalFrames - d.openFrames) / d.totalFrames) * 1000) / 10 : 0,
+      bestFrame: d.bestFrame,
+      avgFirstThrow: d.firstThrows.length > 0 ? Math.round((d.firstThrows.reduce((a, b) => a + b, 0) / d.firstThrows.length) * 10) / 10 : 0,
+      consistency: variance !== null ? Math.round(Math.sqrt(variance) * 10) / 10 : null,
+    };
+  }).sort((a, b) => b.totalScore - a.totalScore);
 }
 
 function buildGlobalAverageMap(games: GameRead[]) {
@@ -159,109 +215,6 @@ function signedPercent(value: number) {
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
-function formatNullableScore(value: number | null) {
-  if (value === null) return '–';
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function InfoTip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [panelPosition, setPanelPosition] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
-
-  const positionPanel = (button: HTMLButtonElement) => {
-    const rect = button.getBoundingClientRect();
-    const margin = 16;
-    const width = Math.min(256, window.innerWidth - margin * 2);
-    const left = Math.min(Math.max(rect.right - width, margin), window.innerWidth - width - margin);
-    if (rect.bottom + 190 > window.innerHeight && rect.top > window.innerHeight / 2) {
-      setPanelPosition({ left, bottom: window.innerHeight - rect.top + 8, width });
-    } else {
-      setPanelPosition({ left, top: rect.bottom + 8, width });
-    }
-  };
-
-  return (
-    <span className="relative inline-flex">
-      <button
-        type="button"
-        className="info-tip-button"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!open) positionPanel(event.currentTarget);
-          setOpen((value) => !value);
-        }}
-        onBlur={() => {
-          setOpen(false);
-          setPanelPosition(null);
-        }}
-        aria-label="Info"
-      >
-        i
-      </button>
-      {open && panelPosition && createPortal(
-        <span className="info-tip-panel" style={{ left: panelPosition.left, top: panelPosition.top, bottom: panelPosition.bottom, width: panelPosition.width }}>
-          {text}
-        </span>,
-        document.body,
-      )}
-    </span>
-  );
-}
-
-function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
-  return (
-    <div className="mt-2">
-      <div className="h-1.5 overflow-hidden rounded-full bg-lane-200">
-        <div className={`h-full rounded-full ${benchmarkToneClass(benchmark.tone)}`} style={{ width: `${benchmark.percent}%` }} />
-      </div>
-      <p className="mt-1 text-[0.68rem] font-semibold text-lane-500">
-        {benchmark.label}{benchmark.detail ? ` · ${benchmark.detail}` : ''}
-      </p>
-    </div>
-  );
-}
-
-function StatCard({ label, value, sub, info, benchmark, href }: { label: string; value: string | number; sub?: string; info: string; benchmark?: StatBenchmark; href?: string }) {
-  const router = useRouter();
-  const content = (
-    <>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-lane-600">{label}</p>
-        <InfoTip text={info} />
-      </div>
-      <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
-      {sub && <p className="text-xs text-lane-600">{sub}</p>}
-      {benchmark && <BenchmarkBar benchmark={benchmark} />}
-    </>
-  );
-
-  if (href) {
-    return (
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => router.push(href)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            router.push(href);
-          }
-        }}
-        className="w-full rounded-lg border border-lane-200 bg-lane-50 p-3 text-left transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-400"
-      >
-        {content}
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-      {content}
-    </div>
-  );
-}
-
 function computeWinningPointStats(games: GameRead[], playerName?: string): WinningPointStats {
   const winningEntries: WinningPointEntry[] = [];
   const losingEntries: WinningPointEntry[] = [];
@@ -298,11 +251,6 @@ function computeWinningPointStats(games: GameRead[], playerName?: string): Winni
 
 function toChartKey(name: string) {
   return `player_${name}`.replace(/[^a-zA-Z0-9_]/g, '_');
-}
-
-function parseCumulative(frame: FrameData) {
-  const value = parseInt(String(frame.cumulative ?? ''), 10);
-  return Number.isNaN(value) ? null : value;
 }
 
 function buildCumulativeDayChart(games: GameRead[], mode: CumulativeChartMode) {
@@ -396,19 +344,6 @@ function buildScoreDifferenceDayChart(games: GameRead[], mode: CumulativeChartMo
   });
 
   return { data, lines: cumulativeChart.lines };
-}
-
-function ChartModeButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-      className={`chart-toggle rounded-full border px-3 py-1.5 text-xs font-semibold transition ${active ? 'border-lane-700 bg-lane-800 text-white shadow-sm' : 'border-lane-300 bg-white/70 text-lane-700 hover:bg-lane-50'}`}
-    >
-      {label}
-    </button>
-  );
 }
 
 function buildDayGameHistoryChart(games: GameRead[]) {
@@ -520,7 +455,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
       <>
         <Navigation />
         <main className="app-main max-w-5xl">
-          <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
+          <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start back-button" />
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Keine Spiele für diesen Tag gefunden.</p>
           </div>
@@ -570,9 +505,9 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
+        <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start back-button" />
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <h1 className="text-2xl font-bold text-lane-900">{date}</h1>
           <p className="text-sm text-lane-600 mt-2">{dayGames.length} Spiel{dayGames.length !== 1 ? 'e' : ''} · Ort: {dayGames[0].location}</p>
           
@@ -584,11 +519,11 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           </div>
         </div>
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <h2 className="text-lg font-semibold text-lane-800 mb-4">Spieler ({dayPlayers.length})</h2>
           <div className="space-y-3">
             {dayPlayers.map((player, i) => (
-              <Link key={player.name} href={`/stats/players/${encodeURIComponent(player.name)}`} className="flex items-center justify-between gap-3 rounded-lg border border-lane-200 bg-lane-50 p-3 transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md">
+              <Link key={player.name} href={`/stats/players/${encodeURIComponent(player.name)}`} className={`flex items-center justify-between gap-3 rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${i === 0 ? 'winner-card' : 'border-lane-200 bg-lane-50 hover:bg-white'}`}>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-semibold text-lane-900">{i + 1}.</span>
@@ -607,7 +542,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           </div>
         </div>
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
           <p className="mt-1 text-xs text-lane-600">Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war.</p>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -640,7 +575,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
         </div>
 
         {showCumulativeChart && (
-          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+          <section className="group section-card">
             <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('cumulative')}>
               <div>
                 <h2 className="text-lg font-semibold text-lane-800">Kumulative Punkte über den Spielabend</h2>
@@ -649,8 +584,8 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             </button>
             {effectiveOpenChartSection === 'cumulative' && <div className="px-5 pb-5">
               <div className="mb-4 flex flex-wrap justify-end gap-2">
-                <ChartModeButton active={cumulativeChartMode === 'frames'} label="Jedes Frame" onClick={() => setCumulativeChartMode('frames')} />
-                <ChartModeButton active={cumulativeChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setCumulativeChartMode('rounds')} />
+                <ChartToggle active={cumulativeChartMode === 'frames'} label="Jedes Frame" onClick={() => setCumulativeChartMode('frames')} />
+                <ChartToggle active={cumulativeChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setCumulativeChartMode('rounds')} />
               </div>
               <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
                 {cumulativeDayChart.lines.map((line) => (
@@ -685,7 +620,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
         )}
 
         {showDifferenceChart && (
-          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+          <section className="group section-card">
             <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('difference')}>
               <div>
                 <h2 className="text-lg font-semibold text-lane-800">Punkteabstand über den Spielabend</h2>
@@ -695,8 +630,8 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             </button>
             {effectiveOpenChartSection === 'difference' && <div className="px-5 pb-5">
               <div className="mb-4 flex flex-wrap justify-end gap-2">
-                <ChartModeButton active={differenceChartMode === 'frames'} label="Jedes Frame" onClick={() => setDifferenceChartMode('frames')} />
-                <ChartModeButton active={differenceChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setDifferenceChartMode('rounds')} />
+                <ChartToggle active={differenceChartMode === 'frames'} label="Jedes Frame" onClick={() => setDifferenceChartMode('frames')} />
+                <ChartToggle active={differenceChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setDifferenceChartMode('rounds')} />
               </div>
               <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
                 {scoreDifferenceDayChart.lines.map((line) => (
@@ -731,7 +666,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
         )}
 
         {showHistoryChart && (
-          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+          <section className="group section-card">
             <button type="button" className="flex w-full cursor-pointer items-center justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('history')}>
               <h2 className="text-lg font-semibold text-lane-800">Alle Spielverläufe des Tages</h2>
               <span className={`text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'history' ? 'rotate-180' : ''}`}>⌄</span>
@@ -775,7 +710,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           </section>
         )}
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <h2 className="text-lg font-semibold text-lane-800 mb-4">Spiele ({dayGames.length})</h2>
           <div className="space-y-2">
             {dayGames.map((game, index) => (

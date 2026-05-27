@@ -88,7 +88,7 @@ export default function Navigation() {
                 href={item.href}
                 className={`rounded-full px-4 py-2 text-sm font-bold transition ${
                   isActive(item.href)
-                    ? 'bg-white text-lane-950 shadow-lg'
+                    ? 'nav-active-pill shadow-lg'
                     : 'text-amber-50/72 hover:bg-white/10 hover:text-white'
                 }`}
               >
@@ -123,7 +123,7 @@ export default function Navigation() {
               href={item.href}
               className={`flex flex-col items-center gap-1 rounded-2xl px-2 py-2 text-[0.7rem] font-bold transition ${
                 isActive(item.href)
-                  ? 'bg-white text-lane-950'
+                  ? 'nav-active-pill'
                   : 'text-amber-50/68 hover:bg-white/10 hover:text-white'
               }`}
             >

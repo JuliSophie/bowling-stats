@@ -14,7 +14,7 @@ type DaySession = {
 
 function groupGamesByDay(games: GameRead[]): DaySession[] {
   const grouped = new Map<string, GameRead[]>();
-  
+
   for (const game of games) {
     const date = game.played_at;
     if (!grouped.has(date)) {
@@ -35,10 +35,10 @@ type DayPlayerStats = {
   avgScore: number;
 };
 
-function computeDayPlayerStats(games: GameRead[]): DayPlayerStats[] {
+function computeDayPlayerStats(dayGames: GameRead[]): DayPlayerStats[] {
   const map = new Map<string, { pins: number; games: number }>();
-  
-  for (const game of games) {
+
+  for (const game of dayGames) {
     for (const score of game.scores) {
       const entry = map.get(score.player_name) ?? { pins: 0, games: 0 };
       entry.pins += score.total_score;
@@ -83,12 +83,12 @@ export default function DaysListPage() {
       <Navigation />
       <main className="app-main max-w-5xl">
         <div className="flex items-center gap-3">
-          <BackButton className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
+          <BackButton className="back-button" />
           <h1 className="text-2xl font-bold text-lane-900">Tagesgruppen</h1>
           <span className="text-sm text-lane-600">({daySessions.length})</span>
         </div>
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
+        <div className="section-card overflow-hidden">
           {daySessions.map((session, i) => {
             const dayPlayers = computeDayPlayerStats(session.games);
             const winner = dayPlayers[0];

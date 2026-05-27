@@ -983,9 +983,9 @@ export default function BowlingApp() {
                 <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={handleConfirmCorners} disabled={manualCorners.length !== 4 || rectifying}>
                   {rectifying ? 'Verarbeite...' : 'Ecken bestätigen →'}
                 </button>
-                <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
+                <button className="back-button" type="button"
                   onClick={() => { setManualCorners([]); setActiveCornerIndex(null); setDraggingCornerIndex(null); }}>Zurücksetzen</button>
-                <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70 disabled:cursor-not-allowed disabled:opacity-60" type="button"
+                <button className="back-button disabled:cursor-not-allowed disabled:opacity-60" type="button"
                   onClick={() => { setManualCorners((c) => c.slice(0, -1)); setActiveCornerIndex(null); setDraggingCornerIndex(null); }} disabled={!manualCorners.length}>Letzten Punkt entfernen</button>
                 <label className="rounded-full border border-lane-300 bg-white/80 px-4 py-2 text-sm font-medium text-lane-700 cursor-pointer transition hover:bg-white">
                   Neues Bild<input className="hidden" type="file" accept=".png,.jpg,.jpeg" onChange={handleUpload} />
@@ -1018,7 +1018,7 @@ export default function BowlingApp() {
               {/* Morph views */}
               {(tableSubView === 'morph-horizontal' || tableSubView === 'morph-vertical') && morphSrc ? (
                 <>
-                  <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5 text-xs font-medium text-lane-600">
+                  <div className="flex items-center gap-3 section-card px-4 py-2.5 text-xs font-medium text-lane-600">
                     {movingLine
                       ? 'Linie verschieben: Ziehen und loslassen'
                       : 'Auf eine Morph-Linie klicken um sie auszuwählen'}
@@ -1087,14 +1087,14 @@ export default function BowlingApp() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => goToStep(1)}>← Zurück zu Monitor</button>
+                    <button className="back-button" type="button" onClick={() => goToStep(1)}>← Zurück zu Monitor</button>
                     <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
                       type="button" onClick={handleConfirmTable}
                       disabled={selectedHLines.length < 2 || selectedVLines.length < 2 || buildingTable}>
                       {buildingTable ? 'Baue Tabelle...' : 'Tabelle bestätigen →'}
                     </button>
                     {tableConfirmed && (
-                      <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => setTableSubView('bw')}>Zur S/W-Ansicht →</button>
+                      <button className="back-button" type="button" onClick={() => setTableSubView('bw')}>Zur S/W-Ansicht →</button>
                     )}
                   </div>
                 </>
@@ -1103,7 +1103,7 @@ export default function BowlingApp() {
               {/* BW view */}
               {tableSubView === 'bw' && tableConfirmed ? (
                 <>
-                  <div className="flex items-center gap-3 rounded-[1.3rem] border border-lane-200 bg-white/90 px-4 py-2.5">
+                  <div className="flex items-center gap-3 section-card px-4 py-2.5">
                     <label className="text-xs font-medium text-lane-700 whitespace-nowrap" htmlFor="bw-threshold">S/W Schwelle</label>
                     <input id="bw-threshold" type="range" min={10} max={240} step={1} value={bwThreshold} onChange={(e) => setBwThreshold(Number(e.target.value))} className="flex-1" />
                     <span className="min-w-[2.5rem] text-right text-xs font-mono text-lane-600">{bwThreshold}</span>
@@ -1132,7 +1132,7 @@ export default function BowlingApp() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
-                    <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button"
+                    <button className="back-button" type="button"
                       onClick={() => { setTableSubView('morph-horizontal'); }}>← Linien anpassen</button>
                     <button className="rounded-full bg-lane-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60"
                       type="button" onClick={handleExtract} disabled={extracting}>
@@ -1233,7 +1233,7 @@ export default function BowlingApp() {
                             onClick={() => setShowSaveForm(true)}>Ergebnis speichern</button>
                         </div>
                       ) : (
-                        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+                        <div className="section-card p-4">
                           <h3 className="mb-3 text-sm font-semibold text-lane-800">Spieldetails ergänzen</h3>
                           <div className="flex flex-wrap items-end gap-3">
                             <div className="flex flex-col gap-1">
@@ -1246,7 +1246,7 @@ export default function BowlingApp() {
                             </div>
                             <button className="rounded-full bg-lane-800 px-5 py-2 text-sm font-medium text-white transition hover:bg-lane-700 disabled:cursor-not-allowed disabled:opacity-60" type="button"
                               disabled={!saveLocation.trim() || !saveDate || saving} onClick={handleSaveGame}>{saving ? 'Speichert...' : 'Jetzt speichern'}</button>
-                            <button className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" type="button" onClick={() => setShowSaveForm(false)}>Abbrechen</button>
+                            <button className="back-button" type="button" onClick={() => setShowSaveForm(false)}>Abbrechen</button>
                           </div>
                         </div>
                       )}
@@ -1260,7 +1260,7 @@ export default function BowlingApp() {
                         <p className="font-semibold">Gespeichert!</p>
                         <p className="mt-1">Spiel #{savedGame.id} — {savedGame.location}, {savedGame.played_at} — {savedGame.scores.length} Spieler</p>
                       </div>
-                      <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+                      <div className="section-card p-4">
                         <div className="mb-3 flex items-center justify-between">
                           <h3 className="text-sm font-semibold text-lane-800">Punkteverlauf</h3>
                           <div className="flex items-center gap-4 text-xs text-lane-600">

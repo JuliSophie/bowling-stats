@@ -1226,3 +1226,112 @@ export const playerDay = {
     'Mittelspur des Elends: niemand hupt, niemand applaudiert.',
   ],
 } as const;
+
+// --- Game excitement: tension index commentary ---
+export const excitement = {
+  insane: [
+    'das war kein Bowling, das war ein Tatort mit Kugeln.',
+    'dieses Spiel hat mehr Wendungen als ein Krimi von Netflix. Aber schlechter geschrieben.',
+    'wenn dieses Spiel ein Film wäre, würde niemand die Handlung glauben.',
+    'extremer Spannungsbogen. Wer danach nicht verschwitzt ist, hat nicht aufgepasst.',
+    'Herzfrequenzmesser empfohlen. Dieses Spiel war grenzwertig gesundheitsgefährdend.',
+    'Wahnsinn. Dieses Spiel könnte als Therapiesitzung abgerechnet werden.',
+    'der Bowling-Gott hat heute sein Meisterwerk aus Chaos und Chaos geschrieben.',
+    'so ein Spiel passiert einmal im Leben. Leider.',
+  ],
+  thrilling: [
+    'richtig spannend! Da wurde mehr gezittert als auf einer Hängebrücke.',
+    'ordentlich Drama. Die Pins waren heute nur Statisten.',
+    'das Spiel hatte mehr Spannung als die meisten Ehen.',
+    'echtes Duell. Da konnte man den Puls am Schuhregal messen.',
+    'so ein Spiel erzählt man dreimal nach. Jedes Mal anders, jedes Mal besser.',
+    'Spannung pur. Die Rinne war heute der spannendste Ort der Halle.',
+    'man sagt, Bowling sei kein Kontaktsport. Nach diesem Spiel bin ich mir nicht sicher.',
+  ],
+  decent: [
+    'ganz ordentlich spannend. Nicht Netflix, aber auch nicht Mittagsschlaf.',
+    'ein bisschen Spannung war drin. Genug zum Anschauen, zu wenig zum Erzählen.',
+    'es gab Momente. Nicht viele, aber sie waren da.',
+    'das Spiel hatte einen Puls. Nicht stark, aber messbar.',
+    'Mittelspannung. Wie ein Tatort, bei dem man den Mörder ab Minute fünf kennt.',
+    'genug Drama für einen WhatsApp-Status, aber zu wenig für einen Post.',
+  ],
+  boring: [
+    'spannend wie eine Steuerprüfung. Einer hat dominiert, der Rest hat zugeschaut.',
+    'das war weniger Duell, mehr Vorführung.',
+    'so einseitig, dass die Zuschauer zwischendurch ihr Handy rausgeholt haben.',
+    'Spannung war heute leider im Nachbarbowling.',
+    'einer hat gespielt, die anderen haben applaudiert. Aus Höflichkeit.',
+    'dieses Spiel war so einseitig, es hätte eine Pressemitteilung sein können.',
+    'der Spannungsbogen war so flach, er hätte als Parkplatz durchgehen können.',
+    'das einzig Dramatische war der Bierpreis.',
+  ],
+} as const;
+
+// --- Match report: comeback commentary ---
+export const gameComeback = {
+  epic: (pins: number) => [
+    `${pins} Pins Rückstand aufgeholt. Das ist kein Comeback, das ist ein Vergeltungsschlag.`,
+    `${pins} Pins gutgemacht. Lazarus hätte applaudiert.`,
+    `${pins} Pins Rückstand waren offenbar nur Motivation. Kranker Typ.`,
+    `nach ${pins} Pins Rückstand noch gewonnen — wer aufgibt, verpasst solche Momente.`,
+    `${pins} Pins Rückstand? Kein Problem. In einer normalen Welt wäre das unmöglich. Willkommen im Bowling.`,
+  ] as const,
+  solid: (pins: number) => [
+    `${pins} Pins Rückstand aufgeholt. Respektable Aufholjagd.`,
+    `nach ${pins} Pins Rückstand nicht aufgegeben. Mentale Stärke — oder einfach Sturheit.`,
+    `${pins} Pins gutgemacht. Das war kein Glück, das war kontrollierter Zorn.`,
+    `${pins} Pins Rückstand verkraftet. Der Charakter hat den Arm geführt, nicht das Talent.`,
+  ] as const,
+  minor: (pins: number) => [
+    `${pins} Pins Rückstand aufgeholt. Nett, aber die anderen haben auch einfach nachgelassen.`,
+    `kleines Comeback mit ${pins} Pins. Immerhin war der Wille da.`,
+    `${pins} Pins gutgemacht. Klein, aber fein — und vermutlich versehentlich.`,
+  ] as const,
+} as const;
+
+// --- Match report: lead commentary ---
+export const bigLead = {
+  dominant: (margin: number, name: string) => [
+    `${margin} Pins Vorsprung. ${name} hat nicht gespielt, ${name} hat vorgeführt.`,
+    `${margin} Pins — das ist kein Vorsprung, das ist eine Demütigung in Zeitlupe.`,
+    `${name} mit ${margin} Pins Abstand. Die anderen durften mitspielen, aber nur aus Höflichkeit.`,
+    `${margin} Pins Vorsprung. Das ist der Punkt, an dem Freundschaften enden und Therapien beginnen.`,
+    `${margin} Pins vorne. ${name} hat das Spiel so dominiert, die Bahn wollte danach eine Raucherpause.`,
+  ] as const,
+  clear: (margin: number, name: string) => [
+    `${margin} Pins Vorsprung durch ${name}. Deutlich, aber nicht demütigend. Fast.`,
+    `${name} mit ${margin} Pins Polster. Genug, um lässig Bier zu holen.`,
+    `${margin} Pins vorne — klare Ansage, ohne dass jemand weinen musste.`,
+  ] as const,
+  narrow: (margin: number) => [
+    `nur ${margin} Pins Vorsprung. Da musste jeder Wurf sitzen.`,
+    `${margin} Pins — Vorsprung ja, Sicherheit nein. Ein Wimpernschlag.`,
+    `${margin} Pins Unterschied. Das ist so knapp, die Pins haben mitgezählt.`,
+  ] as const,
+} as const;
+
+// --- Match report: closest moment ---
+export const closestMoment = {
+  nailBiter: (margin: number, frame: number) => [
+    `nach Frame ${frame} nur ${margin} Pins Unterschied — da hat der Puls kurz einen Zacken zugelegt.`,
+    `${margin} Pins nach Frame ${frame}. So knapp, dass man die Schweißtropfen auf der Kugel hören konnte.`,
+    `Frame ${frame}: nur ${margin} Pin${margin !== 1 ? 's' : ''} Abstand. Da wurde es still in der Halle. Oder laut. Beides.`,
+  ] as const,
+  tight: (margin: number, frame: number) => [
+    `nach Frame ${frame} nur ${margin} Pins Unterschied. Eng genug, um nervös zu werden.`,
+    `${margin} Pins nach Frame ${frame}. Das war der Moment, in dem alle aufhörten zu reden.`,
+  ] as const,
+} as const;
+
+// --- Match report: late drama (leader swap after frame 9) ---
+export const lateDrama = {
+  leaderLost: (leader: string, winner: string) => [
+    `${leader} führte nach Frame 9 und hat es im Finale noch verbockt. ${winner} sagt danke und lacht.`,
+    `${leader} hatte es in der Hand und ließ es fallen. Wortwörtlich. ${winner} nimmt den Sieg dankend an.`,
+    `Plot-Twist im 10. Frame: ${leader} kollabiert, ${winner} übernimmt. Kaltblütig.`,
+    `${leader} lag vorne, ${winner} hat im letzten Frame den Überholvorgang eingeleitet. Ohne Blinker.`,
+    `Wer nach Frame 9 führt und noch verliert, hat sich das selbst zuzuschreiben. Schöne Grüße, ${winner}.`,
+    `${leader} hatte den Sieg in der Tasche. Leider hatte die Tasche ein Loch. ${winner} profitiert.`,
+  ] as const,
+} as const;

@@ -59,26 +59,23 @@ cd frontend && npx tsc --noEmit
 - **Charts** use Recharts with custom bowling pin SVG dots (`PinDot`) for strikes/spares and a color palette constant (`PLAYER_COLORS`)
 - **Navigation** uses a `NavigationMemory` component in the root layout for back-button state tracking
 
-## Known Duplication (Extraction Opportunities)
+## Shared Modules
 
-The codebase evolved from a monolithic `stats-view.tsx` (1577 lines) into separate page routes via copy-paste. These patterns are duplicated across 3-5 files each:
+Reusable utilities and UI components extracted from the page routes:
 
-| Pattern | Files containing copies |
-|---|---|
-| `InfoTip` (tooltip component) | days/[date], players/[name], stats-view |
-| `BenchmarkBar` + `StatCard` | days/[date], players/[name], stats-view |
-| `ScoreTable` (frame grid) | games/[id], stats-view, game-chart |
-| `PinDot` + `PIN_LEGEND` (SVG bowling pin) | games/[id], stats-view, game-chart |
-| `ChartToggle` button | days/[date], games/[id], stats-view, game-chart |
-| `PLAYER_COLORS` constant | days/[date], players/[name], games/[id], stats-view, game-chart |
-| `isOpenFrame`, `getFrameType`, `median`, `parseCumulative` | days/[date], players/[name], players list, stats-view, game-chart |
-| `derivePlayerSummaries`, `computeDayPlayerStats` | days/[date], players/[name], players list, stats-view |
-| Page shell + loading skeleton | all 6 stats pages |
+**Utilities (`lib/`):**
+- `constants.ts` — `PLAYER_COLORS` (8-color palette)
+- `frame-utils.ts` — bowling math: `getFrameType`, `isOpenFrame`, `isStrikeFrame`, `isSpareFrame`, `median`, `parseCumulative`, `formatNullableScore`, `parseThrowPins`, `getFirstThrowPins`, `getFramePoints`, `getPlayerGames`
+- `player-stats.ts` — `derivePlayerSummaries` (full `PlayerSummary` type), `buildPlayerTrendData`
 
-Recommended shared modules if extracting:
-- `lib/frame-utils.ts` — bowling math helpers and `PLAYER_COLORS`
-- `components/ui/stat-card.tsx` — `StatCard`, `BenchmarkBar`, `InfoTip`
-- `components/score-table.tsx` — frame score grid
-- `components/pin-dot.tsx` — `PinDot` SVG + `PIN_LEGEND`
-- `components/ui/chart-toggle.tsx` — chart mode toggle button
-- `lib/player-stats.ts` — `derivePlayerSummaries`, `computeDayPlayerStats`
+**UI Components (`components/ui/`):**
+- `info-tip.tsx` — portal-based tooltip triggered by an "i" button
+- `benchmark-bar.tsx` — colored progress bar driven by `StatBenchmark`
+- `stat-card.tsx` — `StatCard` (label/value with optional benchmark, info tooltip, link) + `InsightCard` (larger value variant)
+- `chart-toggle.tsx` — pill-shaped toggle button for chart options
+
+**Chart/Table Components (`components/`):**
+- `pin-dot.tsx` — `PinDot` (SVG bowling pin for Recharts dots) + `PIN_LEGEND`
+- `score-table.tsx` — bowling frame score grid table
+
+**Legacy:** `stats-view.tsx` (~1400 lines) now imports from these shared modules but retains its own `InfoTip` and `StatCard` variants (different styling). It should eventually be retired in favor of the dedicated page routes.

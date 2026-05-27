@@ -1,14 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
 import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames, renamePlayer } from '@/lib/api';
 import {
-  benchmarkToneClass,
   clampPercent,
   comebackInfo,
   countPerGameBenchmark,
@@ -30,6 +28,10 @@ import {
   type StatBenchmark,
 } from '@/lib/trash-talk';
 import type { GameRead, FrameData } from '@/types';
+import { isStrikeFrame, isSpareFrame, median, parseCumulative, getFirstThrowPins, getFramePoints, formatNullableScore, getPlayerGames } from '@/lib/frame-utils';
+import { type PlayerSummary, derivePlayerSummaries, buildPlayerTrendData } from '@/lib/player-stats';
+import InfoTip from '@/components/ui/info-tip';
+import { StatCard, InsightCard } from '@/components/ui/stat-card';
 import {
   Line,
   LineChart,
@@ -41,17 +43,6 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-
-type PlayerSummary = {
-  name: string;
-  gamesPlayed: number;
-  wins: number;
-  avgScore: number;
-  medianScore: number;
-  maxScore: number;
-  lastPlayed: string;
-  openFrameRate: number;
-};
 
 type PlayerAdvancedStats = {
   finishStrength: number;
@@ -103,55 +94,9 @@ type PlayerScoreHeatmapData = {
   worstGame: PlayerScoreHeatmapGameLine | null;
 };
 
-function isOpenFrame(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 !== 'x' && throw2 !== 'x' && throw2 !== '/';
-}
-
-function median(values: number[]) {
-  if (values.length === 0) return 0;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-}
-
 function signedDelta(value: number) {
   if (value === 0) return '±0';
   return value > 0 ? `+${value}` : String(value);
-}
-
-function parseThrowPins(value: unknown) {
-  const text = String(value ?? '').trim().toLowerCase();
-  if (!text || text === '-' || text === 'f') return 0;
-  if (text === 'x') return 10;
-  const parsed = parseInt(text, 10);
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function isStrikeFrame(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 === 'x' || throw2 === 'x';
-}
-
-function isSpareFrame(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  return throw1 !== 'x' && throw2 !== 'x' && throw2 === '/';
-}
-
-function getFirstThrowPins(frame: FrameData) {
-  const throw1 = String(frame.throw1 ?? '').trim().toLowerCase();
-  const throw2 = String(frame.throw2 ?? '').trim().toLowerCase();
-  if (!throw1 && throw2 === 'x') return 10;
-  return parseThrowPins(frame.throw1);
-}
-
-function getFramePoints(frame: FrameData, previousCumulative: number) {
-  const cumulative = parseInt(String(frame.cumulative ?? ''), 10);
-  if (Number.isNaN(cumulative)) return null;
-  return cumulative - previousCumulative;
 }
 
 function average(values: number[]) {
@@ -162,11 +107,6 @@ function average(values: number[]) {
 function averageOrNull(values: number[]) {
   if (values.length === 0) return null;
   return Math.round(average(values) * 10) / 10;
-}
-
-function formatNullableScore(value: number | null) {
-  if (value === null) return '–';
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function buildBestStrikeStreakLabel(streak: number) {
@@ -337,51 +277,6 @@ function formatSignedPercent(value: number) {
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
-function derivePlayerSummaries(games: GameRead[]): PlayerSummary[] {
-  const map = new Map<string, { scores: number[]; wins: number; lastPlayed: string; openFrames: number; totalFrames: number }>();
-  for (const game of games) {
-    const highScore = Math.max(...game.scores.map((score) => score.total_score));
-    for (const score of game.scores) {
-      const entry = map.get(score.player_name) ?? { scores: [], wins: 0, lastPlayed: game.played_at, openFrames: 0, totalFrames: 0 };
-      entry.scores.push(score.total_score);
-      if (score.total_score === highScore) entry.wins++;
-      entry.openFrames += score.frames.filter(isOpenFrame).length;
-      entry.totalFrames += score.frames.length;
-      if (game.played_at > entry.lastPlayed) entry.lastPlayed = game.played_at;
-      map.set(score.player_name, entry);
-    }
-  }
-  return [...map.entries()]
-    .map(([name, { scores, wins, lastPlayed, openFrames, totalFrames }]) => ({
-      name,
-      gamesPlayed: scores.length,
-      wins,
-      avgScore: Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10,
-      medianScore: Math.round(median(scores) * 10) / 10,
-      maxScore: Math.max(...scores),
-      lastPlayed,
-      openFrameRate: totalFrames > 0 ? Math.round((openFrames / totalFrames) * 1000) / 10 : 0,
-    }))
-    .sort((a, b) => b.avgScore - a.avgScore);
-}
-
-function getPlayerGames(games: GameRead[], playerName: string): GameRead[] {
-  return games.filter((g) => g.scores.some((s) => s.player_name === playerName));
-}
-
-function buildPlayerTrendData(games: GameRead[], playerName: string): Record<string, string | number>[] {
-  return getPlayerGames(games, playerName)
-    .slice()
-    .sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id)
-    .map((game, i) => ({
-      label: `${game.played_at}\n${game.location}`,
-      index: i + 1,
-      score: game.scores.find((s) => s.player_name === playerName)?.total_score ?? 0,
-    }));
-}
-
-const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2', '#be123c'];
-
 function buildPlayerGameHistoryChart(games: GameRead[], playerName: string) {
   const sortedGames = getPlayerGames(games, playerName).slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
   const lines = sortedGames.map((game, index) => ({
@@ -401,11 +296,6 @@ function buildPlayerGameHistoryChart(games: GameRead[], playerName: string) {
   });
 
   return { data, lines };
-}
-
-function parseCumulative(frame: FrameData) {
-  const value = parseInt(String(frame.cumulative ?? ''), 10);
-  return Number.isNaN(value) ? null : value;
 }
 
 function buildPlayerScoreHeatmap(games: GameRead[], playerName: string): PlayerScoreHeatmapData {
@@ -596,126 +486,6 @@ function PlayerScoreHeatmap({ chart }: { chart: PlayerScoreHeatmapData }) {
   );
 }
 
-function InfoTip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const [panelPosition, setPanelPosition] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
-
-  const positionPanel = (button: HTMLButtonElement) => {
-    const rect = button.getBoundingClientRect();
-    const margin = 16;
-    const width = Math.min(256, window.innerWidth - margin * 2);
-    const left = Math.min(Math.max(rect.right - width, margin), window.innerWidth - width - margin);
-    if (rect.bottom + 190 > window.innerHeight && rect.top > window.innerHeight / 2) {
-      setPanelPosition({ left, bottom: window.innerHeight - rect.top + 8, width });
-    } else {
-      setPanelPosition({ left, top: rect.bottom + 8, width });
-    }
-  };
-
-  return (
-    <span className="relative inline-flex">
-      <button
-        type="button"
-        className="info-tip-button"
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!open) positionPanel(event.currentTarget);
-          setOpen((value) => !value);
-        }}
-        onBlur={() => {
-          setOpen(false);
-          setPanelPosition(null);
-        }}
-        aria-label="Info"
-      >
-        i
-      </button>
-      {open && panelPosition && createPortal(
-        <span className="info-tip-panel" style={{ left: panelPosition.left, top: panelPosition.top, bottom: panelPosition.bottom, width: panelPosition.width }}>
-          {text}
-        </span>,
-        document.body,
-      )}
-    </span>
-  );
-}
-
-function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
-  return (
-    <div className="mt-2">
-      <div className="h-1.5 overflow-hidden rounded-full bg-lane-200">
-        <div className={`h-full rounded-full ${benchmarkToneClass(benchmark.tone)}`} style={{ width: `${benchmark.percent}%` }} />
-      </div>
-      <p className="mt-1 text-[0.68rem] font-semibold text-lane-500">
-        {benchmark.label}{benchmark.detail ? ` · ${benchmark.detail}` : ''}
-      </p>
-    </div>
-  );
-}
-
-function StatCard({ label, value, sub, info, benchmark, href }: { label: string; value: string | number; sub?: string; info?: string; benchmark?: StatBenchmark; href?: string }) {
-  const content = (
-    <>
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-xs text-lane-600">{label}</p>
-        {info && !href && <InfoTip text={info} />}
-      </div>
-      <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
-      {sub && <p className="text-xs text-lane-400">{sub}</p>}
-      {benchmark && <BenchmarkBar benchmark={benchmark} />}
-    </>
-  );
-
-  if (href) {
-    return (
-      <div className="relative">
-        <Link href={href} className="block rounded-lg border border-lane-200 bg-lane-50 p-3 pr-10 transition hover:-translate-y-0.5 hover:border-lane-300 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-700/30">
-          {content}
-        </Link>
-        {info && <span className="absolute right-3 top-3"><InfoTip text={info} /></span>}
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-      {content}
-    </div>
-  );
-}
-
-function InsightCard({ title, value, description, info, benchmark, href }: { title: string; value: string; description: string; info: string; benchmark?: StatBenchmark; href?: string }) {
-  const content = (
-    <>
-      <div className="flex items-center justify-between gap-1.5">
-        <p className="text-xs font-semibold text-lane-600">{title}</p>
-        {!href && <InfoTip text={info} />}
-      </div>
-      <p className="mt-1 text-2xl font-black text-lane-900">{value}</p>
-      <p className="mt-1 text-xs text-lane-500">{description}</p>
-      {benchmark && <BenchmarkBar benchmark={benchmark} />}
-    </>
-  );
-
-  if (href) {
-    return (
-      <div className="relative">
-        <Link href={href} className="block rounded-lg border border-lane-200 bg-lane-50 p-3 pr-10 transition hover:-translate-y-0.5 hover:border-lane-300 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-700/30">
-          {content}
-        </Link>
-        <span className="absolute right-3 top-3"><InfoTip text={info} /></span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
-      {content}
-    </div>
-  );
-}
-
 export default function PlayerDetailPage({ params }: { params: Promise<{ name: string }> }) {
   const [games, setGames] = useState<GameRead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -788,9 +558,9 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <BackButton className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
+        <BackButton className="flex items-center gap-1.5 self-start back-button" />
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               {isEditing ? (
@@ -812,7 +582,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
                   </button>
                   <button
                     type="button"
-                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    className="back-button"
                     onClick={() => {
                       setIsEditing(false);
                       setEditingName(playerName);
@@ -827,7 +597,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
                   <h1 className="text-2xl font-bold text-lane-900">{playerName}</h1>
                   <button
                     type="button"
-                    className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-lane-50"
+                    className="back-button"
                     onClick={() => {
                       setEditingName(playerName);
                       setIsEditing(true);
@@ -856,7 +626,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
           )}
         </div>
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
+        <div className="section-card p-5">
           <h2 className="text-lg font-semibold text-lane-800">Konstanz & Muster</h2>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <InsightCard
@@ -964,7 +734,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
         </div>
 
         {trendData.length > 1 && (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+          <div className="section-card p-4">
             <h2 className="mb-3 text-lg font-semibold text-lane-800">Punkte pro Spiel</h2>
             <div style={{ touchAction: 'none' }}>
               <ResponsiveContainer width="100%" height={280}>
@@ -994,7 +764,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
         )}
 
         {scoreHeatmap.frames.some((frame) => frame.samples > 0) && (
-          <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+          <div className="section-card p-4">
             <div className="mb-3">
               <h2 className="text-lg font-semibold text-lane-800">Alle Spiele als Score-Heatmap</h2>
               <p className="mt-1 text-xs text-lane-600">Verteilung der kumulativen Punkte pro Frame: Spanne, typische Bereiche, Durchschnitt sowie bestes und schlechtestes Spiel.</p>
@@ -1003,7 +773,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
           </div>
         )}
 
-        <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
+        <div className="section-card p-4">
           <h2 className="mb-3 text-lg font-semibold text-lane-800">Spiele ({playerGames.length})</h2>
           <div className="space-y-2">
             {playerGames.map((game) => (
