@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 import tempfile
 from pathlib import Path
 
@@ -219,6 +220,50 @@ class ImagePreprocessor:
         return text
 
     @staticmethod
+    def _normalize_throw_text(text: str, is_first_throw: bool) -> str:
+        value = text.strip()
+        if not value:
+            return ""
+
+        if "/" in value:
+            return "-" if is_first_throw else "/"
+
+        normalized = value.replace("–", "-").replace("—", "-")
+        if "x" in normalized.lower():
+            return "X"
+        if "-" in normalized:
+            return "-"
+
+        digit_groups = re.findall(r"\d+", normalized)
+        if not digit_groups:
+            return ""
+
+        digits = digit_groups[0].replace("0", "8")
+        if len(digits) != 1:
+            return ""
+
+        throw_value = int(digits)
+        if throw_value > 9:
+            return ""
+        return str(throw_value)
+
+    @staticmethod
+    def _normalize_cumulative_text(text: str, frame_index: int) -> str:
+        value = text.strip()
+        if not value:
+            return ""
+
+        digit_groups = re.findall(r"\d+", value)
+        if not digit_groups:
+            return ""
+
+        score_value = int("".join(digit_groups))
+        max_possible_score = min((frame_index + 1) * 30, 300)
+        if score_value > max_possible_score:
+            return ""
+        return str(score_value)
+
+    @staticmethod
     def extract_from_grid(
         rectified_bw: np.ndarray,
         bw_threshold: int,
@@ -241,7 +286,7 @@ class ImagePreprocessor:
             return []
 
         frame_cols = [c for c in cols if c > 0]
-        throw_chars = "0123456789-xX"
+        throw_chars = "0123456789-/xX"
         score_chars = "0123456789"
 
         def crop(cell: dict) -> np.ndarray:
@@ -322,7 +367,8 @@ class ImagePreprocessor:
                         cr = crop(sc)
                         if ImagePreprocessor._has_content(cr, threshold=0.01):
                             row_has_frame_content = True
-                            throws.append(ImagePreprocessor._ocr_crop(cr, allowlist=throw_chars, content_threshold=0.01))
+                            raw_throw = ImagePreprocessor._ocr_crop(cr, allowlist=throw_chars, content_threshold=0.01)
+                            throws.append(ImagePreprocessor._normalize_throw_text(raw_throw, is_first_throw=si == 0))
                         else:
                             throws.append("")
                     else:
@@ -334,7 +380,8 @@ class ImagePreprocessor:
                     cr = crop(cum_cell)
                     if ImagePreprocessor._has_content(cr, threshold=0.012):
                         row_has_frame_content = True
-                        cum = ImagePreprocessor._ocr_crop(cr, allowlist=score_chars, content_threshold=0.012)
+                        raw_cum = ImagePreprocessor._ocr_crop(cr, allowlist=score_chars, content_threshold=0.012)
+                        cum = ImagePreprocessor._normalize_cumulative_text(raw_cum, frame_index=frame_cols.index(col))
 
                 if is_last:
                     frames.append(FrameData(

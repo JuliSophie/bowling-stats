@@ -543,7 +543,7 @@ function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?
             <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
             <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-            <Tooltip labelFormatter={() => ''} />
+            <Tooltip labelFormatter={() => ''} itemSorter={(item) => -Number(item.value ?? 0)} />
             <Legend />
             {game.scores.map((score, i) => (
               <Line

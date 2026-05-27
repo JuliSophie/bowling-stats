@@ -415,6 +415,48 @@ export default function UploadView() {
 
   const tableConfirmed = tableBuildResult !== null && !!tableBuildResult.rectified_bw_data_url;
 
+  const resetUploadForm = useCallback(() => {
+    setUploadedFile(null);
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return '';
+    });
+    setManualCorners([]);
+    setActiveCornerIndex(null);
+    setDraggingCornerIndex(null);
+    setRectifiedPreview(null);
+    setStep(1);
+    setTableSubView('morph-horizontal');
+    setSelectedHLines([]);
+    setSelectedVLines([]);
+    setFocusedLine(null);
+    setMovingLine(false);
+    setDraggingEndpoint(null);
+    setFocusPosition(null);
+    setTableBuildResult(null);
+    setBuildingTable(false);
+    setCornerWarnings([]);
+    setGuessingCorners(false);
+    setRectifying(false);
+    setStatusMessage('');
+    setErrorMessage('');
+    setExtractionResult(null);
+    setExtracting(false);
+    setBwThreshold(75);
+    setShowRowCrops(true);
+    setShowSaveForm(false);
+    setSaveDate(new Date().toISOString().slice(0, 10));
+    setSaveLocation('Squash House');
+    setSaving(false);
+    setSavedGame(null);
+    setBwCanvasReady(false);
+    setMagnifierPos(null);
+    bwBaseImageRef.current = null;
+    morphImageRef.current = null;
+    hMorphDataRef.current = null;
+    vMorphDataRef.current = null;
+  }, []);
+
   const applyThresholdToCanvas = useCallback(() => {
     const canvas = bwCanvasRef.current;
     const img = bwBaseImageRef.current;
@@ -440,6 +482,11 @@ export default function UploadView() {
     const id = setInterval(() => checkApiHealth().then(setApiOnline), 30000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    window.addEventListener('bowling:reset-upload', resetUploadForm);
+    return () => window.removeEventListener('bowling:reset-upload', resetUploadForm);
+  }, [resetUploadForm]);
 
   useEffect(() => {
     setBwCanvasReady(false);
@@ -535,7 +582,7 @@ export default function UploadView() {
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    resetUploadForm();
     setErrorMessage(''); setStatusMessage('Monitor-Ecken werden gesucht...');
     setUploadedFile(file); setPreviewUrl(URL.createObjectURL(file));
     setManualCorners([]); setActiveCornerIndex(null); setDraggingCornerIndex(null);

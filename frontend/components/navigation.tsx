@@ -61,6 +61,14 @@ export default function Navigation() {
     return pathname === path || pathname.startsWith(`${path}/`);
   };
 
+  const handleUploadClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (pathname !== '/upload') return;
+
+    event.preventDefault();
+    window.dispatchEvent(new CustomEvent('bowling:reset-upload'));
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  };
+
   return (
     <>
       <header className="sticky top-0 z-40 border-b px-4 py-3 shadow-[0_10px_40px_rgba(0,0,0,0.14)] backdrop-blur-2xl sm:px-6 lg:px-8" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)', color: '#fff4e6' }}>
@@ -99,7 +107,7 @@ export default function Navigation() {
             >
               {theme === 'dark' ? '☀' : '☾'}
             </button>
-            <Link href="/upload" className="inline-flex rounded-full bg-coral px-3 py-2 text-sm font-black text-lane-950 shadow-[0_10px_22px_rgba(255,140,105,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9d80] sm:px-4">
+            <Link href="/upload" onClick={handleUploadClick} className="inline-flex rounded-full bg-coral px-3 py-2 text-sm font-black text-lane-950 shadow-[0_10px_22px_rgba(255,140,105,0.22)] transition hover:-translate-y-0.5 hover:bg-[#ff9d80] sm:px-4">
               <span className="sm:hidden">Upload</span>
               <span className="hidden sm:inline">Neuer Upload</span>
             </Link>

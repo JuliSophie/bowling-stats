@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
+import { BackButton } from '@/components/navigation-memory';
 import { fetchGames, renamePlayer } from '@/lib/api';
 import {
   benchmarkToneClass,
@@ -37,6 +38,7 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts';
 
 type PlayerSummary = {
@@ -67,9 +69,37 @@ type PlayerAdvancedStats = {
   totalSpares: number;
   avgPointsPerSpare: number;
   bestWinningPoints: number | null;
+  bestWinningPointsGameId: number | null;
   lowestWinningPoints: number | null;
+  lowestWinningPointsGameId: number | null;
   averageWinningPoints: number | null;
   highestLosingPoints: number | null;
+  highestLosingPointsGameId: number | null;
+  bestStrikeStreakGameId: number | null;
+};
+
+type PlayerScoreHeatmapFrame = {
+  frame: number;
+  min: number;
+  max: number;
+  avg: number;
+  median: number;
+  samples: number;
+  bins: { score: number; count: number; opacity: number }[];
+};
+
+type PlayerScoreHeatmapGameLine = {
+  label: string;
+  total: number;
+  values: (number | null)[];
+};
+
+type PlayerScoreHeatmapData = {
+  frames: PlayerScoreHeatmapFrame[];
+  maxScore: number;
+  binSize: number;
+  bestGame: PlayerScoreHeatmapGameLine | null;
+  worstGame: PlayerScoreHeatmapGameLine | null;
 };
 
 function isOpenFrame(frame: FrameData) {
@@ -165,6 +195,10 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
   let comebackOpportunities = 0;
   let comebackSuccesses = 0;
   let bestStrikeStreak = 0;
+  let bestStrikeStreakGameId: number | null = null;
+  let bestWinningPointsGameId: number | null = null;
+  let lowestWinningPointsGameId: number | null = null;
+  let highestLosingPointsGameId: number | null = null;
   let secondThrowAttempts = 0;
   let secondThrowZeroes = 0;
 
@@ -176,9 +210,18 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
     if (playerScore.total_score === highScore) {
       wins++;
       winningScores.push(playerScore.total_score);
+      if (bestWinningPointsGameId === null || playerScore.total_score > Math.max(...winningScores.slice(0, -1), Number.NEGATIVE_INFINITY)) {
+        bestWinningPointsGameId = game.id;
+      }
+      if (lowestWinningPointsGameId === null || playerScore.total_score < Math.min(...winningScores.slice(0, -1), Number.POSITIVE_INFINITY)) {
+        lowestWinningPointsGameId = game.id;
+      }
     } else {
       losses++;
       losingScores.push(playerScore.total_score);
+      if (highestLosingPointsGameId === null || playerScore.total_score > Math.max(...losingScores.slice(0, -1), Number.NEGATIVE_INFINITY)) {
+        highestLosingPointsGameId = game.id;
+      }
     }
     gameScores.push(playerScore.total_score);
 
@@ -202,7 +245,10 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
       if (strike) {
         totalStrikes++;
         runningStrikeStreak++;
-        if (runningStrikeStreak > bestStrikeStreak) bestStrikeStreak = runningStrikeStreak;
+        if (runningStrikeStreak > bestStrikeStreak) {
+          bestStrikeStreak = runningStrikeStreak;
+          bestStrikeStreakGameId = game.id;
+        }
       } else {
         runningStrikeStreak = 0;
       }
@@ -264,9 +310,13 @@ function buildPlayerAdvancedStats(games: GameRead[], playerName: string): Player
     totalSpares,
     avgPointsPerSpare: Math.round(average(spareFramePoints) * 10) / 10,
     bestWinningPoints: winningScores.length > 0 ? Math.max(...winningScores) : null,
+    bestWinningPointsGameId,
     lowestWinningPoints: winningScores.length > 0 ? Math.min(...winningScores) : null,
+    lowestWinningPointsGameId,
     averageWinningPoints: averageOrNull(winningScores),
     highestLosingPoints: losingScores.length > 0 ? Math.max(...losingScores) : null,
+    highestLosingPointsGameId,
+    bestStrikeStreakGameId,
   };
 }
 
@@ -352,6 +402,199 @@ function buildPlayerGameHistoryChart(games: GameRead[], playerName: string) {
   return { data, lines };
 }
 
+function parseCumulative(frame: FrameData) {
+  const value = parseInt(String(frame.cumulative ?? ''), 10);
+  return Number.isNaN(value) ? null : value;
+}
+
+function buildPlayerScoreHeatmap(games: GameRead[], playerName: string): PlayerScoreHeatmapData {
+  const sortedGames = getPlayerGames(games, playerName).slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const gamesWithScores = sortedGames.map((game, index) => {
+    const score = game.scores.find((entry) => entry.player_name === playerName);
+    return {
+      label: `Spiel ${index + 1} · ${game.played_at}`,
+      total: score?.total_score ?? 0,
+      values: Array.from({ length: 10 }, (_, frameIndex) => score?.frames[frameIndex] ? parseCumulative(score.frames[frameIndex] as FrameData) : null),
+    };
+  }).filter((game) => game.values.some((value) => value !== null));
+
+  const allValues = gamesWithScores.flatMap((game) => game.values).filter((value): value is number => value !== null);
+  const maxScore = Math.max(100, Math.ceil(((Math.max(...allValues, 0) || 0) + 10) / 25) * 25);
+  const binSize = maxScore > 220 ? 10 : 5;
+
+  const frames = Array.from({ length: 10 }, (_, frameIndex) => {
+    const values = gamesWithScores.map((game) => game.values[frameIndex]).filter((value): value is number => value !== null);
+    const min = values.length > 0 ? Math.min(...values) : 0;
+    const max = values.length > 0 ? Math.max(...values) : 0;
+    const avg = values.length > 0 ? Math.round(average(values) * 10) / 10 : 0;
+    const medianScore = values.length > 0 ? Math.round(median(values) * 10) / 10 : 0;
+    const binCounts = new Map<number, number>();
+
+    values.forEach((value) => {
+      const bin = Math.max(0, Math.min(maxScore - binSize, Math.floor(value / binSize) * binSize));
+      binCounts.set(bin, (binCounts.get(bin) ?? 0) + 1);
+    });
+
+    const maxCount = Math.max(...binCounts.values(), 1);
+    const bins = [...binCounts.entries()].map(([score, count]) => ({
+      score,
+      count,
+      opacity: 0.16 + (count / maxCount) * 0.68,
+    }));
+
+    return { frame: frameIndex + 1, min, max, avg, median: medianScore, samples: values.length, bins };
+  });
+
+  const bestGame = gamesWithScores.reduce<PlayerScoreHeatmapGameLine | null>((best, game) => (!best || game.total > best.total ? game : best), null);
+  const worstGame = gamesWithScores.reduce<PlayerScoreHeatmapGameLine | null>((worst, game) => (!worst || game.total < worst.total ? game : worst), null);
+
+  return { frames, maxScore, binSize, bestGame, worstGame };
+}
+
+function PlayerScoreHeatmap({ chart }: { chart: PlayerScoreHeatmapData }) {
+  const width = 860;
+  const height = 360;
+  const margin = { top: 18, right: 28, bottom: 44, left: 48 };
+  const plotWidth = width - margin.left - margin.right;
+  const plotHeight = height - margin.top - margin.bottom;
+  const frameStep = plotWidth / 10;
+  const yTicks = Array.from({ length: Math.floor(chart.maxScore / 50) + 1 }, (_, index) => index * 50);
+
+  const xCenter = (frame: number) => margin.left + (frame - 0.5) * frameStep;
+  const yForScore = (score: number) => margin.top + ((chart.maxScore - score) / chart.maxScore) * plotHeight;
+  const linePath = (values: (number | null)[]) => values
+    .reduce<string[]>((parts, value, index) => {
+      if (value === null) return parts;
+      parts.push(`${parts.length === 0 ? 'M' : 'L'} ${xCenter(index + 1)} ${yForScore(value)}`);
+      return parts;
+    }, [])
+    .filter(Boolean)
+    .join(' ');
+  const rangePath = chart.frames.length > 0
+    ? `${chart.frames.map((frame, index) => `${index === 0 ? 'M' : 'L'} ${xCenter(frame.frame)} ${yForScore(frame.max)}`).join(' ')} ${chart.frames.slice().reverse().map((frame) => `L ${xCenter(frame.frame)} ${yForScore(frame.min)}`).join(' ')} Z`
+    : '';
+  const bestWorstRangePath = chart.bestGame && chart.worstGame
+    ? `${chart.bestGame.values.map((bestValue, index) => {
+        const worstValue = chart.worstGame?.values[index] ?? null;
+        if (bestValue === null || worstValue === null) return null;
+        return `${index === 0 ? 'M' : 'L'} ${xCenter(index + 1)} ${yForScore(Math.max(bestValue, worstValue))}`;
+      }).filter(Boolean).join(' ')} ${chart.bestGame.values.slice().reverse().map((bestValue, reversedIndex) => {
+        const index = chart.bestGame ? chart.bestGame.values.length - 1 - reversedIndex : 0;
+        const worstValue = chart.worstGame?.values[index] ?? null;
+        if (bestValue === null || worstValue === null) return null;
+        return `L ${xCenter(index + 1)} ${yForScore(Math.min(bestValue, worstValue))}`;
+      }).filter(Boolean).join(' ')} Z`
+    : rangePath;
+  const averagePath = chart.frames.map((frame, index) => `${index === 0 ? 'M' : 'L'} ${xCenter(frame.frame)} ${yForScore(frame.avg)}`).join(' ');
+  const medianPath = chart.frames.map((frame, index) => `${index === 0 ? 'M' : 'L'} ${xCenter(frame.frame)} ${yForScore(frame.median)}`).join(' ');
+  const boundaryForFrame = (frame: PlayerScoreHeatmapFrame, index: number) => {
+    const bestValue = chart.bestGame?.values[index] ?? null;
+    const worstValue = chart.worstGame?.values[index] ?? null;
+    if (bestValue !== null && worstValue !== null) {
+      return { upper: Math.max(bestValue, worstValue), lower: Math.min(bestValue, worstValue) };
+    }
+    return { upper: frame.max, lower: frame.min };
+  };
+  const clampedMedianForFrame = (frame: PlayerScoreHeatmapFrame, index: number) => {
+    const boundary = boundaryForFrame(frame, index);
+    return Math.min(boundary.upper, Math.max(boundary.lower, frame.median));
+  };
+  const interpolatedPath = (side: 'upper' | 'lower', innerRatio: number, outerRatio: number) => {
+    const innerPoints = chart.frames.map((frame, index) => {
+      const boundary = boundaryForFrame(frame, index);
+      const medianScore = clampedMedianForFrame(frame, index);
+      const edgeScore = side === 'upper' ? boundary.upper : boundary.lower;
+      return {
+        x: xCenter(frame.frame),
+        y: yForScore(medianScore + (edgeScore - medianScore) * innerRatio),
+      };
+    });
+    const outerPoints = chart.frames.map((frame, index) => {
+      const boundary = boundaryForFrame(frame, index);
+      const medianScore = clampedMedianForFrame(frame, index);
+      const edgeScore = side === 'upper' ? boundary.upper : boundary.lower;
+      return {
+        x: xCenter(frame.frame),
+        y: yForScore(medianScore + (edgeScore - medianScore) * outerRatio),
+      };
+    });
+
+    return `${innerPoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} ${outerPoints.slice().reverse().map((point) => `L ${point.x} ${point.y}`).join(' ')} Z`;
+  };
+  const heatmapLayers = Array.from({ length: 18 }, (_, index) => {
+    const innerRatio = index / 18;
+    const outerRatio = (index + 1) / 18;
+    const opacity = 0.18 * Math.pow(1 - innerRatio, 1.7);
+
+    return [
+      {
+        key: `upper-${index}`,
+        path: interpolatedPath('upper', innerRatio, outerRatio),
+        opacity,
+      },
+      {
+        key: `lower-${index}`,
+        path: interpolatedPath('lower', innerRatio, outerRatio),
+        opacity,
+      },
+    ];
+  }).flat();
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2 text-xs text-lane-600">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-2.5 w-2.5 rounded-full bg-blue-500" />Häufige Bereiche</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-0.5 w-4 bg-amber-500" />Durchschnitt</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-0.5 w-4 bg-green-600" />Bestes Spiel</span>
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-0.5 w-4 bg-red-600" />Schlechtestes Spiel</span>
+      </div>
+      <div className="overflow-x-auto" style={{ touchAction: 'none' }}>
+        <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[760px] rounded-xl bg-lane-50/80" role="img" aria-label="Heatmap aller Spielverläufe">
+          <defs>
+            <filter id="scoreHeatSoftBlur" x="-8%" y="-8%" width="116%" height="116%">
+              <feGaussianBlur stdDeviation="5" />
+            </filter>
+            <clipPath id="scoreHeatRangeClip">
+              <path d={bestWorstRangePath} />
+            </clipPath>
+          </defs>
+          <rect x={margin.left} y={margin.top} width={plotWidth} height={plotHeight} fill="var(--surface-soft)" />
+          {yTicks.map((tick) => (
+            <g key={tick}>
+              <line x1={margin.left} x2={width - margin.right} y1={yForScore(tick)} y2={yForScore(tick)} stroke="var(--border)" strokeDasharray="3 3" />
+              <text x={margin.left - 10} y={yForScore(tick) + 4} textAnchor="end" className="fill-lane-500 text-[11px]">{tick}</text>
+            </g>
+          ))}
+          {chart.frames.map((frame) => (
+            <g key={frame.frame}>
+              <line x1={xCenter(frame.frame)} x2={xCenter(frame.frame)} y1={margin.top} y2={height - margin.bottom} stroke="var(--border)" opacity={0.65} />
+              <text x={xCenter(frame.frame)} y={height - 18} textAnchor="middle" className="fill-lane-600 text-[12px]">{frame.frame}</text>
+            </g>
+          ))}
+          {rangePath && <path d={rangePath} fill="#93c5fd" opacity={0.08} />}
+          <g clipPath="url(#scoreHeatRangeClip)" filter="url(#scoreHeatSoftBlur)">
+            {heatmapLayers.map((layer) => (
+              <path key={layer.key} d={layer.path} fill="#2563eb" opacity={layer.opacity} />
+            ))}
+            <path d={medianPath} fill="none" stroke="#2563eb" strokeWidth={18} strokeLinecap="round" strokeLinejoin="round" opacity={0.14} />
+          </g>
+          <path d={medianPath} fill="none" stroke="transparent" strokeWidth={1} />
+          <path d={averagePath} fill="none" stroke="#f59e0b" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+          {chart.bestGame && <path d={linePath(chart.bestGame.values)} fill="none" stroke="#16a34a" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round"><title>{`${chart.bestGame.label}: ${chart.bestGame.total}`}</title></path>}
+          {chart.worstGame && <path d={linePath(chart.worstGame.values)} fill="none" stroke="#dc2626" strokeWidth={2.8} strokeLinecap="round" strokeLinejoin="round"><title>{`${chart.worstGame.label}: ${chart.worstGame.total}`}</title></path>}
+          <line x1={margin.left} x2={width - margin.right} y1={height - margin.bottom} y2={height - margin.bottom} stroke="var(--muted)" />
+          <line x1={margin.left} x2={margin.left} y1={margin.top} y2={height - margin.bottom} stroke="var(--muted)" />
+          <text x={width - margin.right} y={height - 4} textAnchor="end" className="fill-lane-500 text-[11px]">Frame</text>
+          <text x={14} y={margin.top + 4} textAnchor="start" className="fill-lane-500 text-[11px]">Punkte</text>
+        </svg>
+      </div>
+      <p className="text-xs text-lane-600">
+        Der Farbverlauf startet an den Best-/Worst-Grenzen und blendet zur unsichtbaren Medianlinie aus; die orange Linie zeigt den Durchschnitt je Frame.
+      </p>
+    </div>
+  );
+}
+
 function InfoTip({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const [panelPosition, setPanelPosition] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
@@ -410,30 +653,64 @@ function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
   );
 }
 
-function StatCard({ label, value, sub, info, benchmark }: { label: string; value: string | number; sub?: string; info?: string; benchmark?: StatBenchmark }) {
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+function StatCard({ label, value, sub, info, benchmark, href }: { label: string; value: string | number; sub?: string; info?: string; benchmark?: StatBenchmark; href?: string }) {
+  const content = (
+    <>
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-lane-600">{label}</p>
-        {info && <InfoTip text={info} />}
+        {info && !href && <InfoTip text={info} />}
       </div>
       <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
       {sub && <p className="text-xs text-lane-400">{sub}</p>}
       {benchmark && <BenchmarkBar benchmark={benchmark} />}
+    </>
+  );
+
+  if (href) {
+    return (
+      <div className="relative">
+        <Link href={href} className="block rounded-lg border border-lane-200 bg-lane-50 p-3 pr-10 transition hover:-translate-y-0.5 hover:border-lane-300 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-700/30">
+          {content}
+        </Link>
+        {info && <span className="absolute right-3 top-3"><InfoTip text={info} /></span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      {content}
     </div>
   );
 }
 
-function InsightCard({ title, value, description, info, benchmark }: { title: string; value: string; description: string; info: string; benchmark?: StatBenchmark }) {
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+function InsightCard({ title, value, description, info, benchmark, href }: { title: string; value: string; description: string; info: string; benchmark?: StatBenchmark; href?: string }) {
+  const content = (
+    <>
       <div className="flex items-center justify-between gap-1.5">
         <p className="text-xs font-semibold text-lane-600">{title}</p>
-        <InfoTip text={info} />
+        {!href && <InfoTip text={info} />}
       </div>
       <p className="mt-1 text-2xl font-black text-lane-900">{value}</p>
       <p className="mt-1 text-xs text-lane-500">{description}</p>
       {benchmark && <BenchmarkBar benchmark={benchmark} />}
+    </>
+  );
+
+  if (href) {
+    return (
+      <div className="relative">
+        <Link href={href} className="block rounded-lg border border-lane-200 bg-lane-50 p-3 pr-10 transition hover:-translate-y-0.5 hover:border-lane-300 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-700/30">
+          {content}
+        </Link>
+        <span className="absolute right-3 top-3"><InfoTip text={info} /></span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      {content}
     </div>
   );
 }
@@ -500,16 +777,16 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
   const summary = derivePlayerSummaries(games).find((p) => p.name === playerName);
   const advanced = buildPlayerAdvancedStats(games, playerName);
   const trendData = buildPlayerTrendData(games, playerName);
-  const gameHistoryChart = buildPlayerGameHistoryChart(games, playerName);
+  const scoreHeatmap = buildPlayerScoreHeatmap(games, playerName);
   const gamesPlayed = summary?.gamesPlayed ?? playerGames.length;
+  const maxScoreGame = summary ? playerGames.find((game) => game.scores.some((score) => score.player_name === playerName && score.total_score === summary.maxScore)) : null;
+  const gameHref = (gameId: number | null | undefined) => gameId == null ? undefined : `/stats/games/${gameId}`;
 
   return (
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <Link href="/" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-          ← Home
-        </Link>
+        <BackButton className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -571,7 +848,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" info="Zählt Spiele, in denen du den höchsten Score hattest. Bei Gleichstand zählt es ebenfalls als Sieg." benchmark={rateBenchmark(summary.gamesPlayed > 0 ? (summary.wins / summary.gamesPlayed) * 100 : 0, 'win')} />
               <StatCard label="Durchschnitt" value={summary.avgScore} info={playerScoreInfo(summary.avgScore, summary.avgScore, 'average')} benchmark={playerScoreBenchmark(summary.avgScore, summary.avgScore, 'average')} />
               <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} info={medianAverageInfo(summary.avgScore, summary.medianScore)} benchmark={medianConsistencyBenchmark(summary.avgScore, summary.medianScore)} />
-              <StatCard label="Bestleistung" value={summary.maxScore} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak')} />
+              <StatCard label="Bestleistung" value={summary.maxScore} href={gameHref(maxScoreGame?.id)} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak')} />
               <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} info="Anteil Frames ohne Strike oder Spare. Niedriger ist besser; offene Frames sind die freundliche Punkte-Spende an alle anderen." benchmark={openFrameBenchmark(summary.openFrameRate)} />
             </div>
           )}
@@ -614,6 +891,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               description={`${advanced.bestStrikeStreak} Strikes am Stück`}
               info="Deine längste Strike-Serie. Ein Turkey ist der Moment, in dem man kurz so tut, als wäre alles Absicht."
               benchmark={streakBenchmark(advanced.bestStrikeStreak)}
+              href={gameHref(advanced.bestStrikeStreakGameId)}
             />
           </div>
 
@@ -655,6 +933,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               description="Höchste Punktzahl bei einem Sieg"
               info={advanced.bestWinningPoints === null || !summary ? 'Dein höchster Score in einem Spiel, das du gewonnen hast. Zeigt, wie hoch dein Sieger-Peak war.' : playerScoreInfo(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
               benchmark={advanced.bestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
+              href={gameHref(advanced.bestWinningPointsGameId)}
             />
             <InsightCard
               title="Niedrigster Punkt-Sieg"
@@ -662,6 +941,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               description="Niedrigste Punktzahl, die noch gewonnen hat"
               info={advanced.lowestWinningPoints === null || !summary ? 'Der niedrigste Score, der in deinem Feld noch gereicht hat. Das sagt mehr über den Spielkontext als über Peak-Leistung.' : playerScoreInfo(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
               benchmark={advanced.lowestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
+              href={gameHref(advanced.lowestWinningPointsGameId)}
             />
             <InsightCard
               title="Ø Siegpunkte"
@@ -676,6 +956,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
               description="Beste Punktzahl ohne Sieg"
               info={highestLossInfo(advanced.highestLosingPoints, advanced.averageWinningPoints)}
               benchmark={advanced.highestLosingPoints === null || !summary ? undefined : playerLossScoreBenchmark(advanced.highestLosingPoints, summary.avgScore)}
+              href={gameHref(advanced.highestLosingPointsGameId)}
             />
           </div>
         </div>
@@ -694,6 +975,15 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
                     formatter={(value: number) => [value, 'Punkte']}
                   />
                   <Legend onClick={() => setShowScoreTrend((value) => !value)} wrapperStyle={{ cursor: 'pointer' }} />
+                  {summary && (
+                    <ReferenceLine
+                      y={summary.medianScore}
+                      stroke="#d97706"
+                      strokeDasharray="6 4"
+                      strokeWidth={2}
+                      label={{ value: `Median ${summary.medianScore}`, position: 'insideTopRight', fill: '#92400e', fontSize: 12 }}
+                    />
+                  )}
                   <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name={playerName} hide={!showScoreTrend} />
                 </LineChart>
               </ResponsiveContainer>
@@ -701,24 +991,13 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
           </div>
         )}
 
-        {gameHistoryChart.lines.length > 1 && (
+        {scoreHeatmap.frames.some((frame) => frame.samples > 0) && (
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
             <div className="mb-3">
-              <h2 className="text-lg font-semibold text-lane-800">Alle Spiele</h2>
+              <h2 className="text-lg font-semibold text-lane-800">Alle Spiele als Score-Heatmap</h2>
+              <p className="mt-1 text-xs text-lane-600">Verteilung der kumulativen Punkte pro Frame: Spanne, typische Bereiche, Durchschnitt sowie bestes und schlechtestes Spiel.</p>
             </div>
-            <div style={{ touchAction: 'none' }}>
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={gameHistoryChart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
-                  <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                  <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" tooltipType="none" />
-                  {gameHistoryChart.lines.map((line) => (
-                    <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={1.7} dot={false} activeDot={false} name={line.name} opacity={0.35} />
-                  ))}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            <PlayerScoreHeatmap chart={scoreHeatmap} />
           </div>
         )}
 

@@ -19,6 +19,8 @@ type TableSubView = 'morph-horizontal' | 'morph-vertical' | 'bw';
 const MAGNIFIER_SIZE = 140;
 const MAGNIFIER_ZOOM = 4;
 const LINE_SELECT_THRESHOLD = 0.025;
+const MAGNIFIER_GAP = 16;
+const MAGNIFIER_VIEWPORT_MARGIN = 10;
 
 const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
 
@@ -222,6 +224,10 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function findMorphCenterNear(
   data: ImageData,
   variableCoord: number,
@@ -383,7 +389,7 @@ export default function BowlingApp() {
 
   const cornerImageRef = useRef<HTMLImageElement | null>(null);
   const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
+  const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number; clientX: number; clientY: number } | null>(null);
   const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
   const morphImageRef = useRef<HTMLImageElement | null>(null);
@@ -510,6 +516,54 @@ export default function BowlingApp() {
     };
   }
 
+  function getCornerPositionFromClient(clientX: number, clientY: number) {
+    const img = cornerImageRef.current;
+    if (!img) return null;
+    const bounds = img.getBoundingClientRect();
+    const px = clientX - bounds.left;
+    const py = clientY - bounds.top;
+    const nx = Math.min(1, Math.max(0, px / bounds.width));
+    const ny = Math.min(1, Math.max(0, py / bounds.height));
+    return { nx, ny, px, py, clientX, clientY };
+  }
+
+  function moveDraggedCornerFromClient(clientX: number, clientY: number) {
+    const pos = getCornerPositionFromClient(clientX, clientY);
+    if (!pos) return;
+    setMagnifierPos(pos);
+    if (draggingCornerIndex !== null) {
+      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: pos.nx, y: pos.ny } : corner)));
+    }
+  }
+
+  function getMagnifierStyle(pos: NonNullable<typeof magnifierPos>) {
+    if (typeof window === 'undefined') {
+      return { left: pos.px + MAGNIFIER_GAP, top: pos.py + MAGNIFIER_GAP, width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE };
+    }
+
+    const visualViewport = window.visualViewport;
+    const viewportLeft = visualViewport?.offsetLeft ?? 0;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportWidth = visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    const margin = MAGNIFIER_VIEWPORT_MARGIN;
+    const maxLeft = viewportLeft + viewportWidth - MAGNIFIER_SIZE - margin;
+    const maxTop = viewportTop + viewportHeight - MAGNIFIER_SIZE - margin;
+
+    const preferLeft = pos.clientX > viewportLeft + viewportWidth / 2;
+    const preferAbove = pos.clientY > viewportTop + viewportHeight / 2;
+    const rawLeft = pos.clientX + (preferLeft ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+    const rawTop = pos.clientY + (preferAbove ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+
+    return {
+      position: 'fixed' as const,
+      left: clamp(rawLeft, viewportLeft + margin, Math.max(viewportLeft + margin, maxLeft)),
+      top: clamp(rawTop, viewportTop + margin, Math.max(viewportTop + margin, maxTop)),
+      width: MAGNIFIER_SIZE,
+      height: MAGNIFIER_SIZE,
+    };
+  }
+
   // --- Corner handlers ---
 
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -552,16 +606,7 @@ export default function BowlingApp() {
   }
 
   function handleCornerMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    const img = cornerImageRef.current;
-    if (!img) return;
-    const bounds = img.getBoundingClientRect();
-    const px = event.clientX - bounds.left, py = event.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(event.clientX, event.clientY);
   }
 
   function handleCornerTouchStart(event: React.TouchEvent<HTMLDivElement>) {
@@ -579,18 +624,9 @@ export default function BowlingApp() {
 
   function handleCornerTouchMove(event: React.TouchEvent<HTMLDivElement>) {
     event.preventDefault();
-    const img = cornerImageRef.current;
-    if (!img) return;
     const touch = event.touches[0];
     if (!touch) return;
-    const bounds = img.getBoundingClientRect();
-    const px = touch.clientX - bounds.left, py = touch.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(touch.clientX, touch.clientY);
   }
 
   function stopCornerDrag() {
@@ -599,16 +635,7 @@ export default function BowlingApp() {
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    const img = cornerImageRef.current;
-    if (!img) return;
-    const bounds = img.getBoundingClientRect();
-    const px = event.clientX - bounds.left, py = event.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(event.clientX, event.clientY);
   }
 
   function handleButtonPointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
@@ -977,8 +1004,8 @@ export default function BowlingApp() {
                   >{index + 1}</button>
                 ))}
                 {magnifierPos && (
-                  <div className="pointer-events-none absolute z-20 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
-                    style={{ left: magnifierPos.px + (magnifierPos.px > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), top: magnifierPos.py + (magnifierPos.py > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE }}>
+                  <div className="pointer-events-none z-50 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
+                    style={getMagnifierStyle(magnifierPos)}>
                     <canvas ref={magnifierCanvasRef} width={MAGNIFIER_SIZE} height={MAGNIFIER_SIZE} className="block bg-black" />
                   </div>
                 )}
@@ -1279,7 +1306,7 @@ export default function BowlingApp() {
                               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                               <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
                               <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                              <Tooltip labelFormatter={() => ''} /><Legend />
+                              <Tooltip labelFormatter={() => ''} itemSorter={(item) => -Number(item.value ?? 0)} /><Legend />
                               {savedGame.scores.map((score, i) => (
                                 <Line key={score.player_name} type="monotone" dataKey={score.player_name}
                                   stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2} dot={<FrameDot />} activeDot={{ r: 6 }} />

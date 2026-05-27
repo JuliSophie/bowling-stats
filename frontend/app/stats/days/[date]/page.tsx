@@ -1,9 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
+import { BackButton } from '@/components/navigation-memory';
 import { fetchGames } from '@/lib/api';
 import {
   averagePerGameBenchmark,
@@ -51,13 +53,20 @@ type DayUnderdog = {
 };
 
 type CumulativeChartMode = 'frames' | 'rounds';
-type OpenChartSection = 'cumulative' | 'history' | null;
+type OpenChartSection = 'cumulative' | 'difference' | 'history' | null;
 
 type WinningPointStats = {
-  bestWinningPoints: number | null;
-  lowestWinningPoints: number | null;
+  bestWinning: WinningPointEntry | null;
+  lowestWinning: WinningPointEntry | null;
   averageWinningPoints: number | null;
-  highestLosingPoints: number | null;
+  highestLosing: WinningPointEntry | null;
+};
+
+type WinningPointEntry = {
+  points: number;
+  playerName: string;
+  gameId: number;
+  gameLabel: string;
 };
 
 function isOpenFrame(frame: FrameData) {
@@ -212,9 +221,10 @@ function BenchmarkBar({ benchmark }: { benchmark: StatBenchmark }) {
   );
 }
 
-function StatCard({ label, value, sub, info, benchmark }: { label: string; value: string | number; sub?: string; info: string; benchmark?: StatBenchmark }) {
-  return (
-    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+function StatCard({ label, value, sub, info, benchmark, href }: { label: string; value: string | number; sub?: string; info: string; benchmark?: StatBenchmark; href?: string }) {
+  const router = useRouter();
+  const content = (
+    <>
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-lane-600">{label}</p>
         <InfoTip text={info} />
@@ -222,30 +232,66 @@ function StatCard({ label, value, sub, info, benchmark }: { label: string; value
       <p className="mt-1 text-lg font-bold text-lane-900">{value}</p>
       {sub && <p className="text-xs text-lane-600">{sub}</p>}
       {benchmark && <BenchmarkBar benchmark={benchmark} />}
+    </>
+  );
+
+  if (href) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => router.push(href)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            router.push(href);
+          }
+        }}
+        className="w-full rounded-lg border border-lane-200 bg-lane-50 p-3 text-left transition hover:-translate-y-0.5 hover:bg-white hover:shadow-md focus:outline-none focus:ring-2 focus:ring-lane-400"
+      >
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-lane-200 bg-lane-50 p-3">
+      {content}
     </div>
   );
 }
 
 function computeWinningPointStats(games: GameRead[], playerName?: string): WinningPointStats {
-  const winningScores: number[] = [];
-  const losingScores: number[] = [];
+  const winningEntries: WinningPointEntry[] = [];
+  const losingEntries: WinningPointEntry[] = [];
 
-  for (const game of games) {
+  for (const [gameIndex, game] of games.entries()) {
     if (game.scores.length === 0) continue;
     const highScore = Math.max(...game.scores.map((score) => score.total_score));
 
     for (const score of game.scores) {
       if (playerName && score.player_name !== playerName) continue;
-      if (score.total_score === highScore) winningScores.push(score.total_score);
-      else losingScores.push(score.total_score);
+      const entry = {
+        points: score.total_score,
+        playerName: score.player_name,
+        gameId: game.id,
+        gameLabel: `Spiel ${gameIndex + 1}`,
+      };
+      if (score.total_score === highScore) winningEntries.push(entry);
+      else losingEntries.push(entry);
     }
   }
 
+  const winningScores = winningEntries.map((entry) => entry.points);
+  const bestWinning = winningEntries.reduce<WinningPointEntry | null>((best, entry) => (!best || entry.points > best.points ? entry : best), null);
+  const lowestWinning = winningEntries.reduce<WinningPointEntry | null>((lowest, entry) => (!lowest || entry.points < lowest.points ? entry : lowest), null);
+  const highestLosing = losingEntries.reduce<WinningPointEntry | null>((highest, entry) => (!highest || entry.points > highest.points ? entry : highest), null);
+
   return {
-    bestWinningPoints: winningScores.length > 0 ? Math.max(...winningScores) : null,
-    lowestWinningPoints: winningScores.length > 0 ? Math.min(...winningScores) : null,
+    bestWinning,
+    lowestWinning,
     averageWinningPoints: winningScores.length > 0 ? Math.round((winningScores.reduce((sum, score) => sum + score, 0) / winningScores.length) * 10) / 10 : null,
-    highestLosingPoints: losingScores.length > 0 ? Math.max(...losingScores) : null,
+    highestLosing,
   };
 }
 
@@ -329,6 +375,26 @@ function buildCumulativeDayChart(games: GameRead[], mode: CumulativeChartMode) {
   }));
 
   return { data, lines };
+}
+
+function buildScoreDifferenceDayChart(games: GameRead[], mode: CumulativeChartMode) {
+  const cumulativeChart = buildCumulativeDayChart(games, mode);
+  const data = cumulativeChart.data.map((point) => {
+    const playerValues = cumulativeChart.lines
+      .map((line) => ({ key: line.key, value: typeof point[line.key] === 'number' ? point[line.key] as number : null }))
+      .filter((item): item is { key: string; value: number } => item.value !== null);
+
+    if (playerValues.length === 0) return { ...point };
+
+    const leadingScore = Math.max(...playerValues.map((item) => item.value));
+    const differencePoint: Record<string, string | number> = { ...point };
+    for (const { key, value } of playerValues) {
+      differencePoint[key] = value - leadingScore;
+    }
+    return differencePoint;
+  });
+
+  return { data, lines: cumulativeChart.lines };
 }
 
 function ChartModeButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
@@ -424,6 +490,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const [date, setDate] = useState<string | null>(null);
   const [hiddenDayPlayers, setHiddenDayPlayers] = useState<Set<string>>(() => new Set());
   const [cumulativeChartMode, setCumulativeChartMode] = useState<CumulativeChartMode>('frames');
+  const [differenceChartMode, setDifferenceChartMode] = useState<CumulativeChartMode>('frames');
   const [openChartSection, setOpenChartSection] = useState<OpenChartSection>('cumulative');
 
   useEffect(() => {
@@ -451,9 +518,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
       <>
         <Navigation />
         <main className="app-main max-w-5xl">
-          <Link href="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-            ← Spiele
-          </Link>
+          <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Keine Spiele für diesen Tag gefunden.</p>
           </div>
@@ -467,14 +532,19 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const avgPinsPerGame = Math.round((totalPins / dayGames.length) * 10) / 10;
   const dayGameHistoryChart = buildDayGameHistoryChart(dayGames);
   const cumulativeDayChart = buildCumulativeDayChart(dayGames, cumulativeChartMode);
+  const scoreDifferenceDayChart = buildScoreDifferenceDayChart(dayGames, differenceChartMode);
   const globalAverages = buildGlobalAverageMap(games);
   const underdog = computeDayUnderdog(dayPlayers, globalAverages);
   const dayWinningPointStats = computeWinningPointStats(dayGames);
+  const bestWinningPoints = dayWinningPointStats.bestWinning?.points ?? null;
+  const lowestWinningPoints = dayWinningPointStats.lowestWinning?.points ?? null;
+  const highestLosingPoints = dayWinningPointStats.highestLosing?.points ?? null;
   const showCumulativeChart = cumulativeDayChart.lines.length > 0 && dayGames.length > 1;
+  const showDifferenceChart = scoreDifferenceDayChart.lines.length > 1 && dayGames.length > 1;
   const showHistoryChart = dayGameHistoryChart.lines.length > 1;
-  const visibleChartCount = Number(showCumulativeChart) + Number(showHistoryChart);
+  const visibleChartCount = Number(showCumulativeChart) + Number(showDifferenceChart) + Number(showHistoryChart);
   const effectiveOpenChartSection = visibleChartCount === 1
-    ? showCumulativeChart ? 'cumulative' : 'history'
+    ? showCumulativeChart ? 'cumulative' : showDifferenceChart ? 'difference' : 'history'
     : openChartSection;
 
   const toggleChartSection = (section: OpenChartSection) => {
@@ -498,9 +568,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <Link href="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-          ← Spiele
-        </Link>
+        <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
           <h1 className="text-2xl font-bold text-lane-900">{date}</h1>
@@ -541,10 +609,31 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
           <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
           <p className="mt-1 text-xs text-lane-600">Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war.</p>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Bester Sieg" value={formatNullableScore(dayWinningPointStats.bestWinningPoints)} info="Höchster Score, der heute ein Spiel gewonnen hat. Das ist der Abend-Peak — die Stelle, an der jemand kurz unangenehm gut war." benchmark={dayScoreBenchmark(dayWinningPointStats.bestWinningPoints)} />
-            <StatCard label="Niedrigster Sieg" value={formatNullableScore(dayWinningPointStats.lowestWinningPoints)} info={lowestWinInfo(dayWinningPointStats.lowestWinningPoints, dayWinningPointStats.highestLosingPoints)} benchmark={dayScoreBenchmark(dayWinningPointStats.lowestWinningPoints)} />
+            <StatCard
+              label="Bester Sieg"
+              value={formatNullableScore(bestWinningPoints)}
+              sub={dayWinningPointStats.bestWinning ? `${dayWinningPointStats.bestWinning.playerName} · ${dayWinningPointStats.bestWinning.gameLabel}` : undefined}
+              info="Höchster Score, der heute ein Spiel gewonnen hat. Das ist der Abend-Peak — die Stelle, an der jemand kurz unangenehm gut war."
+              benchmark={dayScoreBenchmark(bestWinningPoints)}
+              href={dayWinningPointStats.bestWinning ? `/stats/games/${dayWinningPointStats.bestWinning.gameId}` : undefined}
+            />
+            <StatCard
+              label="Niedrigster Sieg"
+              value={formatNullableScore(lowestWinningPoints)}
+              sub={dayWinningPointStats.lowestWinning ? `${dayWinningPointStats.lowestWinning.playerName} · ${dayWinningPointStats.lowestWinning.gameLabel}` : undefined}
+              info={lowestWinInfo(lowestWinningPoints, highestLosingPoints)}
+              benchmark={dayScoreBenchmark(lowestWinningPoints)}
+              href={dayWinningPointStats.lowestWinning ? `/stats/games/${dayWinningPointStats.lowestWinning.gameId}` : undefined}
+            />
             <StatCard label="Ø Siegpunkte" value={formatNullableScore(dayWinningPointStats.averageWinningPoints)} info="Durchschnitt aller Sieg-Scores heute. Das ist die Tages-Schwelle zwischen 'gewonnen' und 'nett versucht'." benchmark={dayScoreBenchmark(dayWinningPointStats.averageWinningPoints)} />
-            <StatCard label="Höchste Niederlage" value={formatNullableScore(dayWinningPointStats.highestLosingPoints)} info={highestLossInfo(dayWinningPointStats.highestLosingPoints, dayWinningPointStats.averageWinningPoints)} benchmark={dayLossScoreBenchmark(dayWinningPointStats.highestLosingPoints)} />
+            <StatCard
+              label="Höchste Niederlage"
+              value={formatNullableScore(highestLosingPoints)}
+              sub={dayWinningPointStats.highestLosing ? `${dayWinningPointStats.highestLosing.playerName} · ${dayWinningPointStats.highestLosing.gameLabel}` : undefined}
+              info={highestLossInfo(highestLosingPoints, dayWinningPointStats.averageWinningPoints)}
+              benchmark={dayLossScoreBenchmark(highestLosingPoints)}
+              href={dayWinningPointStats.highestLosing ? `/stats/games/${dayWinningPointStats.highestLosing.gameId}` : undefined}
+            />
           </div>
         </div>
 
@@ -585,6 +674,52 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
                     />
                     {cumulativeDayChart.lines.map((line) => (
                       <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={cumulativeChartMode === 'rounds' ? { r: 4 } : false} activeDot={{ r: 6 }} name={line.name} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>}
+          </section>
+        )}
+
+        {showDifferenceChart && (
+          <section className="group rounded-[1.3rem] border border-lane-200 bg-white/90">
+            <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('difference')}>
+              <div>
+                <h2 className="text-lg font-semibold text-lane-800">Punkteabstand über den Spielabend</h2>
+                <p className="mt-1 text-xs text-lane-600">Zeigt den Abstand zur jeweils führenden Person. Die Führung liegt bei 0, Rückstände sind negativ.</p>
+              </div>
+              <span className={`mt-1 text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'difference' ? 'rotate-180' : ''}`}>⌄</span>
+            </button>
+            {effectiveOpenChartSection === 'difference' && <div className="px-5 pb-5">
+              <div className="mb-4 flex flex-wrap justify-end gap-2">
+                <ChartModeButton active={differenceChartMode === 'frames'} label="Jedes Frame" onClick={() => setDifferenceChartMode('frames')} />
+                <ChartModeButton active={differenceChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setDifferenceChartMode('rounds')} />
+              </div>
+              <div className="mb-3 flex flex-wrap gap-2 text-xs text-lane-600">
+                {scoreDifferenceDayChart.lines.map((line) => (
+                  <span key={line.key} className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: line.color }} />
+                    {line.name}
+                  </span>
+                ))}
+              </div>
+              <div style={{ touchAction: 'none' }}>
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={scoreDifferenceDayChart.data} margin={{ top: 12, right: 24, bottom: 5, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                    <XAxis dataKey="label" tick={{ fontSize: 12 }} label={{ value: differenceChartMode === 'frames' ? 'Spiel / Frame' : 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={['dataMin - 10', 0]} />
+                    <Tooltip
+                      labelFormatter={(_, payload) => {
+                        const item = payload?.[0]?.payload as Record<string, string | number> | undefined;
+                        if (!item) return '';
+                        return differenceChartMode === 'frames' ? `${item.game} · Frame ${item.frame} · ${item.location}` : `${item.game} · ${item.location}`;
+                      }}
+                      formatter={(value: number, name: string) => [value === 0 ? 'Führung' : `${value}`, scoreDifferenceDayChart.lines.find((line) => line.key === name)?.name ?? name]}
+                    />
+                    {scoreDifferenceDayChart.lines.map((line) => (
+                      <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={differenceChartMode === 'rounds' ? { r: 4 } : false} activeDot={{ r: 6 }} name={line.name} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
+import { BackButton } from '@/components/navigation-memory';
 import { fetchGames } from '@/lib/api';
 import type { GameRead, FrameData } from '@/types';
 import {
@@ -311,9 +312,7 @@ export default function GamesListPage() {
       <Navigation />
       <main className="app-main max-w-5xl">
         <div className="flex items-center gap-3">
-          <Link href="/" className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-            ← Home
-          </Link>
+          <BackButton className="rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
           <h1 className="text-2xl font-bold text-lane-900">Alle Spiele</h1>
           <span className="text-sm text-lane-600">({games.length})</span>
         </div>

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
+import { BackButton } from '@/components/navigation-memory';
 import { fetchGames } from '@/lib/api';
 import type { GameRead } from '@/types';
 import {
@@ -308,9 +309,7 @@ export default function GameDetailPage({ params }: { params: Promise<{ id: strin
         <main className="app-main max-w-5xl">
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Spiel nicht gefunden.</p>
-            <Link href="/" className="mt-4 inline-block rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-              ← Home
-            </Link>
+            <BackButton className="mt-4 inline-block rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
           </div>
         </main>
       </>
@@ -321,9 +320,7 @@ export default function GameDetailPage({ params }: { params: Promise<{ id: strin
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <Link href="/" className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70">
-          ← Home
-        </Link>
+        <BackButton className="flex items-center gap-1.5 self-start rounded-full border border-lane-300 px-4 py-2 text-sm font-medium text-lane-700 transition hover:bg-white/70" />
 
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
           <div className="flex items-center justify-between gap-3 mb-3">

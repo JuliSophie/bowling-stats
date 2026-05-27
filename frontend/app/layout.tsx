@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
+import { NavigationMemory } from '@/components/navigation-memory';
 import ThemeScript from '@/components/theme-script';
 import './globals.css';
 
@@ -31,7 +32,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       <head>
         <ThemeScript />
       </head>
-      <body>{children}</body>
+      <body>
+        <NavigationMemory />
+        {children}
+      </body>
     </html>
   );
 }
