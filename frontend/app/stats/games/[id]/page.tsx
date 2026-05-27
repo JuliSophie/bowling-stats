@@ -191,7 +191,7 @@ export default function GameDetailPage({ params }: { params: Promise<{ id: strin
                       <th className="px-2 py-1.5 text-center">Offen</th>
                       <th className="px-2 py-1.5 text-center">Clean %</th>
                       <th className="px-2 py-1.5 text-center">Bestes Frame</th>
-                      <th className="px-2 py-1.5 text-center">Konstanz</th>
+                      <th className="px-2 py-1.5 text-center">Std.Abw.</th>
                     </tr>
                   </thead>
                   <tbody>

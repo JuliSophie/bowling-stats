@@ -472,6 +472,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const scoreDifferenceDayChart = buildScoreDifferenceDayChart(dayGames, differenceChartMode);
   const globalAverages = buildGlobalAverageMap(games);
   const underdog = computeDayUnderdog(dayPlayers, globalAverages);
+  const dayPlayerAnalysis = computeDayPlayerAnalysis(dayGames);
   const dayWinningPointStats = computeWinningPointStats(dayGames);
   const bestWinningPoints = dayWinningPointStats.bestWinning?.points ?? null;
   const lowestWinningPoints = dayWinningPointStats.lowestWinning?.points ?? null;
@@ -541,6 +542,44 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
             ))}
           </div>
         </div>
+
+        {dayPlayerAnalysis.length > 0 && (
+          <div className="section-card p-5">
+            <h2 className="text-lg font-semibold text-lane-800 mb-4">Spieler-Analyse</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="text-left text-lane-500">
+                    <th className="px-2 py-1.5">Spieler</th>
+                    <th className="px-2 py-1.5 text-center">Spiele</th>
+                    <th className="px-2 py-1.5 text-center">X</th>
+                    <th className="px-2 py-1.5 text-center">/</th>
+                    <th className="px-2 py-1.5 text-center">Offen</th>
+                    <th className="px-2 py-1.5 text-center">Clean %</th>
+                    <th className="px-2 py-1.5 text-center">1. Wurf Ø</th>
+                    <th className="px-2 py-1.5 text-center">Bestes Frame</th>
+                    <th className="px-2 py-1.5 text-center">Std.Abw.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayPlayerAnalysis.map((player, index) => (
+                    <tr key={player.name} className={`border-t border-lane-100 text-lane-800 ${index === 0 ? 'font-semibold' : ''}`}>
+                      <td className="px-2 py-2 font-semibold whitespace-nowrap">{index === 0 ? '👑 ' : ''}{player.name}</td>
+                      <td className="px-2 py-2 text-center">{player.games}</td>
+                      <td className="px-2 py-2 text-center">{player.strikes}</td>
+                      <td className="px-2 py-2 text-center">{player.spares}</td>
+                      <td className="px-2 py-2 text-center">{player.openFrames}</td>
+                      <td className="px-2 py-2 text-center">{player.cleanFrameRate}%</td>
+                      <td className="px-2 py-2 text-center">{player.avgFirstThrow}</td>
+                      <td className="px-2 py-2 text-center">{player.bestFrame ? `${player.bestFrame.score} · S${player.bestFrame.game} F${player.bestFrame.frame}` : '–'}</td>
+                      <td className="px-2 py-2 text-center">{player.consistency ?? '–'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         <div className="section-card p-5">
           <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
