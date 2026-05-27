@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import {
   Bar,
@@ -16,7 +17,9 @@ import {
   YAxis,
 } from 'recharts';
 
+import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames, renamePlayer } from '@/lib/api';
+import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
 import type { FrameData, GameRead } from '@/types';
 
 const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
@@ -318,9 +321,18 @@ type UnderdogMoment = { playerName: string; score: number; avg: number; pctAbove
 type PaceSetterEntry = { playerName: string; leads: number; of: number };
 type FatigueEntry = { playerName: string; firstAvg: number; laterAvg: number; drop: number; sessions: number };
 type TripleThreat = { playerName: string; date: string; scores: number[] };
+type ExcitingGameEntry = { game: GameRead; tensionIndex: number; leadChanges: number; finalGap: number; dramaFactor: number };
 
 function computeSocialStats(games: GameRead[], players: PlayerSummary[]) {
   const avgMap = new Map(players.map((p) => [p.name, p.avgScore]));
+  const excitingGames: ExcitingGameEntry[] = games
+    .map((game) => {
+      const excitement = calculateGameExcitement(game);
+      return excitement ? { game, tensionIndex: excitement.tensionIndex, leadChanges: excitement.leadChanges, finalGap: excitement.finalGap, dramaFactor: excitement.dramaFactor } : null;
+    })
+    .filter((entry): entry is ExcitingGameEntry => entry !== null)
+    .sort((a, b) => b.tensionIndex - a.tensionIndex)
+    .slice(0, 5);
 
   // Nemesis
   const h2h = new Map<string, NemesisPair>();
@@ -421,7 +433,7 @@ function computeSocialStats(games: GameRead[], players: PlayerSummary[]) {
     }
   }
 
-  return { nemeses, underdogs: underdogs.slice(0, 5), paceSetters, fatigueFactors, tripleThreats };
+  return { nemeses, underdogs: underdogs.slice(0, 5), paceSetters, fatigueFactors, tripleThreats, excitingGames };
 }
 
 // ── Small UI components ──
@@ -566,7 +578,7 @@ function GameChart({ game, highlightPlayer }: { game: GameRead; highlightPlayer?
   );
 }
 
-function TodaysGames({ games, onOpenGame }: { games: GameRead[]; onOpenGame: (gameId: number) => void }) {
+function TodaysGames({ games, expandedGameId, onExpandedGameChange }: { games: GameRead[]; expandedGameId: number | null; onExpandedGameChange: (gameId: number | null) => void }) {
   const today = new Date().toISOString().slice(0, 10);
   const todayGames = games.filter((g) => g.played_at === today);
   if (todayGames.length === 0) return null;
@@ -575,31 +587,17 @@ function TodaysGames({ games, onOpenGame }: { games: GameRead[]; onOpenGame: (ga
     <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
       <h3 className="mb-3 text-sm font-semibold text-lane-800">Heute gespielt</h3>
       <div className="grid gap-2">
-        {todayGames.map((game) => {
-          const avgScore = Math.round(game.scores.reduce((a, s) => a + s.total_score, 0) / game.scores.length);
-          const maxScore = Math.max(...game.scores.map((s) => s.total_score));
-          const winner = game.scores.find((s) => s.total_score === maxScore);
-          return (
-            <button key={game.id} type="button"
-              className="flex w-full items-center justify-between gap-3 rounded-xl border border-lane-100 bg-lane-50/50 px-4 py-3 text-left transition hover:bg-lane-50"
-              onClick={() => onOpenGame(game.id)}
-            >
-              <div className="min-w-0">
-                <span className="text-sm font-semibold text-lane-800">{game.location}</span>
-                <div className="mt-0.5 flex flex-wrap gap-2">
-                  {game.scores.map((s) => (
-                    <span key={s.player_name}
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.total_score === maxScore ? 'bg-lane-800 text-white' : 'bg-lane-100 text-lane-700'}`}
-                    >{s.player_name}: {s.total_score}</span>
-                  ))}
-                </div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-lane-500">
-                <p>⌀ {avgScore}{winner && game.scores.length > 1 ? ` · Beste/r: ${winner.player_name}` : ''}</p>
-              </div>
-            </button>
-          );
-        })}
+        {todayGames.map((game, index) => (
+          <GamePreviewCard
+            key={game.id}
+            game={game}
+            allGames={games}
+            label={`Spiel ${index + 1}`}
+            showDate={false}
+            expanded={expandedGameId === game.id}
+            onExpandedChange={(nextExpanded) => onExpandedGameChange(nextExpanded ? game.id : null)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -687,8 +685,8 @@ function PlayerStatsSection({ games, playerName }: { games: GameRead[]; playerNa
 // ── Social stats section (overview) ──
 
 function SocialStatsSection({ games, players }: { games: GameRead[]; players: PlayerSummary[] }) {
-  const { nemeses, underdogs, paceSetters, fatigueFactors, tripleThreats } = computeSocialStats(games, players);
-  const hasContent = nemeses.length > 0 || underdogs.length > 0 || paceSetters.length > 0;
+  const { nemeses, underdogs, paceSetters, fatigueFactors, tripleThreats, excitingGames } = computeSocialStats(games, players);
+  const hasContent = nemeses.length > 0 || underdogs.length > 0 || paceSetters.length > 0 || excitingGames.length > 0;
   if (!hasContent) return null;
 
   return (
@@ -721,6 +719,29 @@ function SocialStatsSection({ games, players }: { games: GameRead[]; players: Pl
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Excitement */}
+        {excitingGames.length > 0 && (
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-semibold uppercase tracking-wider text-lane-500">Spannendste Spiele</p>
+              <InfoTip text="Spannungs-Index = ((Führungswechsel + 1) / (Endabstand + 1)) × (1 + Drama-Faktor). Der Drama-Faktor steigt, wenn der Abstand von Frame 9 bis zum Ende kleiner wird oder der Führende nach Frame 9 noch verliert." />
+            </div>
+            <div className="grid gap-1.5">
+              {excitingGames.slice(0, 3).map(({ game, tensionIndex, leadChanges, finalGap, dramaFactor }) => (
+                <div key={game.id} className="flex items-center justify-between rounded-lg bg-lane-50 px-3 py-2 text-sm">
+                  <span className="text-lane-800">
+                    <span className="font-semibold">{game.location}</span>
+                    <span className="ml-1 text-xs text-lane-500">{game.played_at}</span>
+                  </span>
+                  <span className="text-xs font-semibold text-orange-700">
+                    🔥 {formatTensionIndex(tensionIndex)} · {leadChanges} Wechsel · {finalGap} Pins · Drama {dramaFactor}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -1151,36 +1172,16 @@ function DaySessionContent({ dayGames, players }: {
       </div>
 
       <div className="grid gap-1.5">
-        {sortedGames.map((game, i) => {
-          const maxScore = Math.max(...game.scores.map((s) => s.total_score));
-          const isExpanded = expandedGameId === game.id;
-          return (
-            <div key={game.id} className="rounded-xl border border-lane-100 bg-lane-50/50 overflow-hidden">
-              <button type="button"
-                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left transition hover:bg-lane-50"
-                onClick={() => setExpandedGameId(isExpanded ? null : game.id)}
-              >
-                <div className="min-w-0">
-                  <span className="text-sm font-semibold text-lane-800">Spiel {i + 1}</span>
-                  <span className="ml-2 text-xs text-lane-500">{game.location}</span>
-                  <div className="mt-0.5 flex flex-wrap gap-2">
-                    {game.scores.map((s) => (
-                      <span key={s.player_name}
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.total_score === maxScore ? 'bg-lane-800 text-white' : 'bg-lane-100 text-lane-700'}`}
-                      >{s.player_name}: {s.total_score}</span>
-                    ))}
-                  </div>
-                </div>
-                <span className="text-lane-400 text-sm shrink-0">{isExpanded ? '▲' : '▼'}</span>
-              </button>
-              {isExpanded && (
-                <div className="border-t border-lane-100 p-4">
-                  <GameChart game={game} />
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {sortedGames.map((game, index) => (
+          <GamePreviewCard
+            key={game.id}
+            game={game}
+            label={`Spiel ${index + 1}`}
+            showDate={false}
+            expanded={expandedGameId === game.id}
+            onExpandedChange={(nextExpanded) => setExpandedGameId(nextExpanded ? game.id : null)}
+          />
+        ))}
       </div>
     </div>
   );
@@ -1486,45 +1487,16 @@ export default function StatsView() {
 
         <div className="grid gap-3">
           <h3 className="text-sm font-semibold text-lane-800">Alle Spiele ({playerGames.length})</h3>
-          {playerGames.map((game) => {
-            const playerScore = game.scores.find((s) => s.player_name === selectedPlayer);
-            const otherPlayers = game.scores.filter((s) => s.player_name !== selectedPlayer);
-            const isExpanded = expandedGameId === game.id;
-            const gameAvg = Math.round(game.scores.reduce((a, s) => a + s.total_score, 0) / game.scores.length);
-            const gameMax = Math.max(...game.scores.map((s) => s.total_score));
-            return (
-              <div key={game.id} className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
-                <button type="button"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-lane-50"
-                  onClick={() => setExpandedGameId(isExpanded ? null : game.id)}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-sm font-semibold text-lane-800">{game.location}</span>
-                      <span className="text-xs text-lane-500">{game.played_at}</span>
-                    </div>
-                    {otherPlayers.length > 0 && (
-                      <p className="mt-0.5 truncate text-xs text-lane-500">
-                        mit {otherPlayers.map((s) => `${s.player_name} (${s.total_score})`).join(', ')}
-                      </p>
-                    )}
-                    <p className="mt-0.5 text-xs text-lane-400">⌀ {gameAvg} · Max {gameMax}</p>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <span className="rounded-full bg-lane-800 px-3 py-0.5 text-sm font-semibold text-white">
-                      {playerScore?.total_score ?? '–'}
-                    </span>
-                    <span className="text-lane-400 text-sm">{isExpanded ? '▲' : '▼'}</span>
-                  </div>
-                </button>
-                {isExpanded && (
-                  <div className="border-t border-lane-200 p-4">
-                    <GameChart game={game} highlightPlayer={selectedPlayer} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {playerGames.map((game) => (
+            <GamePreviewCard
+              key={game.id}
+              game={game}
+              allGames={games}
+              highlightPlayer={selectedPlayer}
+              expanded={expandedGameId === game.id}
+              onExpandedChange={(nextExpanded) => setExpandedGameId(nextExpanded ? game.id : null)}
+            />
+          ))}
         </div>
       </div>
         </div>
@@ -1541,35 +1513,14 @@ export default function StatsView() {
           {(() => {
             const today = new Date().toISOString().slice(0, 10);
             const todayGameCount = games.filter((g) => g.played_at === today).length;
-            const openGameHandler = (id: number) => setExpandedGameId((prev) => (prev === id ? null : id));
 
             return (
               <>
                 {todayGameCount >= 2 ? (
                   <TodaySessionSection games={games} players={players} />
                 ) : (
-                  <TodaysGames games={games} onOpenGame={openGameHandler} />
+                  <TodaysGames games={games} expandedGameId={expandedGameId} onExpandedGameChange={setExpandedGameId} />
                 )}
-
-                {expandedGameId && !selectedPlayer && (() => {
-                  const game = games.find((g) => g.id === expandedGameId);
-                  if (!game) return null;
-                  return (
-                    <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-3 border-b border-lane-200">
-                        <div>
-                          <span className="text-sm font-semibold text-lane-800">{game.location}</span>
-                          <span className="ml-2 text-xs text-lane-500">{game.played_at}</span>
-                        </div>
-                        <button type="button"
-                          className="rounded-full border border-lane-300 px-3 py-1 text-xs font-medium text-lane-700 transition hover:bg-lane-50"
-                          onClick={() => setExpandedGameId(null)}
-                        >Schließen</button>
-                      </div>
-                      <div className="p-4"><GameChart game={game} /></div>
-                    </div>
-                  );
-                })()}
 
                 <SocialStatsSection games={games} players={players} />
 

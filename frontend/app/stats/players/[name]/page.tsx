@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
+import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames, renamePlayer } from '@/lib/api';
 import {
   benchmarkToneClass,
@@ -725,6 +726,7 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [showScoreTrend, setShowScoreTrend] = useState(true);
+  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
 
   useEffect(() => {
     params.then(({ name }) => {
@@ -1004,28 +1006,16 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-4">
           <h2 className="mb-3 text-lg font-semibold text-lane-800">Spiele ({playerGames.length})</h2>
           <div className="space-y-2">
-            {playerGames.map((game) => {
-              const playerScore = game.scores.find((s) => s.player_name === playerName);
-              const maxScore = Math.max(...game.scores.map((s) => s.total_score));
-              const isWinner = playerScore?.total_score === maxScore;
-              
-              return (
-                <Link key={game.id} href={`/stats/games/${game.id}`}
-                  className="block rounded-lg border border-lane-200 p-3 transition hover:bg-lane-50"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-lane-900">{game.location}</p>
-                      <p className="text-xs text-lane-600 mt-1">{game.played_at}</p>
-                    </div>
-                    <div className={`text-right ${isWinner ? 'text-lane-900 font-bold' : 'text-lane-700'}`}>
-                      <p className="text-sm">{playerScore?.total_score} Punkte</p>
-                      {isWinner && <p className="text-xs text-amber-600">🏆 Gewinner</p>}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+            {playerGames.map((game) => (
+              <GamePreviewCard
+                key={game.id}
+                game={game}
+                allGames={games}
+                highlightPlayer={playerName}
+                expanded={expandedGameId === game.id}
+                onExpandedChange={(nextExpanded) => setExpandedGameId(nextExpanded ? game.id : null)}
+              />
+            ))}
           </div>
         </div>
       </main>

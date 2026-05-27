@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
+import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames } from '@/lib/api';
 import {
   averagePerGameBenchmark,
@@ -492,6 +493,7 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
   const [cumulativeChartMode, setCumulativeChartMode] = useState<CumulativeChartMode>('frames');
   const [differenceChartMode, setDifferenceChartMode] = useState<CumulativeChartMode>('frames');
   const [openChartSection, setOpenChartSection] = useState<OpenChartSection>('cumulative');
+  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
 
   useEffect(() => {
     params.then(({ date }) => {
@@ -776,34 +778,17 @@ export default function DayDetailPage({ params }: { params: Promise<{ date: stri
         <div className="rounded-[1.3rem] border border-lane-200 bg-white/90 p-5">
           <h2 className="text-lg font-semibold text-lane-800 mb-4">Spiele ({dayGames.length})</h2>
           <div className="space-y-2">
-            {dayGames.map((game) => {
-              const gameAvg = Math.round(game.scores.reduce((a, s) => a + s.total_score, 0) / game.scores.length);
-              const maxScore = Math.max(...game.scores.map((s) => s.total_score));
-              const gameWinner = game.scores.find((s) => s.total_score === maxScore);
-
-              return (
-                <Link key={game.id} href={`/stats/games/${game.id}`}
-                  className="block rounded-lg border border-lane-200 p-3 transition hover:bg-lane-50"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-lane-900">{game.location}</p>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {game.scores.map((score) => (
-                          <span key={score.player_name} className={`text-xs px-2 py-0.5 rounded-full ${score.total_score === maxScore ? 'bg-lane-800 text-white font-medium' : 'bg-lane-100 text-lane-700'}`}>
-                            {score.player_name} {score.total_score}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="text-right text-xs">
-                      <p className="text-lane-600">⌀ {gameAvg}</p>
-                      {gameWinner && <p className="text-lane-600 mt-1">→</p>}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
+            {dayGames.map((game, index) => (
+              <GamePreviewCard
+                key={game.id}
+                game={game}
+                allGames={games}
+                label={`Spiel ${index + 1}`}
+                showDate={false}
+                expanded={expandedGameId === game.id}
+                onExpandedChange={(nextExpanded) => setExpandedGameId(nextExpanded ? game.id : null)}
+              />
+            ))}
           </div>
         </div>
       </main>
