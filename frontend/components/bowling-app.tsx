@@ -228,80 +228,44 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function findMorphCenterNear(
-  data: ImageData,
-  variableCoord: number,
-  predictedFixedCoord: number,
-  orientation: 'h' | 'v',
-  searchRadius: number,
-): number | null {
-  const fixedLimit = orientation === 'h' ? data.height : data.width;
-  const fixedAxis: 'x' | 'y' = orientation === 'h' ? 'y' : 'x';
-  const start = Math.max(0, Math.round(predictedFixedCoord - searchRadius));
-  const end = Math.min(fixedLimit - 1, Math.round(predictedFixedCoord + searchRadius));
+function collectMorphComponent(data: ImageData, hitX: number, hitY: number): [number, number][] {
+  const startX = Math.round(hitX);
+  const startY = Math.round(hitY);
+  if (getMorphBrightness(data, startX, startY) < MORPH_BRIGHT) return [];
 
-  let bestCoord = -1;
-  let bestDistance = Infinity;
-  for (let fixedCoord = start; fixedCoord <= end; fixedCoord++) {
-    const brightness = orientation === 'h'
-      ? getMorphBrightness(data, variableCoord, fixedCoord)
-      : getMorphBrightness(data, fixedCoord, variableCoord);
-    if (brightness < MORPH_BRIGHT) continue;
-    const distance = Math.abs(fixedCoord - predictedFixedCoord);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestCoord = fixedCoord;
+  const points: [number, number][] = [];
+  const stack: [number, number][] = [[startX, startY]];
+  const visited = new Set<number>([startY * data.width + startX]);
+  const maxPixels = Math.min(data.width * data.height, 75000);
+
+  while (stack.length > 0 && points.length < maxPixels) {
+    const [x, y] = stack.pop()!;
+    points.push([x, y]);
+
+    for (let ny = y - 1; ny <= y + 1; ny++) {
+      for (let nx = x - 1; nx <= x + 1; nx++) {
+        if (nx === x && ny === y) continue;
+        if (nx < 0 || nx >= data.width || ny < 0 || ny >= data.height) continue;
+        const key = ny * data.width + nx;
+        if (visited.has(key) || getMorphBrightness(data, nx, ny) < MORPH_BRIGHT) continue;
+        visited.add(key);
+        stack.push([nx, ny]);
+      }
     }
   }
-  if (bestCoord < 0) return null;
 
-  const [lo, hi] = scanBand(data, bestCoord, variableCoord, fixedAxis);
-  return (lo + hi) / 2;
-}
-
-function traceMorphLinePoints(data: ImageData, hitX: number, hitY: number, orientation: 'h' | 'v'): [number, number][] {
-  const isHorizontal = orientation === 'h';
-  const axisLimit = isHorizontal ? data.width : data.height;
-  const fixedLimit = isHorizontal ? data.height : data.width;
-  const startAxis = isHorizontal ? hitX : hitY;
-  const startFixed = isHorizontal ? hitY : hitX;
-  const fixedAxis: 'x' | 'y' = isHorizontal ? 'y' : 'x';
-  const searchRadius = Math.max(10, Math.floor(fixedLimit * 0.035));
-  const maxGap = Math.max(8, Math.floor(axisLimit * 0.025));
-  const step = Math.max(1, Math.floor(axisLimit / 700));
-
-  const [startLo, startHi] = scanBand(data, startFixed, startAxis, fixedAxis);
-  const startCenter = (startLo + startHi) / 2;
-  const leftOrTop: [number, number][] = [];
-  const rightOrBottom: [number, number][] = [];
-
-  const walk = (direction: -1 | 1, out: [number, number][]) => {
-    let predictedFixed = startCenter;
-    let gap = 0;
-    for (let axis = startAxis + direction * step; axis >= 0 && axis < axisLimit; axis += direction * step) {
-      const center = findMorphCenterNear(data, axis, predictedFixed, orientation, searchRadius);
-      if (center === null) {
-        gap += step;
-        if (gap > maxGap) break;
-        continue;
-      }
-      predictedFixed = center;
-      gap = 0;
-      out.push(isHorizontal ? [axis, center] : [center, axis]);
-    }
-  };
-
-  walk(-1, leftOrTop);
-  walk(1, rightOrBottom);
-  return [...leftOrTop.reverse(), isHorizontal ? [startAxis, startCenter] : [startCenter, startAxis], ...rightOrBottom];
+  return points;
 }
 
 function fitHorizontalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
-  const points = traceMorphLinePoints(data, hitX, hitY, 'h');
+  const points = collectMorphComponent(data, hitX, hitY);
   if (points.length < 2) return null;
   const minX = Math.min(...points.map(([x]) => x));
   const maxX = Math.max(...points.map(([x]) => x));
-  if (maxX - minX + 1 < data.width * 0.35) return null;
+  const minY = Math.min(...points.map(([, y]) => y));
+  const maxY = Math.max(...points.map(([, y]) => y));
+  if (maxX - minX + 1 < Math.max(8, data.width * 0.015)) return null;
+  if (maxX - minX + 1 < (maxY - minY + 1) * 1.25) return null;
 
   const n = points.length;
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -310,17 +274,21 @@ function fitHorizontalMorphLine(data: ImageData, hitX: number, hitY: number): Li
   if (Math.abs(det) <= 1e-6) return null;
   const slope = (n * sxy - sx * sy) / det;
   const intercept = (sy - slope * sx) / n;
+  if (Math.abs(Math.atan(slope)) > (12 * Math.PI) / 180) return null;
   const yAtLeft = intercept;
   const yAtRight = slope * (data.width - 1) + intercept;
   return { x1: 0, y1: clamp01(yAtLeft / (data.height - 1)), x2: 1, y2: clamp01(yAtRight / (data.height - 1)) };
 }
 
 function fitVerticalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
-  const points = traceMorphLinePoints(data, hitX, hitY, 'v');
+  const points = collectMorphComponent(data, hitX, hitY);
   if (points.length < 2) return null;
+  const minX = Math.min(...points.map(([x]) => x));
+  const maxX = Math.max(...points.map(([x]) => x));
   const minY = Math.min(...points.map(([, y]) => y));
   const maxY = Math.max(...points.map(([, y]) => y));
-  if (maxY - minY + 1 < data.height * 0.35) return null;
+  if (maxY - minY + 1 < Math.max(8, data.height * 0.015)) return null;
+  if (maxY - minY + 1 < (maxX - minX + 1) * 1.25) return null;
 
   const n = points.length;
   let sx = 0, sy = 0, syy = 0, sxy = 0;
@@ -329,6 +297,7 @@ function fitVerticalMorphLine(data: ImageData, hitX: number, hitY: number): Line
   if (Math.abs(det) <= 1e-6) return null;
   const slope = (n * sxy - sx * sy) / det;
   const intercept = (sx - slope * sy) / n;
+  if (Math.abs(Math.atan(slope)) > (12 * Math.PI) / 180) return null;
   const xAtTop = intercept;
   const xAtBottom = slope * (data.height - 1) + intercept;
   return { x1: clamp01(xAtTop / (data.width - 1)), y1: 0, x2: clamp01(xAtBottom / (data.width - 1)), y2: 1 };
@@ -1306,7 +1275,7 @@ export default function BowlingApp() {
                               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                               <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
                               <YAxis tick={{ fontSize: 12 }} domain={[0, 'dataMax + 10']} />
-                              <Tooltip labelFormatter={() => ''} itemSorter={(item) => -Number(item.value ?? 0)} /><Legend />
+                              <Tooltip /><Legend />
                               {savedGame.scores.map((score, i) => (
                                 <Line key={score.player_name} type="monotone" dataKey={score.player_name}
                                   stroke={PLAYER_COLORS[i % PLAYER_COLORS.length]} strokeWidth={2} dot={<FrameDot />} activeDot={{ r: 6 }} />

@@ -16,6 +16,8 @@ const PIPELINE_STEPS = [
 const MAGNIFIER_SIZE = 140;
 const MAGNIFIER_ZOOM = 4;
 const LINE_SELECT_THRESHOLD = 0.025;
+const MAGNIFIER_GAP = 16;
+const MAGNIFIER_VIEWPORT_MARGIN = 10;
 
 const PLAYER_COLORS = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#db2777'];
 
@@ -244,80 +246,48 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function findMorphCenterNear(
-  data: ImageData,
-  variableCoord: number,
-  predictedFixedCoord: number,
-  orientation: 'h' | 'v',
-  searchRadius: number,
-): number | null {
-  const fixedLimit = orientation === 'h' ? data.height : data.width;
-  const fixedAxis: 'x' | 'y' = orientation === 'h' ? 'y' : 'x';
-  const start = Math.max(0, Math.round(predictedFixedCoord - searchRadius));
-  const end = Math.min(fixedLimit - 1, Math.round(predictedFixedCoord + searchRadius));
-
-  let bestCoord = -1;
-  let bestDistance = Infinity;
-  for (let fixedCoord = start; fixedCoord <= end; fixedCoord++) {
-    const brightness = orientation === 'h'
-      ? getMorphBrightness(data, variableCoord, fixedCoord)
-      : getMorphBrightness(data, fixedCoord, variableCoord);
-    if (brightness < MORPH_BRIGHT) continue;
-    const distance = Math.abs(fixedCoord - predictedFixedCoord);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestCoord = fixedCoord;
-    }
-  }
-  if (bestCoord < 0) return null;
-
-  const [lo, hi] = scanBand(data, bestCoord, variableCoord, fixedAxis);
-  return (lo + hi) / 2;
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
-function traceMorphLinePoints(data: ImageData, hitX: number, hitY: number, orientation: 'h' | 'v'): [number, number][] {
-  const isHorizontal = orientation === 'h';
-  const axisLimit = isHorizontal ? data.width : data.height;
-  const fixedLimit = isHorizontal ? data.height : data.width;
-  const startAxis = isHorizontal ? hitX : hitY;
-  const startFixed = isHorizontal ? hitY : hitX;
-  const fixedAxis: 'x' | 'y' = isHorizontal ? 'y' : 'x';
-  const searchRadius = Math.max(10, Math.floor(fixedLimit * 0.035));
-  const maxGap = Math.max(8, Math.floor(axisLimit * 0.025));
-  const step = Math.max(1, Math.floor(axisLimit / 700));
+function collectMorphComponent(data: ImageData, hitX: number, hitY: number): [number, number][] {
+  const startX = Math.round(hitX);
+  const startY = Math.round(hitY);
+  if (getMorphBrightness(data, startX, startY) < MORPH_BRIGHT) return [];
 
-  const [startLo, startHi] = scanBand(data, startFixed, startAxis, fixedAxis);
-  const startCenter = (startLo + startHi) / 2;
-  const leftOrTop: [number, number][] = [];
-  const rightOrBottom: [number, number][] = [];
+  const points: [number, number][] = [];
+  const stack: [number, number][] = [[startX, startY]];
+  const visited = new Set<number>([startY * data.width + startX]);
+  const maxPixels = Math.min(data.width * data.height, 75000);
 
-  const walk = (direction: -1 | 1, out: [number, number][]) => {
-    let predictedFixed = startCenter;
-    let gap = 0;
-    for (let axis = startAxis + direction * step; axis >= 0 && axis < axisLimit; axis += direction * step) {
-      const center = findMorphCenterNear(data, axis, predictedFixed, orientation, searchRadius);
-      if (center === null) {
-        gap += step;
-        if (gap > maxGap) break;
-        continue;
+  while (stack.length > 0 && points.length < maxPixels) {
+    const [x, y] = stack.pop()!;
+    points.push([x, y]);
+
+    for (let ny = y - 1; ny <= y + 1; ny++) {
+      for (let nx = x - 1; nx <= x + 1; nx++) {
+        if (nx === x && ny === y) continue;
+        if (nx < 0 || nx >= data.width || ny < 0 || ny >= data.height) continue;
+        const key = ny * data.width + nx;
+        if (visited.has(key) || getMorphBrightness(data, nx, ny) < MORPH_BRIGHT) continue;
+        visited.add(key);
+        stack.push([nx, ny]);
       }
-      predictedFixed = center;
-      gap = 0;
-      out.push(isHorizontal ? [axis, center] : [center, axis]);
     }
-  };
+  }
 
-  walk(-1, leftOrTop);
-  walk(1, rightOrBottom);
-  return [...leftOrTop.reverse(), isHorizontal ? [startAxis, startCenter] : [startCenter, startAxis], ...rightOrBottom];
+  return points;
 }
 
 function fitHorizontalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
-  const points = traceMorphLinePoints(data, hitX, hitY, 'h');
+  const points = collectMorphComponent(data, hitX, hitY);
   if (points.length < 2) return null;
   const minX = Math.min(...points.map(([x]) => x));
   const maxX = Math.max(...points.map(([x]) => x));
-  if (maxX - minX + 1 < data.width * 0.35) return null;
+  const minY = Math.min(...points.map(([, y]) => y));
+  const maxY = Math.max(...points.map(([, y]) => y));
+  if (maxX - minX + 1 < Math.max(8, data.width * 0.015)) return null;
+  if (maxX - minX + 1 < (maxY - minY + 1) * 1.25) return null;
 
   const n = points.length;
   let sx = 0, sy = 0, sxx = 0, sxy = 0;
@@ -326,17 +296,21 @@ function fitHorizontalMorphLine(data: ImageData, hitX: number, hitY: number): Li
   if (Math.abs(det) <= 1e-6) return null;
   const slope = (n * sxy - sx * sy) / det;
   const intercept = (sy - slope * sx) / n;
+  if (Math.abs(Math.atan(slope)) > (12 * Math.PI) / 180) return null;
   const yAtLeft = intercept;
   const yAtRight = slope * (data.width - 1) + intercept;
   return { x1: 0, y1: clamp01(yAtLeft / (data.height - 1)), x2: 1, y2: clamp01(yAtRight / (data.height - 1)) };
 }
 
 function fitVerticalMorphLine(data: ImageData, hitX: number, hitY: number): LineSegment | null {
-  const points = traceMorphLinePoints(data, hitX, hitY, 'v');
+  const points = collectMorphComponent(data, hitX, hitY);
   if (points.length < 2) return null;
+  const minX = Math.min(...points.map(([x]) => x));
+  const maxX = Math.max(...points.map(([x]) => x));
   const minY = Math.min(...points.map(([, y]) => y));
   const maxY = Math.max(...points.map(([, y]) => y));
-  if (maxY - minY + 1 < data.height * 0.35) return null;
+  if (maxY - minY + 1 < Math.max(8, data.height * 0.015)) return null;
+  if (maxY - minY + 1 < (maxX - minX + 1) * 1.25) return null;
 
   const n = points.length;
   let sx = 0, sy = 0, syy = 0, sxy = 0;
@@ -345,6 +319,7 @@ function fitVerticalMorphLine(data: ImageData, hitX: number, hitY: number): Line
   if (Math.abs(det) <= 1e-6) return null;
   const slope = (n * sxy - sx * sy) / det;
   const intercept = (sx - slope * sy) / n;
+  if (Math.abs(Math.atan(slope)) > (12 * Math.PI) / 180) return null;
   const xAtTop = intercept;
   const xAtBottom = slope * (data.height - 1) + intercept;
   return { x1: clamp01(xAtTop / (data.width - 1)), y1: 0, x2: clamp01(xAtBottom / (data.width - 1)), y2: 1 };
@@ -403,7 +378,7 @@ export default function UploadView() {
 
   const cornerImageRef = useRef<HTMLImageElement | null>(null);
   const magnifierCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number } | null>(null);
+  const [magnifierPos, setMagnifierPos] = useState<{ nx: number; ny: number; px: number; py: number; clientX: number; clientY: number } | null>(null);
   const bwCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const bwBaseImageRef = useRef<HTMLImageElement | null>(null);
   const morphImageRef = useRef<HTMLImageElement | null>(null);
@@ -446,7 +421,6 @@ export default function UploadView() {
     setShowRowCrops(true);
     setShowSaveForm(false);
     setSaveDate(new Date().toISOString().slice(0, 10));
-    setSaveLocation('Squash House');
     setSaving(false);
     setSavedGame(null);
     setBwCanvasReady(false);
@@ -577,6 +551,54 @@ export default function UploadView() {
     };
   }
 
+  function getCornerPositionFromClient(clientX: number, clientY: number) {
+    const img = cornerImageRef.current;
+    if (!img) return null;
+    const bounds = img.getBoundingClientRect();
+    const px = clientX - bounds.left;
+    const py = clientY - bounds.top;
+    const nx = Math.min(1, Math.max(0, px / bounds.width));
+    const ny = Math.min(1, Math.max(0, py / bounds.height));
+    return { nx, ny, px, py, clientX, clientY };
+  }
+
+  function moveDraggedCornerFromClient(clientX: number, clientY: number) {
+    const pos = getCornerPositionFromClient(clientX, clientY);
+    if (!pos) return;
+    setMagnifierPos(pos);
+    if (draggingCornerIndex !== null) {
+      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: pos.nx, y: pos.ny } : corner)));
+    }
+  }
+
+  function getMagnifierStyle(pos: NonNullable<typeof magnifierPos>) {
+    if (typeof window === 'undefined') {
+      return { left: pos.px + MAGNIFIER_GAP, top: pos.py + MAGNIFIER_GAP, width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE };
+    }
+
+    const visualViewport = window.visualViewport;
+    const viewportLeft = visualViewport?.offsetLeft ?? 0;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportWidth = visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    const margin = MAGNIFIER_VIEWPORT_MARGIN;
+    const maxLeft = viewportLeft + viewportWidth - MAGNIFIER_SIZE - margin;
+    const maxTop = viewportTop + viewportHeight - MAGNIFIER_SIZE - margin;
+
+    const preferLeft = pos.clientX > viewportLeft + viewportWidth / 2;
+    const preferAbove = pos.clientY > viewportTop + viewportHeight / 2;
+    const rawLeft = pos.clientX + (preferLeft ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+    const rawTop = pos.clientY + (preferAbove ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+
+    return {
+      position: 'fixed' as const,
+      left: clamp(rawLeft, viewportLeft + margin, Math.max(viewportLeft + margin, maxLeft)),
+      top: clamp(rawTop, viewportTop + margin, Math.max(viewportTop + margin, maxTop)),
+      width: MAGNIFIER_SIZE,
+      height: MAGNIFIER_SIZE,
+    };
+  }
+
   // --- Corner handlers ---
 
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
@@ -619,16 +641,7 @@ export default function UploadView() {
   }
 
   function handleCornerMouseMove(event: React.MouseEvent<HTMLDivElement>) {
-    const img = cornerImageRef.current;
-    if (!img) return;
-    const bounds = img.getBoundingClientRect();
-    const px = event.clientX - bounds.left, py = event.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(event.clientX, event.clientY);
   }
 
   function handleCornerTouchStart(event: React.TouchEvent<HTMLDivElement>) {
@@ -646,18 +659,9 @@ export default function UploadView() {
 
   function handleCornerTouchMove(event: React.TouchEvent<HTMLDivElement>) {
     event.preventDefault();
-    const img = cornerImageRef.current;
-    if (!img) return;
     const touch = event.touches[0];
     if (!touch) return;
-    const bounds = img.getBoundingClientRect();
-    const px = touch.clientX - bounds.left, py = touch.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(touch.clientX, touch.clientY);
   }
 
   function stopCornerDrag() {
@@ -666,16 +670,7 @@ export default function UploadView() {
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
-    const img = cornerImageRef.current;
-    if (!img) return;
-    const bounds = img.getBoundingClientRect();
-    const px = event.clientX - bounds.left, py = event.clientY - bounds.top;
-    const nx = Math.min(1, Math.max(0, px / bounds.width));
-    const ny = Math.min(1, Math.max(0, py / bounds.height));
-    setMagnifierPos({ nx, ny, px, py });
-    if (draggingCornerIndex !== null) {
-      setManualCorners((c) => c.map((corner, i) => (i === draggingCornerIndex ? { x: nx, y: ny } : corner)));
-    }
+    moveDraggedCornerFromClient(event.clientX, event.clientY);
   }
 
   function handleButtonPointerDown(event: React.PointerEvent<HTMLButtonElement>, index: number) {
@@ -1038,8 +1033,8 @@ export default function UploadView() {
                 >{index + 1}</button>
               ))}
               {magnifierPos && (
-                <div className="pointer-events-none absolute z-20 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
-                  style={{ left: magnifierPos.px + (magnifierPos.px > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), top: magnifierPos.py + (magnifierPos.py > MAGNIFIER_SIZE + 24 ? -(MAGNIFIER_SIZE + 16) : 16), width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE }}>
+                <div className="pointer-events-none z-50 overflow-hidden rounded-2xl border-2 border-white/80 shadow-xl ring-1 ring-black/10"
+                  style={getMagnifierStyle(magnifierPos)}>
                   <canvas ref={magnifierCanvasRef} width={MAGNIFIER_SIZE} height={MAGNIFIER_SIZE} className="block bg-black" />
                 </div>
               )}
