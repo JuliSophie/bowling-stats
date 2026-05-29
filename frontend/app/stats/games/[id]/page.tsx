@@ -1,30 +1,22 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
 import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
 import { buildGameReport } from '@/lib/game-report';
 import { scoreBenchmark, playerScoreBenchmark, excitementTrash, comebackTrash, bigLeadTrash, closestMomentTrash, lateDramaTrash } from '@/lib/trash-talk';
 import { derivePlayerSummaries } from '@/lib/player-stats';
-import type { GameRead } from '@/types';
 import GameChart from '@/components/game-chart';
 
-export default function GameDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [gameId, setGameId] = useState<number | null>(null);
+export default function GameDetailPage() {
+  const pathname = usePathname();
+  const gameId = Number(decodeURIComponent(pathname.split('/').pop() ?? ''));
+  const { games, loading } = useGames();
 
-  useEffect(() => {
-    params.then(({ id }) => {
-      setGameId(Number(id));
-      fetchGames().then(setGames).finally(() => setLoading(false));
-    });
-  }, [params]);
-
-  if (loading || gameId === null) {
+  if (loading) {
     return (
       <>
         <Navigation />

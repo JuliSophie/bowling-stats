@@ -1,12 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
 import { derivePlayerSummaries } from '@/lib/player-stats';
-import type { GameRead } from '@/types';
 
 function rankBadge(index: number) {
   if (index === 0) return { label: '1', icon: '🏆', className: 'bg-gradient-to-br from-amber-200 to-coral text-lane-950 shadow-[0_12px_30px_rgba(255,140,105,0.28)]' };
@@ -16,12 +14,7 @@ function rankBadge(index: number) {
 }
 
 export default function PlayersListPage() {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchGames().then(setGames).finally(() => setLoading(false));
-  }, []);
+  const { games, loading } = useGames();
 
   if (loading) {
     return (

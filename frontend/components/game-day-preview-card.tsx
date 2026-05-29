@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
 
 import GamePreviewCard from '@/components/game-preview-card';
+import { useStickyState } from '@/lib/use-sticky-state';
 import type { GameRead } from '@/types';
 
 type GameDayPreviewCardProps = {
@@ -46,7 +46,7 @@ export default function GameDayPreviewCard({
   onExpandedGameChange,
   defaultOpen = true,
 }: GameDayPreviewCardProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useStickyState<boolean>(`gamesday:${date}:open`, defaultOpen);
   const sortedGames = games.slice().sort((a, b) => a.id - b.id);
   const dayPlayers = buildDayPlayers(sortedGames);
   const location = sortedGames[0]?.location;

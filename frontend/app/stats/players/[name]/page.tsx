@@ -1,11 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
 import GamePreviewCard from '@/components/game-preview-card';
 import { fetchGames, renamePlayer } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
+import { useStickyState } from '@/lib/use-sticky-state';
 import {
   clampPercent,
   comebackInfo,
@@ -486,26 +489,18 @@ function PlayerScoreHeatmap({ chart }: { chart: PlayerScoreHeatmapData }) {
   );
 }
 
-export default function PlayerDetailPage({ params }: { params: Promise<{ name: string }> }) {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [playerName, setPlayerName] = useState<string | null>(null);
-  const [editingName, setEditingName] = useState('');
+export default function PlayerDetailPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const playerName = decodeURIComponent(pathname.split('/').pop() ?? '');
+  const { games, loading, mutate } = useGames();
+  const [editingName, setEditingName] = useState(playerName);
   const [isEditing, setIsEditing] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [showScoreTrend, setShowScoreTrend] = useState(true);
-  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
-
-  useEffect(() => {
-    params.then(({ name }) => {
-      const decodedName = decodeURIComponent(name);
-      setPlayerName(decodedName);
-      setEditingName(decodedName);
-      fetchGames().then(setGames).finally(() => setLoading(false));
-    });
-  }, [params]);
+  const [showScoreTrend, setShowScoreTrend] = useStickyState<boolean>(`player:${playerName}:showTrend`, true);
+  const [expandedGameId, setExpandedGameId] = useStickyState<number | null>(`player:${playerName}:expandedGame`, null);
 
   const handleRename = async () => {
     if (!playerName) return;
@@ -522,11 +517,14 @@ export default function PlayerDetailPage({ params }: { params: Promise<{ name: s
     try {
       const result = await renamePlayer({ current_name: playerName, new_name: nextName });
       const refreshedGames = await fetchGames();
-      setGames(refreshedGames);
-      setPlayerName(result.player_name);
+      mutate(refreshedGames);
       setEditingName(result.player_name);
       setIsEditing(false);
       setNotice(result.merged ? 'Spieler wurden zusammengefuehrt.' : 'Spielername aktualisiert.');
+      if (result.player_name !== playerName) {
+        // Reflect the new name in the URL; playerName is derived from the path.
+        router.replace(`/stats/players/${encodeURIComponent(result.player_name)}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spieler konnte nicht umbenannt werden.');
     } finally {

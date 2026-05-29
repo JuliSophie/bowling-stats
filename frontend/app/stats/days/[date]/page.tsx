@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
 import GamePreviewCard from '@/components/game-preview-card';
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
+import { useStickyState } from '@/lib/use-sticky-state';
 import {
   averagePerGameBenchmark,
   dayLossScoreBenchmark,
@@ -420,24 +421,17 @@ function buildSessionScoreChart(games: GameRead[]) {
   return { data, lines };
 }
 
-export default function DayDetailPage({ params }: { params: Promise<{ date: string }> }) {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [date, setDate] = useState<string | null>(null);
-  const [hiddenDayPlayers, setHiddenDayPlayers] = useState<Set<string>>(() => new Set());
-  const [cumulativeChartMode, setCumulativeChartMode] = useState<CumulativeChartMode>('frames');
-  const [differenceChartMode, setDifferenceChartMode] = useState<CumulativeChartMode>('frames');
-  const [openChartSection, setOpenChartSection] = useState<OpenChartSection>('cumulative');
-  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
+export default function DayDetailPage() {
+  const pathname = usePathname();
+  const date = decodeURIComponent(pathname.split('/').pop() ?? '');
+  const { games, loading } = useGames();
+  const [hiddenDayPlayers, setHiddenDayPlayers] = useStickyState<Set<string>>(`day:${date}:hidden`, new Set());
+  const [cumulativeChartMode, setCumulativeChartMode] = useStickyState<CumulativeChartMode>(`day:${date}:cumMode`, 'frames');
+  const [differenceChartMode, setDifferenceChartMode] = useStickyState<CumulativeChartMode>(`day:${date}:diffMode`, 'frames');
+  const [openChartSection, setOpenChartSection] = useStickyState<OpenChartSection>(`day:${date}:openChart`, 'cumulative');
+  const [expandedGameId, setExpandedGameId] = useStickyState<number | null>(`day:${date}:expandedGame`, null);
 
-  useEffect(() => {
-    params.then(({ date }) => {
-      setDate(date);
-      fetchGames().then(setGames).finally(() => setLoading(false));
-    });
-  }, [params]);
-
-  if (loading || !date) {
+  if (loading) {
     return (
       <>
         <Navigation />

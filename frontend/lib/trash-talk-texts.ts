@@ -161,6 +161,7 @@ export const playerScoreInfoTexts = {
     `Der billigste Sieg im Eigenvergleich. Wenn der unter deinem Schnitt liegt, hast du nicht gewonnen — die anderen haben verloren.`,
     `Zeigt, wie wenig für einen Sieg gereicht hat. Sportlich fragwürdig, emotional trotzdem gültig.`,
     `Mit ${score} zu gewinnen ist wie einen Marathon zu "laufen", weil alle anderen Gipsbeine haben. Ein Sieg der Traurigkeit.`,
+    `Ein gutes Pferd springt nur so hoch wie es muss. Bei ${score} war das Pferd offenbar im Energiesparmodus.`,
   ],
   winningAverage: (score: number, average: number, delta: number) => [
     `Dein Ø in gewonnenen Spielen gegen deinen Gesamt-Ø ${average}: ${score} (${delta >= 0 ? '+' : ''}${delta}). Das ist deine persönliche Sieg-Schwelle.`,

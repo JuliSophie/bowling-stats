@@ -1,10 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
 import type { GameRead } from '@/types';
 
 type DaySession = {
@@ -58,12 +57,7 @@ function computeDayPlayerStats(dayGames: GameRead[]): DayPlayerStats[] {
 }
 
 export default function DaysListPage() {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchGames().then(setGames).finally(() => setLoading(false));
-  }, []);
+  const { games, loading } = useGames();
 
   if (loading) {
     return (

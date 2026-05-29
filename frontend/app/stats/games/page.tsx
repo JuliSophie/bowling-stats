@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
 import GameDayPreviewCard from '@/components/game-day-preview-card';
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
+import { useStickyState } from '@/lib/use-sticky-state';
 import type { GameRead } from '@/types';
 
 type GamesByDay = {
@@ -13,13 +13,8 @@ type GamesByDay = {
 };
 
 export default function GamesListPage() {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedGameId, setExpandedGameId] = useState<number | null>(null);
-
-  useEffect(() => {
-    fetchGames().then(setGames).finally(() => setLoading(false));
-  }, []);
+  const { games, loading } = useGames();
+  const [expandedGameId, setExpandedGameId] = useStickyState<number | null>('games:expandedGame', null);
 
   if (loading) {
     return (

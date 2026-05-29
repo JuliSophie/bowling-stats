@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
-import { fetchGames } from '@/lib/api';
+import { useGames } from '@/lib/use-games';
 import type { GameRead } from '@/types';
 
 type DashboardStats = {
@@ -63,15 +63,7 @@ function StatTile({ label, value, hint, href }: { label: string; value: string; 
 }
 
 export default function HomeDashboard() {
-  const [games, setGames] = useState<GameRead[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchGames()
-      .then(setGames)
-      .catch(() => setGames([]))
-      .finally(() => setLoading(false));
-  }, []);
+  const { games, loading } = useGames();
 
   const stats = useMemo(() => buildDashboardStats(games), [games]);
 
