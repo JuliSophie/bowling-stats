@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     tesseract_cmd: str | None = None
     temp_dir: Path = DEFAULT_TEMP_DIR
 
+    # Auth (shared-password gate). Both must be set for auth to be enforced.
+    app_password: str = ""
+    auth_secret: str = ""
+    # Cookie domain so the auth cookie is shared across the frontend + api
+    # subdomains in production (e.g. ".sophiealexandra.de"). Leave empty for
+    # localhost (host-only cookie).
+    auth_cookie_domain: str | None = None
+    auth_token_ttl_days: int = 30
+
     model_config = SettingsConfigDict(
         env_prefix="BOWLING_",
         env_file=".env",

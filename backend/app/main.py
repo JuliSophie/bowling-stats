@@ -1,16 +1,21 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 
+from app.auth import auth_enabled, require_auth
 from app.config import get_settings
 from app.database import Base, engine
 from app import models  # noqa: F401
+from app.routers.auth import router as auth_router
 from app.routers.games import router as games_router
 from app.routers.stats import router as stats_router
 from app.routers.upload import router as upload_router
 
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -40,11 +45,23 @@ app.add_middleware(
 )
 
 
+if not auth_enabled():
+    logger.warning(
+        "Auth is DISABLED: set BOWLING_APP_PASSWORD and BOWLING_AUTH_SECRET to "
+        "protect the API. The /api surface is currently public."
+    )
+
+
 @app.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
-app.include_router(upload_router, prefix="/api")
-app.include_router(games_router, prefix="/api")
-app.include_router(stats_router, prefix="/api")
+# Public: the login/session endpoints must be reachable before authentication.
+app.include_router(auth_router, prefix="/api")
+
+# Protected: everything else requires a valid auth cookie.
+protected = [Depends(require_auth)]
+app.include_router(upload_router, prefix="/api", dependencies=protected)
+app.include_router(games_router, prefix="/api", dependencies=protected)
+app.include_router(stats_router, prefix="/api", dependencies=protected)

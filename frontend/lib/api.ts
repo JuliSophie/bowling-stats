@@ -66,9 +66,25 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 
+function redirectToLogin() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  if (window.location.pathname.startsWith('/login')) {
+    return;
+  }
+  const from = encodeURIComponent(window.location.pathname + window.location.search);
+  window.location.href = `/login?from=${from}`;
+}
+
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   try {
-    const response = await fetch(url, init);
+    // `credentials: 'include'` sends the same-site auth cookie to the API.
+    const response = await fetch(url, { credentials: 'include', ...init });
+    if (response.status === 401) {
+      redirectToLogin();
+    }
     return await handleResponse<T>(response);
   } catch (error) {
     if (error instanceof TypeError) {
@@ -85,6 +101,28 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 function appendJsonField(formData: FormData, key: string, value: unknown) {
   formData.append(key, JSON.stringify(value));
+}
+
+
+export interface SessionStatus {
+  authenticated: boolean;
+  required: boolean;
+}
+
+export async function login(password: string): Promise<{ authenticated: boolean }> {
+  return requestJson<{ authenticated: boolean }>(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  await requestJson<{ authenticated: boolean }>(`${API_BASE}/auth/logout`, { method: 'POST' });
+}
+
+export async function fetchSession(): Promise<SessionStatus> {
+  return requestJson<SessionStatus>(`${API_BASE}/auth/session`);
 }
 
 
