@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import GameChart from '@/components/game-chart';
 import { calculateGameExcitement } from '@/lib/excitement';
+import { formatPlayedAtTime } from '@/lib/frame-utils';
 import type { GameRead } from '@/types';
 
 type GamePreviewCardProps = {
@@ -88,6 +89,7 @@ export default function GamePreviewCard({
               {label && <span className="rounded-full bg-lane-800 px-2 py-0.5 text-[0.65rem] font-bold text-white">{label}</span>}
               {showLocation && <span className="text-sm font-bold text-lane-900">{game.location}</span>}
               {showDate && <span className="text-xs text-lane-500">{game.played_at}</span>}
+              {formatPlayedAtTime(game.played_at_time) && <span className="text-xs text-lane-500">{formatPlayedAtTime(game.played_at_time)} Uhr</span>}
             </div>
             {excitement && <span className="shrink-0" title={`Spannung ${excitement.tensionIndex.toFixed(1)}`}><FireScale lit={lit} /></span>}
           </div>
@@ -101,7 +103,7 @@ export default function GamePreviewCard({
                   key={score.player_name}
                   className={combineClasses(
                     'rounded-full px-2 py-0.5 text-xs font-semibold',
-                    isWinner ? 'winner-chip' : 'bg-lane-100 text-lane-700',
+                    isWinner ? 'winner-chip' : 'bg-lane-100 text-lane-900',
                     isHighlighted && !isWinner && 'ring-2 ring-blue-200',
                   )}
                 >

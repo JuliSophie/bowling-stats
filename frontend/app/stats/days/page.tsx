@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import Navigation from '@/components/navigation';
 import { BackButton } from '@/components/navigation-memory';
+import SectionCard from '@/components/ui/section-card';
 import { useGames } from '@/lib/use-games';
 import type { GameRead } from '@/types';
 
@@ -82,7 +83,7 @@ export default function DaysListPage() {
           <span className="text-sm text-lane-600">({daySessions.length})</span>
         </div>
 
-        <div className="section-card overflow-hidden">
+        <SectionCard padding="none" className="overflow-hidden">
           {daySessions.map((session, i) => {
             const dayPlayers = computeDayPlayerStats(session.games);
             const winner = dayPlayers[0];
@@ -112,7 +113,7 @@ export default function DaysListPage() {
               </Link>
             );
           })}
-        </div>
+        </SectionCard>
       </main>
     </>
   );

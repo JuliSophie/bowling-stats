@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,7 @@ class SubCell(BaseModel):
 class CornerGuessResult(BaseModel):
     filename: str
     guessed_corners: list[ManualCorner] = Field(default_factory=list, min_length=0, max_length=4)
+    captured_at: datetime | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -80,6 +81,7 @@ class ConfirmedScore(BaseModel):
 
 class GameCreate(BaseModel):
     played_at: date
+    played_at_time: time | None = None
     location: str = Field(min_length=1, max_length=120)
     mode: str = Field(default="10-Pin", min_length=1, max_length=40)
     user_id: str | None = Field(default=None, max_length=64)
@@ -106,6 +108,7 @@ class StoredScore(BaseModel):
 class GameRead(BaseModel):
     id: int
     played_at: date
+    played_at_time: time | None = None
     location: str
     mode: str
     user_id: str | None = None

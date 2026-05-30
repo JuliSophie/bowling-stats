@@ -2,6 +2,23 @@ import type { FrameData, GameRead } from '@/types';
 
 export type FrameType = 'strike' | 'spare' | 'normal';
 
+/** Format a stored time ("HH:MM:SS") as "HH:MM"; returns '' when absent. */
+export function formatPlayedAtTime(time: string | null | undefined): string {
+  if (!time) return '';
+  const match = /^(\d{2}):(\d{2})/.exec(time);
+  return match ? `${match[1]}:${match[2]}` : '';
+}
+
+const WEEKDAYS_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const MONTHS_DE = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+/** Format an ISO date ("YYYY-MM-DD") as "Fr, 15. Aug 2024"; falls back to the input. */
+export function formatDateDE(isoDate: string): string {
+  const date = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return isoDate;
+  return `${WEEKDAYS_DE[date.getDay()]}, ${date.getDate()}. ${MONTHS_DE[date.getMonth()]} ${date.getFullYear()}`;
+}
+
 export function getFrameType(frame: FrameData): FrameType {
   if (String(frame.throw1).trim().toLowerCase() === 'x' || String(frame.throw2).trim().toLowerCase() === 'x') return 'strike';
   if (String(frame.throw2).trim() === '/') return 'spare';

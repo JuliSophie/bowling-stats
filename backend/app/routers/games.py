@@ -42,6 +42,7 @@ def list_games(db: Session = Depends(get_db)) -> list[GameRead]:
         result.append(GameRead(
             id=game.id,
             played_at=game.played_at,
+            played_at_time=game.played_at_time,
             location=game.location,
             mode=game.mode,
             user_id=game.user_id,
@@ -75,6 +76,7 @@ def recent_player_names(hours: float = 2.0, db: Session = Depends(get_db)) -> Re
 def create_game(payload: GameCreate, db: Session = Depends(get_db)) -> GameRead:
     game = Game(
         played_at=payload.played_at,
+        played_at_time=payload.played_at_time,
         location=payload.location,
         mode=payload.mode,
         user_id=payload.user_id,
@@ -115,6 +117,7 @@ def create_game(payload: GameCreate, db: Session = Depends(get_db)) -> GameRead:
     return GameRead(
         id=game.id,
         played_at=game.played_at,
+        played_at_time=game.played_at_time,
         location=game.location,
         mode=game.mode,
         user_id=game.user_id,

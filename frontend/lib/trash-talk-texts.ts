@@ -1228,6 +1228,64 @@ export const playerDay = {
   ],
 } as const;
 
+// --- Day recap: multi-sentence summary of the whole evening (seeded per day) ---
+export const dayRecap = {
+  intro: (games: number, players: number) => [
+    `${games} Spiel${games !== 1 ? 'e' : ''}, ${players} Mitspieler und eine Bahn voller mittelguter Entscheidungen.`,
+    `${players} Leute haben ${games} Mal so getan, als hätten sie das im Griff.`,
+    `An diesem Abend fielen ${games} Spiele an — und ungefähr genauso viele Ausreden.`,
+    `${games} Runden unter ${players} selbsternannten Profis. Den härteren Job hatten die Pins.`,
+    `${players} Spieler, ${games} Spiele, null Gnade und reichlich Trash-Talk.`,
+    `Spielabend in Zahlen: ${games} Spiele, ${players} Egos, ein Sieger und mehrere Lebenslügen.`,
+  ] as const,
+  introSolo: (games: number) => [
+    `${games} Spiel${games !== 1 ? 'e' : ''} im Alleingang — Gegner: die eigene Würde.`,
+    `Solo-Session über ${games} Spiele. Niemand da, der die Ausreden hört. Vielleicht besser so.`,
+    `${games} Spiele allein auf der Bahn. Mensch gegen Pins, Pins führten zeitweise.`,
+  ] as const,
+  champDominant: (name: string, gap: number) => [
+    `${name} hat den Abend nicht gewonnen, sondern besetzt — ${gap} Pins Vorsprung im Schnitt sind keine Führung, das ist eine Hausdurchsuchung.`,
+    `Tagesboss ${name}: +${gap} Pins auf den Rest. Die anderen durften die Kugeln hinterhertragen.`,
+    `${name} dominierte mit ${gap} Pins Abstand. Weniger Wettkampf, mehr betreutes Verlieren für alle übrigen.`,
+    `${name} regierte durch. ${gap} Pins Schnittvorsprung — irgendwann war Gewinnen einfach nur noch unhöflich.`,
+  ] as const,
+  champComfortable: (name: string, gap: number) => [
+    `${name} schnappt sich den Abend mit ${gap} Pins Puffer — bequem genug, um dabei zu gähnen.`,
+    `Tagessieg für ${name}, ${gap} Pins vor dem Feld. Spannung sieht anders aus, aber wen juckt's.`,
+    `${name} vorne mit ${gap} Pins Schnittabstand. Solide, deutlich und eine Spur arrogant.`,
+  ] as const,
+  champClose: (name: string, gap: number) => [
+    `${name} gewinnt — aber nur um ${gap} Pins. Ein Hustenanfall und der Abend wäre gekippt.`,
+    `Hauchdünn an die Spitze: ${name} mit ${gap} Pins Vorsprung. Glück, Nerven oder beides.`,
+    `${name} holt den Tagessieg um magere ${gap} Pins. Die anderen dürfen sich zu Recht ärgern.`,
+  ] as const,
+  champDefault: (name: string) => [
+    `Am Ende steht ${name} oben. Verdient? Sagen wir: lückenlos dokumentiert.`,
+    `Tagessieger: ${name}. Den Rest des Abends bitte selbst verdrängen.`,
+    `${name} gewinnt den Abend. Glückwunsch, der Pokal bleibt imaginär.`,
+  ] as const,
+  shoutoutTopScore: (name: string, score: number) => [
+    `Höchstwert des Abends: ${name} mit ${score} — kurz war es unangenehm still in der Halle.`,
+    `${name} knallte ${score} auf die Bahn, das Tagespeak. Respekt, wenn auch zähneknirschend.`,
+    `Bestes Einzelspiel: ${score} von ${name}. Einmal kurz so getan, als wäre das alles ganz leicht.`,
+  ] as const,
+  underdogHero: (name: string, pct: number) => [
+    `${name} hat sich ${pct}% über den eigenen Schnitt gemogelt — Plot-Twist des Abends.`,
+    `Überraschung des Tages: ${name}, ${pct}% über Normalform. Heimlich trainiert oder gutes Bier?`,
+    `${name} lief ${pct}% heißer als sonst. Die eigene Statistik guckt seitdem verstört.`,
+  ] as const,
+  lowlight: (name: string) => [
+    `Ganz unten: ${name} — irgendjemand muss den anderen ja das gute Gefühl schenken.`,
+    `${name} sammelte zuverlässig die rote Laterne ein. Kein Pokal, aber viel Mitleid.`,
+    `Am Tabellenende wartete ${name}. Wichtig fürs Ökosystem, tröstlich für den Rest.`,
+  ] as const,
+  lowlightOpen: (name: string, rate: number) => [
+    `${name} verschenkte mit ${rate}% offenen Frames genug Pins für eine Spendenquittung.`,
+    `${name} und die offenen Frames (${rate}%): eine Liebesgeschichte, die niemand bestellt hat.`,
+    `${rate}% offene Frames bei ${name}. Die Pins durften überdurchschnittlich lange stehen bleiben.`,
+  ] as const,
+} as const;
+
 // --- Game excitement: tension index commentary ---
 export const excitement = {
   insane: [

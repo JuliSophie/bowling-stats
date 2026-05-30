@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import GamePreviewCard from '@/components/game-preview-card';
 import { useStickyState } from '@/lib/use-sticky-state';
+import { formatDateDE } from '@/lib/frame-utils';
 import type { GameRead } from '@/types';
 
 type GameDayPreviewCardProps = {
@@ -14,15 +15,6 @@ type GameDayPreviewCardProps = {
   onExpandedGameChange?: (gameId: number | null) => void;
   defaultOpen?: boolean;
 };
-
-const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
-const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-
-function formatDateDE(isoDate: string): string {
-  const date = new Date(isoDate + 'T00:00:00');
-  if (Number.isNaN(date.getTime())) return isoDate;
-  return `${WEEKDAYS[date.getDay()]}, ${date.getDate()}. ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
-}
 
 function buildDayPlayers(games: GameRead[]) {
   const playerPins = new Map<string, number>();
@@ -74,7 +66,7 @@ export default function GameDayPreviewCard({
             {dayPlayers.map((player, index) => (
               <span
                 key={player.name}
-                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${index === 0 ? 'winner-chip' : 'bg-lane-100 text-lane-700'}`}
+                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${index === 0 ? 'winner-chip' : 'bg-lane-100 text-lane-900'}`}
               >
                 {index === 0 ? '👑 ' : ''}{player.name}: {player.pins}
               </span>

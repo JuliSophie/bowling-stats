@@ -17,6 +17,7 @@ import {
   playerDayContext,
   totalPinsBenchmark,
   underdogBenchmark,
+  buildDayRecap,
 } from '@/lib/trash-talk';
 import type { FrameData, GameRead } from '@/types';
 import {
@@ -25,16 +26,19 @@ import {
   ComposedChart,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { PLAYER_COLORS } from '@/lib/constants';
-import { type FrameType, getFrameType, isOpenFrame, median, parseCumulative, formatNullableScore } from '@/lib/frame-utils';
+import { type FrameType, getFrameType, isOpenFrame, median, parseCumulative, formatNullableScore, formatDateDE } from '@/lib/frame-utils';
 import InfoTip from '@/components/ui/info-tip';
 import BenchmarkBar from '@/components/ui/benchmark-bar';
 import { StatCard } from '@/components/ui/stat-card';
+import SectionCard from '@/components/ui/section-card';
+import StatSection from '@/components/ui/stat-section';
+import CardGrid from '@/components/ui/card-grid';
+import ChartFrame from '@/components/ui/chart-frame';
 import ChartToggle from '@/components/ui/chart-toggle';
 
 type DayPlayerStats = {
@@ -347,49 +351,67 @@ function buildScoreDifferenceDayChart(games: GameRead[], mode: CumulativeChartMo
   return { data, lines: cumulativeChart.lines };
 }
 
+// Per player, builds two synthetic envelope lines: the best (highest) and worst
+// (lowest) cumulative score reached at *each individual frame* across all their
+// games — not tied to a single game. So a strong start in one game and a strong
+// finish in another both surface on the "best" line.
 function buildDayGameHistoryChart(games: GameRead[]) {
   const sortedGames = games.slice().sort((a, b) => a.id - b.id);
   const playerColorIndex = new Map<string, number>();
-  const lines: { key: string; name: string; color: string; playerName: string }[] = [];
-  const data: Record<string, string | number>[] = Array.from({ length: 10 }, (_, frameIndex) => ({ frame: `${frameIndex + 1}`, roundNumber: (frameIndex + 1) * 10 }));
-  const rangeValues = new Map<string, { min: number[]; max: number[] }>();
+  // player -> per-frame collected cumulative values
+  const frameValues = new Map<string, number[][]>();
+  const gameCounts = new Map<string, number>();
 
-  sortedGames.forEach((game, gameIndex) => {
+  sortedGames.forEach((game) => {
     game.scores.forEach((score) => {
       if (!playerColorIndex.has(score.player_name)) playerColorIndex.set(score.player_name, playerColorIndex.size);
-      const colorIndex = playerColorIndex.get(score.player_name) ?? 0;
-      const key = `game_${game.id}_${score.player_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
-      lines.push({ key, name: `Spiel ${gameIndex + 1} · ${score.player_name}`, color: PLAYER_COLORS[colorIndex % PLAYER_COLORS.length], playerName: score.player_name });
-      const range = rangeValues.get(score.player_name) ?? { min: Array(10).fill(Number.POSITIVE_INFINITY), max: Array(10).fill(Number.NEGATIVE_INFINITY) };
-
+      gameCounts.set(score.player_name, (gameCounts.get(score.player_name) ?? 0) + 1);
+      const perFrame = frameValues.get(score.player_name) ?? Array.from({ length: 10 }, () => [] as number[]);
       score.frames.forEach((frame, frameIndex) => {
         const cumulative = parseInt(String((frame as FrameData).cumulative ?? ''), 10);
-        if (!Number.isNaN(cumulative) && data[frameIndex]) {
-          data[frameIndex][key] = cumulative;
-          range.min[frameIndex] = Math.min(range.min[frameIndex], cumulative);
-          range.max[frameIndex] = Math.max(range.max[frameIndex], cumulative);
-        }
+        if (!Number.isNaN(cumulative) && frameIndex < 10) perFrame[frameIndex].push(cumulative);
       });
-      rangeValues.set(score.player_name, range);
+      frameValues.set(score.player_name, perFrame);
     });
   });
 
-  const legend = [...playerColorIndex.entries()].map(([name, index]) => ({ name, color: PLAYER_COLORS[index % PLAYER_COLORS.length] }));
-  const ranges = legend.map((item) => {
-    const lowKey = `range_${item.name}_low`.replace(/[^a-zA-Z0-9_]/g, '_');
-    const diffKey = `range_${item.name}_diff`.replace(/[^a-zA-Z0-9_]/g, '_');
-    const range = rangeValues.get(item.name);
-    if (range) {
-      range.min.forEach((min, frameIndex) => {
-        const max = range.max[frameIndex];
-        if (Number.isFinite(min) && Number.isFinite(max)) {
-          data[frameIndex][lowKey] = min;
-          data[frameIndex][diffKey] = max - min;
-        }
-      });
+  const data: Record<string, string | number>[] = Array.from({ length: 10 }, (_, frameIndex) => ({ frame: `${frameIndex + 1}`, roundNumber: (frameIndex + 1) * 10 }));
+  const lines: { key: string; name: string; color: string; playerName: string; dashed: boolean }[] = [];
+  const ranges: { playerName: string; color: string; lowKey: string; diffKey: string }[] = [];
+
+  for (const [name, perFrame] of frameValues.entries()) {
+    const colorIndex = playerColorIndex.get(name) ?? 0;
+    const color = PLAYER_COLORS[colorIndex % PLAYER_COLORS.length];
+    const single = (gameCounts.get(name) ?? 0) <= 1;
+
+    const bestKey = `best_${name}`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const worstKey = `worst_${name}`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const lowKey = `range_${name}_low`.replace(/[^a-zA-Z0-9_]/g, '_');
+    const diffKey = `range_${name}_diff`.replace(/[^a-zA-Z0-9_]/g, '_');
+
+    perFrame.forEach((values, frameIndex) => {
+      if (values.length === 0) return;
+      const max = Math.max(...values);
+      const min = Math.min(...values);
+      data[frameIndex][bestKey] = max;
+      if (!single) {
+        data[frameIndex][worstKey] = min;
+        data[frameIndex][lowKey] = min;
+        data[frameIndex][diffKey] = max - min;
+      }
+    });
+
+    if (single) {
+      lines.push({ key: bestKey, name, color, playerName: name, dashed: false });
+      continue;
     }
-    return { playerName: item.name, color: item.color, lowKey, diffKey };
-  });
+
+    lines.push({ key: bestKey, name: `${name} · Bestes je Frame`, color, playerName: name, dashed: false });
+    lines.push({ key: worstKey, name: `${name} · Schlechtestes je Frame`, color, playerName: name, dashed: true });
+    ranges.push({ playerName: name, color, lowKey, diffKey });
+  }
+
+  const legend = [...playerColorIndex.entries()].map(([name, index]) => ({ name, color: PLAYER_COLORS[index % PLAYER_COLORS.length] }));
   return { data, lines, legend, ranges };
 }
 
@@ -471,6 +493,24 @@ export default function DayDetailPage() {
   const bestWinningPoints = dayWinningPointStats.bestWinning?.points ?? null;
   const lowestWinningPoints = dayWinningPointStats.lowestWinning?.points ?? null;
   const highestLosingPoints = dayWinningPointStats.highestLosing?.points ?? null;
+
+  const dayWinner = dayPlayers[0];
+  const dayRunnerUp = dayPlayers[1];
+  const dayLastPlace = dayPlayers.length > 1 ? dayPlayers[dayPlayers.length - 1] : null;
+  const dayRecap = dayWinner
+    ? buildDayRecap({
+        seed: `${date}:${dayGames.length}:${dayPlayers.length}`,
+        gameCount: dayGames.length,
+        playerCount: dayPlayers.length,
+        winnerName: dayWinner.name,
+        gapToSecond: dayRunnerUp ? dayWinner.avgScore - dayRunnerUp.avgScore : 0,
+        topScorer: dayWinningPointStats.bestWinning
+          ? { name: dayWinningPointStats.bestWinning.playerName, score: dayWinningPointStats.bestWinning.points }
+          : null,
+        underdog: underdog ? { name: underdog.name, upliftPercent: underdog.upliftPercent } : null,
+        worst: dayLastPlace ? { name: dayLastPlace.name, openFrameRate: dayLastPlace.openFrameRate } : null,
+      })
+    : '';
   const showCumulativeChart = cumulativeDayChart.lines.length > 0 && dayGames.length > 1;
   const showDifferenceChart = scoreDifferenceDayChart.lines.length > 1 && dayGames.length > 1;
   const showHistoryChart = dayGameHistoryChart.lines.length > 1;
@@ -502,20 +542,26 @@ export default function DayDetailPage() {
       <main className="app-main max-w-5xl">
         <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start back-button" />
 
-        <div className="section-card p-5">
-          <h1 className="text-2xl font-bold text-lane-900">{date}</h1>
-          <p className="text-sm text-lane-600 mt-2">{dayGames.length} Spiel{dayGames.length !== 1 ? 'e' : ''} · Ort: {dayGames[0].location}</p>
+        <SectionCard>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-lane-500">Spielabend</p>
+          <h1 className="text-2xl font-bold text-lane-900 mt-1">{formatDateDE(date)}</h1>
+          <p className="text-sm text-lane-600 mt-2">
+            {dayGames.length} Spiel{dayGames.length !== 1 ? 'e' : ''} · {dayGames[0].location}
+            {dayPlayers[0] ? ` · 👑 ${dayPlayers[0].name} (${dayPlayers[0].totalPins} Pins)` : ''}
+          </p>
+          {dayRecap && (
+            <p className="mt-4 rounded-xl border border-lane-200 bg-lane-50/50 p-4 text-sm leading-relaxed text-lane-700">{dayRecap}</p>
+          )}
           
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <CardGrid cols={4} dense className="mt-4">
             <StatCard label="Gesamtpunkte" value={totalPins} info="Alle Pins des Tages zusammen. Viel Zahl heißt nicht automatisch Kunst, aber immerhin viel Lärm auf der Bahn." benchmark={totalPinsBenchmark(totalPins, dayPlayers.length, dayGames.length)} />
             <StatCard label="Spiele" value={dayGames.length} info="Anzahl Spiele an diesem Tag. Je mehr Spiele, desto weniger kann man alles auf 'war nur Warmwerfen' schieben." benchmark={gamesBenchmark(dayGames.length)} />
             <StatCard label="Ø pro Spiel" value={avgPinsPerGame} info="Gesamtpins pro Spiel über alle Spieler. Pro Kopf betrachtet zeigt es, ob der Abend sportlich war oder nur betreutes Kugelrollen." benchmark={averagePerGameBenchmark(avgPinsPerGame, dayPlayers.length)} />
             <StatCard label="Underdog des Abends" value={underdog?.name ?? 'Nicht genug Daten'} sub={underdog ? `${signedPercent(underdog.upliftPercent)} vs Ø (${underdog.dayAverage} / ${underdog.globalAverage})` : undefined} info="Wer heute am stärksten über dem eigenen Schnitt gespielt hat. Also: wer plötzlich so tat, als wäre das normal." benchmark={underdogBenchmark(underdog)} />
-          </div>
-        </div>
+          </CardGrid>
+        </SectionCard>
 
-        <div className="section-card p-5">
-          <h2 className="text-lg font-semibold text-lane-800 mb-4">Spieler ({dayPlayers.length})</h2>
+        <SectionCard title={`Spieler (${dayPlayers.length})`}>
           <div className="space-y-3">
             {dayPlayers.map((player, i) => (
               <Link key={player.name} href={`/stats/players/${encodeURIComponent(player.name)}`} className={`flex items-center justify-between gap-3 rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${i === 0 ? 'winner-card' : 'border-lane-200 bg-lane-50 hover:bg-white'}`}>
@@ -535,11 +581,10 @@ export default function DayDetailPage() {
               </Link>
             ))}
           </div>
-        </div>
+        </SectionCard>
 
         {dayPlayerAnalysis.length > 0 && (
-          <div className="section-card p-5">
-            <h2 className="text-lg font-semibold text-lane-800 mb-4">Spieler-Analyse</h2>
+          <SectionCard title="Spieler-Analyse">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-xs">
                 <thead>
@@ -572,19 +617,21 @@ export default function DayDetailPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SectionCard>
         )}
 
-        <div className="section-card p-5">
-          <h2 className="text-lg font-semibold text-lane-800">Sieg- und Verlierer-Punkte des Spieltags</h2>
-          <p className="mt-1 text-xs text-lane-600">Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war.</p>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatSection
+          title="Sieg- und Verlierer-Punkte des Spieltags"
+          subtitle="Interessant für den Abend: zeigt, welche Punktzahl heute für Siege reichte und wie hoch die stärkste Niederlage war."
+          cols={4}
+          dense
+        >
             <StatCard
               label="Bester Sieg"
               value={formatNullableScore(bestWinningPoints)}
               sub={dayWinningPointStats.bestWinning ? `${dayWinningPointStats.bestWinning.playerName} · ${dayWinningPointStats.bestWinning.gameLabel}` : undefined}
               info="Höchster Score, der heute ein Spiel gewonnen hat. Das ist der Abend-Peak — die Stelle, an der jemand kurz unangenehm gut war."
-              benchmark={dayScoreBenchmark(bestWinningPoints)}
+              benchmark={dayScoreBenchmark(bestWinningPoints, 'bestWin')}
               href={dayWinningPointStats.bestWinning ? `/stats/games/${dayWinningPointStats.bestWinning.gameId}` : undefined}
             />
             <StatCard
@@ -592,10 +639,10 @@ export default function DayDetailPage() {
               value={formatNullableScore(lowestWinningPoints)}
               sub={dayWinningPointStats.lowestWinning ? `${dayWinningPointStats.lowestWinning.playerName} · ${dayWinningPointStats.lowestWinning.gameLabel}` : undefined}
               info={lowestWinInfo(lowestWinningPoints, highestLosingPoints)}
-              benchmark={dayScoreBenchmark(lowestWinningPoints)}
+              benchmark={dayScoreBenchmark(lowestWinningPoints, 'lowWin')}
               href={dayWinningPointStats.lowestWinning ? `/stats/games/${dayWinningPointStats.lowestWinning.gameId}` : undefined}
             />
-            <StatCard label="Ø Siegpunkte" value={formatNullableScore(dayWinningPointStats.averageWinningPoints)} info="Durchschnitt aller Sieg-Scores heute. Das ist die Tages-Schwelle zwischen 'gewonnen' und 'nett versucht'." benchmark={dayScoreBenchmark(dayWinningPointStats.averageWinningPoints)} />
+            <StatCard label="Ø Siegpunkte" value={formatNullableScore(dayWinningPointStats.averageWinningPoints)} info="Durchschnitt aller Sieg-Scores heute. Das ist die Tages-Schwelle zwischen 'gewonnen' und 'nett versucht'." benchmark={dayScoreBenchmark(dayWinningPointStats.averageWinningPoints, 'avgWin')} />
             <StatCard
               label="Höchste Niederlage"
               value={formatNullableScore(highestLosingPoints)}
@@ -604,18 +651,15 @@ export default function DayDetailPage() {
               benchmark={dayLossScoreBenchmark(highestLosingPoints)}
               href={dayWinningPointStats.highestLosing ? `/stats/games/${dayWinningPointStats.highestLosing.gameId}` : undefined}
             />
-          </div>
-        </div>
+        </StatSection>
 
         {showCumulativeChart && (
-          <section className="group section-card">
-            <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('cumulative')}>
-              <div>
-                <h2 className="text-lg font-semibold text-lane-800">Kumulative Punkte über den Spielabend</h2>
-              </div>
-              <span className={`mt-1 text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'cumulative' ? 'rotate-180' : ''}`}>⌄</span>
-            </button>
-            {effectiveOpenChartSection === 'cumulative' && <div className="px-5 pb-5">
+          <SectionCard
+            collapsible
+            open={effectiveOpenChartSection === 'cumulative'}
+            onToggle={() => toggleChartSection('cumulative')}
+            title="Kumulative Punkte über den Spielabend"
+          >
               <div className="mb-4 flex flex-wrap justify-end gap-2">
                 <ChartToggle active={cumulativeChartMode === 'frames'} label="Jedes Frame" onClick={() => setCumulativeChartMode('frames')} />
                 <ChartToggle active={cumulativeChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setCumulativeChartMode('rounds')} />
@@ -628,8 +672,7 @@ export default function DayDetailPage() {
                   </span>
                 ))}
               </div>
-              <div style={{ touchAction: 'none' }}>
-                <ResponsiveContainer width="100%" height={320}>
+              <ChartFrame height={320}>
                   <LineChart data={cumulativeDayChart.data} margin={{ top: 12, right: 24, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} label={{ value: cumulativeChartMode === 'frames' ? 'Spiel / Frame' : 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
@@ -646,22 +689,18 @@ export default function DayDetailPage() {
                       <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={cumulativeChartMode === 'rounds' ? { r: 4 } : false} activeDot={{ r: 6 }} name={line.name} />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>}
-          </section>
+              </ChartFrame>
+          </SectionCard>
         )}
 
         {showDifferenceChart && (
-          <section className="group section-card">
-            <button type="button" className="flex w-full cursor-pointer items-start justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('difference')}>
-              <div>
-                <h2 className="text-lg font-semibold text-lane-800">Punkteabstand über den Spielabend</h2>
-                <p className="mt-1 text-xs text-lane-600">Zeigt den Abstand zur jeweils führenden Person. Die Führung liegt bei 0, Rückstände sind negativ.</p>
-              </div>
-              <span className={`mt-1 text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'difference' ? 'rotate-180' : ''}`}>⌄</span>
-            </button>
-            {effectiveOpenChartSection === 'difference' && <div className="px-5 pb-5">
+          <SectionCard
+            collapsible
+            open={effectiveOpenChartSection === 'difference'}
+            onToggle={() => toggleChartSection('difference')}
+            title="Punkteabstand über den Spielabend"
+            subtitle="Zeigt den Abstand zur jeweils führenden Person. Die Führung liegt bei 0, Rückstände sind negativ."
+          >
               <div className="mb-4 flex flex-wrap justify-end gap-2">
                 <ChartToggle active={differenceChartMode === 'frames'} label="Jedes Frame" onClick={() => setDifferenceChartMode('frames')} />
                 <ChartToggle active={differenceChartMode === 'rounds'} label="Nur Endpunkte" onClick={() => setDifferenceChartMode('rounds')} />
@@ -674,8 +713,7 @@ export default function DayDetailPage() {
                   </span>
                 ))}
               </div>
-              <div style={{ touchAction: 'none' }}>
-                <ResponsiveContainer width="100%" height={320}>
+              <ChartFrame height={320}>
                   <LineChart data={scoreDifferenceDayChart.data} margin={{ top: 12, right: 24, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} label={{ value: differenceChartMode === 'frames' ? 'Spiel / Frame' : 'Spiel im Tagesverlauf', position: 'insideBottomRight', offset: -5 }} />
@@ -692,19 +730,18 @@ export default function DayDetailPage() {
                       <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.4} dot={differenceChartMode === 'rounds' ? { r: 4 } : false} activeDot={{ r: 6 }} name={line.name} />
                     ))}
                   </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>}
-          </section>
+              </ChartFrame>
+          </SectionCard>
         )}
 
         {showHistoryChart && (
-          <section className="group section-card">
-            <button type="button" className="flex w-full cursor-pointer items-center justify-between gap-4 p-5 text-left" onClick={() => toggleChartSection('history')}>
-              <h2 className="text-lg font-semibold text-lane-800">Alle Spielverläufe des Tages</h2>
-              <span className={`text-sm font-bold text-lane-500 transition ${effectiveOpenChartSection === 'history' ? 'rotate-180' : ''}`}>⌄</span>
-            </button>
-            {effectiveOpenChartSection === 'history' && <div className="px-5 pb-5">
+          <SectionCard
+            collapsible
+            open={effectiveOpenChartSection === 'history'}
+            onToggle={() => toggleChartSection('history')}
+            title="Beste & schlechteste Werte je Frame"
+            subtitle="Pro Person der höchste und niedrigste kumulierte Punktestand an jedem Frame — über alle Spiele des Tages, nicht an ein einzelnes Spiel gebunden. Die Fläche dazwischen zeigt die Spanne."
+          >
               <div className="mb-3 flex flex-wrap gap-2">
                 {dayGameHistoryChart.legend.map((item) => {
                   const hidden = hiddenDayPlayers.has(item.name);
@@ -722,8 +759,7 @@ export default function DayDetailPage() {
                   );
                 })}
               </div>
-              <div style={{ touchAction: 'none' }}>
-                <ResponsiveContainer width="100%" height={340}>
+              <ChartFrame height={340}>
                   <ComposedChart data={dayGameHistoryChart.data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                     <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
@@ -734,17 +770,14 @@ export default function DayDetailPage() {
                     ])}
                     <Line type="monotone" dataKey="roundNumber" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} activeDot={false} name="Rundenzahl" tooltipType="none" />
                     {dayGameHistoryChart.lines.map((line) => (
-                      <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={1.8} dot={false} activeDot={false} name={line.name} opacity={0.48} hide={hiddenDayPlayers.has(line.playerName)} />
+                      <Line key={line.key} type="monotone" dataKey={line.key} stroke={line.color} strokeWidth={2.2} dot={false} activeDot={{ r: 5 }} name={line.name} opacity={line.dashed ? 0.6 : 0.95} hide={hiddenDayPlayers.has(line.playerName)} />
                     ))}
                   </ComposedChart>
-                </ResponsiveContainer>
-              </div>
-            </div>}
-          </section>
+              </ChartFrame>
+          </SectionCard>
         )}
 
-        <div className="section-card p-5">
-          <h2 className="text-lg font-semibold text-lane-800 mb-4">Spiele ({dayGames.length})</h2>
+        <SectionCard title={`Spiele (${dayGames.length})`}>
           <div className="space-y-2">
             {dayGames.map((game, index) => (
               <GamePreviewCard
@@ -758,7 +791,7 @@ export default function DayDetailPage() {
               />
             ))}
           </div>
-        </div>
+        </SectionCard>
       </main>
     </>
   );

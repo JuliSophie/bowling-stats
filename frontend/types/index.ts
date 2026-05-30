@@ -23,6 +23,7 @@ export type SubCell = {
 export type CornerGuessResult = {
   filename: string;
   guessed_corners: ManualCorner[];
+  captured_at?: string | null;
   warnings: string[];
 };
 
@@ -74,6 +75,7 @@ export type ConfirmedScore = {
 
 export type GameCreate = {
   played_at: string;
+  played_at_time?: string | null;
   location: string;
   mode?: string;
   scores: ConfirmedScore[];
@@ -99,6 +101,7 @@ export type StoredScore = {
 export type GameRead = {
   id: number;
   played_at: string;
+  played_at_time?: string | null;
   location: string;
   mode: string;
   scores: StoredScore[];

@@ -9,7 +9,21 @@ import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
 import { buildGameReport } from '@/lib/game-report';
 import { scoreBenchmark, playerScoreBenchmark, excitementTrash, comebackTrash, bigLeadTrash, closestMomentTrash, lateDramaTrash } from '@/lib/trash-talk';
 import { derivePlayerSummaries } from '@/lib/player-stats';
+import { formatPlayedAtTime, formatDateDE } from '@/lib/frame-utils';
+import Card from '@/components/ui/card';
+import SectionCard from '@/components/ui/section-card';
+import CardGrid from '@/components/ui/card-grid';
+import InfoTip from '@/components/ui/info-tip';
 import GameChart from '@/components/game-chart';
+
+// Spannungs-Index = ((Führungswechsel + 1) / (Endabstand + 1)) · (1 + Drama-Faktor).
+// Levels mirror the thresholds in excitementTrash().
+const EXCITEMENT_LEVELS = [
+  { label: 'Einschläfernd', range: '< 0.5', icon: '😴', min: -Infinity, max: 0.5 },
+  { label: 'Solide', range: '0.5–1.5', icon: '🙂', min: 0.5, max: 1.5 },
+  { label: 'Packend', range: '1.5–3', icon: '🔥', min: 1.5, max: 3 },
+  { label: 'Wahnsinn', range: '≥ 3', icon: '🤯', min: 3, max: Infinity },
+];
 
 export default function GameDetailPage() {
   const pathname = usePathname();
@@ -47,6 +61,23 @@ export default function GameDetailPage() {
   const report = buildGameReport(game);
   const playerSummaries = derivePlayerSummaries(games);
   const maxScore = Math.max(...game.scores.map((s) => s.total_score));
+  const playedTime = formatPlayedAtTime(game.played_at_time);
+
+  // Position within that evening's session (sorted by capture time, then id).
+  const eveningGames = games
+    .filter((g) => g.played_at === game.played_at)
+    .sort((a, b) => (a.played_at_time ?? '').localeCompare(b.played_at_time ?? '') || a.id - b.id);
+  const eveningIndex = eveningGames.findIndex((g) => g.id === game.id);
+
+  // Global chronological order so prev/next walks the evening, then rolls into the adjacent day.
+  const orderedGames = [...games].sort((a, b) =>
+    a.played_at.localeCompare(b.played_at)
+    || (a.played_at_time ?? '').localeCompare(b.played_at_time ?? '')
+    || a.id - b.id,
+  );
+  const orderedIndex = orderedGames.findIndex((g) => g.id === game.id);
+  const prevGame = orderedIndex > 0 ? orderedGames[orderedIndex - 1] : null;
+  const nextGame = orderedIndex >= 0 && orderedIndex < orderedGames.length - 1 ? orderedGames[orderedIndex + 1] : null;
   const lateDrama = excitement && report?.leaderAfterFrame9 && report.winner && report.leaderAfterFrame9 !== report.winner
     ? lateDramaTrash(report.leaderAfterFrame9, report.winner)
     : null;
@@ -55,23 +86,36 @@ export default function GameDetailPage() {
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
-        <BackButton className="flex items-center gap-1.5 self-start back-button" />
+        <div className="flex items-center justify-between gap-2">
+          <BackButton className="flex items-center gap-1.5 self-start back-button" />
+          <div className="flex items-center gap-2">
+            {prevGame ? (
+              <Link href={`/stats/games/${prevGame.id}`} className="back-button" aria-label="Vorheriges Spiel">← Vorheriges</Link>
+            ) : (
+              <span className="back-button pointer-events-none opacity-40" aria-disabled="true">← Vorheriges</span>
+            )}
+            {nextGame ? (
+              <Link href={`/stats/games/${nextGame.id}`} className="back-button" aria-label="Nächstes Spiel">Nächstes →</Link>
+            ) : (
+              <span className="back-button pointer-events-none opacity-40" aria-disabled="true">Nächstes →</span>
+            )}
+          </div>
+        </div>
 
-        <div className="section-card p-5">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <h1 className="text-2xl font-bold text-lane-900">{game.location}</h1>
-              <p className="text-sm text-lane-600 mt-1">{game.played_at}</p>
-            </div>
+        <SectionCard>
+          <div className="mb-3">
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-lane-500">{game.location}</p>
+            <h1 className="text-2xl font-bold text-lane-900 mt-1">Spiel {eveningIndex + 1} von {eveningGames.length}</h1>
+            <p className="text-sm text-lane-600 mt-1">{formatDateDE(game.played_at)}{playedTime && ` · ${playedTime} Uhr`}</p>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <CardGrid cols={3} className="mt-4">
             {game.scores.map((score) => {
               const isWinner = score.total_score === maxScore;
               const summary = playerSummaries.find((p) => p.name === score.player_name);
               const benchmark = summary
-                ? playerScoreBenchmark(score.total_score, summary.avgScore, isWinner ? 'winningPeak' : 'peak')
-                : scoreBenchmark(score.total_score);
+                ? playerScoreBenchmark(score.total_score, summary.avgScore, isWinner ? 'winningPeak' : 'peak', score.player_name)
+                : scoreBenchmark(score.total_score, score.player_name);
               return (
                 <Link key={score.player_name} href={`/stats/players/${encodeURIComponent(score.player_name)}`} className={`block rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${isWinner ? 'winner-card' : 'border-lane-200 bg-lane-50'}`}>
                   <div className="flex items-center justify-between gap-2">
@@ -90,72 +134,101 @@ export default function GameDetailPage() {
                 </Link>
               );
             })}
-          </div>
+          </CardGrid>
 
           {excitement && (
             <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50/70 p-4">
               <div className="grid gap-3 sm:grid-cols-4">
                 <div>
-                  <p className="text-xs text-orange-700">Spannungs-Index</p>
+                  <p className="flex items-center gap-1 text-xs text-orange-700">
+                    Spannungs-Index
+                    <InfoTip text="Misst, wie spannend das Spiel war. Formel: (Führungswechsel + 1) ÷ (Endabstand + 1) × (1 + Drama-Faktor). Heißt: ein knappes Ende, viele Führungswechsel und spätes Drama treiben den Wert hoch — ein früh entschiedenes Spiel drückt ihn runter." />
+                  </p>
                   <p className="text-xl font-bold text-orange-900">🔥 {formatTensionIndex(excitement.tensionIndex)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-orange-700">Führungswechsel</p>
+                  <p className="flex items-center gap-1 text-xs text-orange-700">
+                    Führungswechsel
+                    <InfoTip text="Wie oft die Führung von Frame zu Frame zu einer anderen Person wechselte. Jeder Wechsel macht das Spiel spannender." />
+                  </p>
                   <p className="text-lg font-semibold text-orange-900">{excitement.leadChanges}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-orange-700">Abstand 9 → Ende</p>
+                  <p className="flex items-center gap-1 text-xs text-orange-700">
+                    Abstand 9 → Ende
+                    <InfoTip text="Punkteabstand zwischen Platz 1 und 2 nach dem 9. Frame und am Ende. Schrumpft er zum Schluss, war es ein enges Finish — und der Drama-Faktor steigt." />
+                  </p>
                   <p className="text-lg font-semibold text-orange-900">{excitement.gapAfterFrame9} → {excitement.finalGap}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-orange-700">Drama-Faktor</p>
+                  <p className="flex items-center gap-1 text-xs text-orange-700">
+                    Drama-Faktor
+                    <InfoTip text="Bonus für spätes Drama: zählt, um wie viel der Abstand auf den letzten Frames schrumpfte, plus einen festen Aufschlag, wenn die Führung erst im 10. Frame gekippt ist." />
+                  </p>
                   <p className="text-lg font-semibold text-orange-900">{excitement.dramaFactor}</p>
                 </div>
               </div>
               <p className="mt-3 text-xs font-semibold leading-relaxed text-orange-800">{excitementTrash(excitement.tensionIndex)}</p>
               {lateDrama && <p className="mt-1 text-xs font-semibold leading-relaxed text-orange-800">{lateDrama}</p>}
-            </div>
-          )}
-        </div>
 
-        {report && (
-          <div className="section-card p-5">
-            <div className="mb-4">
-              <h2 className="text-lg font-semibold text-lane-800">Match-Report</h2>
-              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-lane-600">{report.story}</p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {report.biggestLead && (
-                <div className="rounded-xl bg-lane-50 p-4">
-                  <p className="text-xs text-lane-500">Größter Vorsprung</p>
-                  <p className="text-lg font-semibold text-lane-900">{report.biggestLead.margin} Pins</p>
-                  <p className="text-xs text-lane-500">{report.biggestLead.playerName}, Frame {report.biggestLead.frame}</p>
-                  <p className="mt-2 text-[0.68rem] font-semibold leading-relaxed text-lane-600">{bigLeadTrash(report.biggestLead.margin, report.biggestLead.playerName)}</p>
+              <div className="mt-3 border-t border-orange-200/70 pt-3">
+                <p className="text-xs font-semibold text-orange-800">Was den Index hochtreibt</p>
+                <ul className="mt-1 space-y-0.5 text-xs leading-relaxed text-orange-700">
+                  <li>🎯 <strong>Knappes Ende:</strong> je kleiner der Endabstand, desto höher — ein Foto-Finish zählt am meisten.</li>
+                  <li>🔄 <strong>Führungswechsel:</strong> jeder Wechsel an der Spitze schraubt die Spannung nach oben.</li>
+                  <li>⏱️ <strong>Spätes Drama:</strong> schrumpfender Abstand auf den Schluss-Frames und vor allem eine Führungsübernahme im 10. Frame geben Extra-Punkte.</li>
+                </ul>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {EXCITEMENT_LEVELS.map((level) => {
+                    const active = excitement.tensionIndex >= level.min && excitement.tensionIndex < level.max;
+                    return (
+                      <span
+                        key={level.label}
+                        className={`rounded-full px-2 py-0.5 text-[0.68rem] font-semibold ${active ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700'}`}
+                      >
+                        {level.icon} {level.label} · {level.range}
+                      </span>
+                    );
+                  })}
                 </div>
-              )}
-              {report.closestMoment && (
-                <div className="rounded-xl bg-lane-50 p-4">
-                  <p className="text-xs text-lane-500">Knappster Moment</p>
-                  <p className="text-lg font-semibold text-lane-900">{report.closestMoment.margin} Pins</p>
-                  <p className="text-xs text-lane-500">nach Frame {report.closestMoment.frame}</p>
-                  <p className="mt-2 text-[0.68rem] font-semibold leading-relaxed text-lane-600">{closestMomentTrash(report.closestMoment.margin, report.closestMoment.frame)}</p>
-                </div>
-              )}
-              {report.comeback && report.comeback.pins > 0 && (
-                <div className="rounded-xl bg-lane-50 p-4">
-                  <p className="text-xs text-lane-500">Comeback</p>
-                  <p className="text-lg font-semibold text-lane-900">{report.comeback.pins} Pins</p>
-                  <p className="text-xs text-lane-500">aufgeholt von {report.comeback.playerName}</p>
-                  <p className="mt-2 text-[0.68rem] font-semibold leading-relaxed text-lane-600">{comebackTrash(report.comeback.pins)}</p>
-                </div>
-              )}
-              <div className="rounded-xl bg-lane-50 p-4">
-                <p className="text-xs text-lane-500">Entscheidendes Frame</p>
-                <p className="text-lg font-semibold text-lane-900">{report.decidingFrame ? `Frame ${report.decidingFrame}` : '–'}</p>
-                <p className="text-xs text-lane-500">Führung bis zum Ende gehalten</p>
               </div>
             </div>
+          )}
+        </SectionCard>
+
+        {report && (
+          <SectionCard title="Match-Report" subtitle={report.story}>
+            <CardGrid cols={4}>
+              {report.biggestLead && (
+                <Card
+                  title="Größter Vorsprung"
+                  header={`${report.biggestLead.margin} Pins`}
+                  subtext={`${report.biggestLead.playerName}, Frame ${report.biggestLead.frame}`}
+                  trashTalk={bigLeadTrash(report.biggestLead.margin, report.biggestLead.playerName)}
+                />
+              )}
+              {report.closestMoment && (
+                <Card
+                  title="Knappster Moment"
+                  header={`${report.closestMoment.margin} Pins`}
+                  subtext={`nach Frame ${report.closestMoment.frame}`}
+                  trashTalk={closestMomentTrash(report.closestMoment.margin, report.closestMoment.frame)}
+                />
+              )}
+              {report.comeback && report.comeback.pins > 0 && (
+                <Card
+                  title="Comeback"
+                  header={`${report.comeback.pins} Pins`}
+                  subtext={`aufgeholt von ${report.comeback.playerName}`}
+                  trashTalk={comebackTrash(report.comeback.pins)}
+                />
+              )}
+              <Card
+                title="Entscheidendes Frame"
+                header={report.decidingFrame ? `Frame ${report.decidingFrame}` : '–'}
+                subtext="Führung bis zum Ende gehalten"
+              />
+            </CardGrid>
 
             <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1.25fr]">
               <div className="rounded-xl border border-lane-100 bg-lane-50/50 p-4">
@@ -202,13 +275,12 @@ export default function GameDetailPage() {
                 </table>
               </div>
             </div>
-          </div>
+          </SectionCard>
         )}
 
-        <div className="section-card p-4">
-          <h2 className="mb-4 text-lg font-semibold text-lane-800">Spielverlauf</h2>
+        <SectionCard padding="md" title="Spielverlauf">
           <GameChart game={game} allGames={games} />
-        </div>
+        </SectionCard>
       </main>
     </>
   );

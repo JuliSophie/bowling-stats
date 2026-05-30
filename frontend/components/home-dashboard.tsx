@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useMemo } from 'react';
 
+import Card from '@/components/ui/card';
 import { useGames } from '@/lib/use-games';
 import type { GameRead } from '@/types';
 
@@ -51,14 +52,7 @@ function buildDashboardStats(games: GameRead[]): DashboardStats {
 
 function StatTile({ label, value, hint, href }: { label: string; value: string; hint: string; href: string }) {
   return (
-    <Link href={href} className="group block rounded-3xl border p-4 shadow-inner subtle-surface transition hover:-translate-y-0.5 hover:shadow-lg">
-      <p className="eyebrow">{label}</p>
-      <div className="mt-2 flex items-end justify-between gap-3">
-        <p className="text-2xl font-black text-lane-950">{value}</p>
-        <span className="text-sm font-black text-coral opacity-75 transition group-hover:translate-x-0.5 group-hover:opacity-100">→</span>
-      </div>
-      <p className="mt-1 text-xs font-medium text-lane-600">{hint}</p>
-    </Link>
+    <Card title={label} eyebrow header={value} headerSize="xl" subtext={hint} href={href} />
   );
 }
 
@@ -131,34 +125,20 @@ export default function HomeDashboard() {
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <Link href="/upload" className="action-card">
-            <span className="icon-badge bg-coral/20 text-coral">↥</span>
-            <span className="font-bold text-lane-950">Upload</span>
-            <span className="text-sm text-lane-600">Neues Bild auswerten</span>
-          </Link>
-          <Link href="/stats/games" className="action-card">
-            <span className="icon-badge bg-aqua/25 text-lane-800">🎳</span>
-            <span className="font-bold text-lane-950">Spiele</span>
-            <span className="text-sm text-lane-600">Scorecards vergleichen</span>
-          </Link>
-          <Link href="/stats/players" className="action-card">
-            <span className="icon-badge bg-mint/60 text-lane-800">★</span>
-            <span className="font-bold text-lane-950">Bestenliste</span>
-            <span className="text-sm text-lane-600">Ranglisten und Bestwerte</span>
-          </Link>
+          <Card href="/upload" icon={<span className="icon-badge bg-coral/20 text-coral">↥</span>} header="Upload" subtext="Neues Bild auswerten" />
+          <Card href="/stats/games" icon={<span className="icon-badge bg-aqua/25 text-lane-800">🎳</span>} header="Spiele" subtext="Scorecards vergleichen" />
+          <Card href="/stats/players" icon={<span className="icon-badge bg-mint/60 text-lane-800">★</span>} header="Bestenliste" subtext="Ranglisten und Bestwerte" />
         </div>
 
         {stats.lastGame && (
-          <Link href={`/stats/games/${stats.lastGame.id}`} className="mt-4 block rounded-3xl border border-lane-200/70 bg-lane-50/80 p-4 transition hover:-translate-y-0.5 hover:bg-white hover:shadow-lg">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-lane-500">Letztes Spiel</p>
-            <div className="mt-2 flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="truncate text-lg font-black text-lane-950">{stats.lastGame.location}</p>
-                <p className="text-sm text-lane-600">{stats.lastGame.played_at} · {stats.lastGame.scores.length} Spieler</p>
-              </div>
-              <span className="text-lane-400">→</span>
-            </div>
-          </Link>
+          <Card
+            className="mt-4"
+            href={`/stats/games/${stats.lastGame.id}`}
+            title="Letztes Spiel"
+            eyebrow
+            header={stats.lastGame.location}
+            subtext={`${stats.lastGame.played_at} · ${stats.lastGame.scores.length} Spieler`}
+          />
         )}
       </section>
     </div>

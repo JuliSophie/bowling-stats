@@ -1,3 +1,6 @@
+from datetime import datetime
+from io import BytesIO
+
 import cv2
 
 from app.schemas import (
@@ -24,15 +27,57 @@ from app.services.line_detection import (
 from app.services.ocr_image import ImagePreprocessor
 
 
+def _extract_capture_datetime(file_bytes: bytes) -> datetime | None:
+    """Best-effort read of the photo's capture time from EXIF metadata."""
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        with Image.open(BytesIO(file_bytes)) as img:
+            exif = img.getexif()
+    except Exception:
+        return None
+
+    if not exif:
+        return None
+
+    candidates: list[str] = []
+    try:
+        # DateTimeOriginal / DateTimeDigitized live in the Exif sub-IFD.
+        exif_ifd = exif.get_ifd(0x8769)
+        for tag in (36867, 36868):
+            value = exif_ifd.get(tag)
+            if value:
+                candidates.append(str(value))
+    except Exception:
+        pass
+
+    base = exif.get(306)  # DateTime (file modification time set by the camera)
+    if base:
+        candidates.append(str(base))
+
+    for raw in candidates:
+        text_value = raw.strip()
+        for fmt in ("%Y:%m:%d %H:%M:%S", "%Y:%m:%d %H:%M"):
+            try:
+                return datetime.strptime(text_value, fmt)
+            except ValueError:
+                continue
+    return None
+
+
 def guess_scorecard_corners(file_bytes: bytes, filename: str) -> CornerGuessResult:
     image = ImagePreprocessor.decode_image(file_bytes)
     guessed_corners = ImagePreprocessor.guess_monitor_corners(image)
+    captured_at = _extract_capture_datetime(file_bytes)
     warnings: list[str] = []
     if guessed_corners:
         warnings.append("Automatisch erkannte Monitor-Ecken wurden vorgeschlagen. Bitte prüfen und bei Bedarf korrigieren.")
     else:
         warnings.append("Es konnten keine sicheren Monitor-Ecken erkannt werden. Bitte die vier Ecken manuell setzen.")
-    return CornerGuessResult(filename=filename, guessed_corners=guessed_corners, warnings=warnings)
+    return CornerGuessResult(filename=filename, guessed_corners=guessed_corners, captured_at=captured_at, warnings=warnings)
 
 
 def build_rectified_preview(

@@ -11,13 +11,13 @@ import {
   YAxis,
   Tooltip,
   Legend,
-  ResponsiveContainer,
 } from 'recharts';
 import { PLAYER_COLORS } from '@/lib/constants';
 import { type FrameType, getFrameType, isOpenFrame } from '@/lib/frame-utils';
 import { PinDot, PIN_LEGEND } from '@/components/pin-dot';
 import ScoreTable from '@/components/score-table';
 import ChartToggle from '@/components/ui/chart-toggle';
+import ChartFrame from '@/components/ui/chart-frame';
 
 function buildGameChartData(game: GameRead): Record<string, string | number>[] {
   const frameCount = Math.max(...game.scores.map((s) => s.frames.length), 0);
@@ -97,8 +97,7 @@ export default function GameChart({ game, allGames, highlightPlayer }: { game: G
             {allGames && <ChartToggle active={showPersonalBestGame} label="PB Game" onClick={() => setShowPersonalBestGame((value) => !value)} />}
           </div>
         </div>
-        <div style={{ touchAction: 'none' }}>
-          <ResponsiveContainer width="100%" height={280}>
+        <ChartFrame height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
               <XAxis dataKey="frame" label={{ value: 'Frame', position: 'insideBottomRight', offset: -5 }} tick={{ fontSize: 12 }} />
@@ -148,8 +147,7 @@ export default function GameChart({ game, allGames, highlightPlayer }: { game: G
                 />
               ))}
             </LineChart>
-          </ResponsiveContainer>
-        </div>
+        </ChartFrame>
       </div>
       <ScoreTable game={game} />
     </div>

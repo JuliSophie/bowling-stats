@@ -105,7 +105,7 @@ select {
 
 @layer components {
   .app-main {
-    @apply mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 pb-28 pt-4 sm:px-6 sm:pb-10 lg:px-8 lg:pt-6;
+    @apply mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 pb-28 pt-4 sm:px-6 sm:pb-10 lg:px-8 lg:pt-6;
   }
 
   .soft-card {
@@ -227,6 +227,46 @@ select {
     @apply rounded-[1.3rem] border border-lane-200 bg-white/90;
   }
 
+  /* Centralized card surface — token-driven so light/dark are handled here once. */
+  .app-card {
+    @apply rounded-2xl border transition;
+    color: var(--foreground);
+    background: var(--surface-soft);
+    border-color: var(--border);
+  }
+
+  .app-card--interactive {
+    @apply cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-coral/45;
+  }
+
+  .app-card--interactive:hover {
+    @apply -translate-y-0.5;
+    background: var(--surface-strong);
+    box-shadow: var(--card-shadow);
+  }
+
+  /* Tones — colored tints that stay readable on both themes (text uses --foreground). */
+  .app-card--winner {
+    background: linear-gradient(135deg, #fef3c7, #fde68a 40%, #fcd34d);
+    border-color: #f59e0b;
+    color: #78350f;
+  }
+
+  .app-card--good {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.4);
+  }
+
+  .app-card--warn {
+    background: rgba(255, 140, 105, 0.14);
+    border-color: rgba(255, 140, 105, 0.45);
+  }
+
+  .app-card--info {
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(37, 99, 235, 0.36);
+  }
+
   .back-button {
     @apply rounded-full px-4 py-2 text-sm font-medium transition;
     color: var(--foreground);
@@ -264,7 +304,8 @@ select {
     color: #78350f;
   }
 
-  :root[data-theme="dark"] .winner-card {
+  :root[data-theme="dark"] .winner-card,
+  :root[data-theme="dark"] .app-card--winner {
     background: linear-gradient(135deg, rgba(120, 53, 15, 0.5), rgba(146, 64, 14, 0.4) 40%, rgba(180, 83, 9, 0.35));
     border-color: rgba(251, 191, 36, 0.4);
     color: #fef3c7;

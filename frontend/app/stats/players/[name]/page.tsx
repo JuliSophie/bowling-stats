@@ -35,6 +35,10 @@ import { isStrikeFrame, isSpareFrame, median, parseCumulative, getFirstThrowPins
 import { type PlayerSummary, derivePlayerSummaries, buildPlayerTrendData } from '@/lib/player-stats';
 import InfoTip from '@/components/ui/info-tip';
 import { StatCard, InsightCard } from '@/components/ui/stat-card';
+import SectionCard from '@/components/ui/section-card';
+import CardGrid from '@/components/ui/card-grid';
+import StatSection from '@/components/ui/stat-section';
+import ChartFrame from '@/components/ui/chart-frame';
 import {
   Line,
   LineChart,
@@ -43,7 +47,6 @@ import {
   YAxis,
   Tooltip,
   Legend,
-  ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
 
@@ -442,7 +445,7 @@ function PlayerScoreHeatmap({ chart }: { chart: PlayerScoreHeatmapData }) {
         <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-0.5 w-4 bg-green-600" />Bestes Spiel</span>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-lane-200 bg-lane-50 px-3 py-1.5 font-semibold"><span className="h-0.5 w-4 bg-red-600" />Schlechtestes Spiel</span>
       </div>
-      <div className="overflow-x-auto" style={{ touchAction: 'none' }}>
+      <div className="overflow-x-auto" style={{ touchAction: 'pan-x pan-y' }}>
         <svg viewBox={`0 0 ${width} ${height}`} className="min-w-[760px] rounded-xl bg-lane-50/80" role="img" aria-label="Heatmap aller Spielverläufe">
           <defs>
             <filter id="scoreHeatSoftBlur" x="-8%" y="-8%" width="116%" height="116%">
@@ -482,9 +485,6 @@ function PlayerScoreHeatmap({ chart }: { chart: PlayerScoreHeatmapData }) {
           <text x={14} y={margin.top + 4} textAnchor="start" className="fill-lane-500 text-[11px]">Punkte</text>
         </svg>
       </div>
-      <p className="text-xs text-lane-600">
-        Der Farbverlauf startet an den Best-/Worst-Grenzen und blendet zur unsichtbaren Medianlinie aus; die orange Linie zeigt den Durchschnitt je Frame.
-      </p>
     </div>
   );
 }
@@ -558,7 +558,7 @@ export default function PlayerDetailPage() {
       <main className="app-main max-w-5xl">
         <BackButton className="flex items-center gap-1.5 self-start back-button" />
 
-        <div className="section-card p-5">
+        <SectionCard>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               {isEditing ? (
@@ -613,20 +613,18 @@ export default function PlayerDetailPage() {
           </div>
           
           {summary && (
-            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <CardGrid cols={6} className="mt-4">
               <StatCard label="Spiele" value={summary.gamesPlayed} info="Anzahl gespeicherter Spiele. Je mehr Spiele, desto aussagekräftiger werden Durchschnitt und Prozentwerte." benchmark={{ percent: clampPercent((summary.gamesPlayed / 30) * 100), label: summary.gamesPlayed >= 20 ? 'Sehr belastbar' : summary.gamesPlayed >= 10 ? 'Gute Datenbasis' : 'Noch kleine Stichprobe', detail: 'Skala bis 30 Spiele', tone: summary.gamesPlayed >= 10 ? 'okay' : 'neutral' }} />
               <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" info="Zählt Spiele, in denen du den höchsten Score hattest. Bei Gleichstand zählt es ebenfalls als Sieg." benchmark={rateBenchmark(summary.gamesPlayed > 0 ? (summary.wins / summary.gamesPlayed) * 100 : 0, 'win')} />
               <StatCard label="Durchschnitt" value={summary.avgScore} info={playerScoreInfo(summary.avgScore, summary.avgScore, 'average')} benchmark={playerScoreBenchmark(summary.avgScore, summary.avgScore, 'average')} />
               <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} info={medianAverageInfo(summary.avgScore, summary.medianScore)} benchmark={medianConsistencyBenchmark(summary.avgScore, summary.medianScore)} />
               <StatCard label="Bestleistung" value={summary.maxScore} href={gameHref(maxScoreGame?.id)} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak')} />
               <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} info="Anteil Frames ohne Strike oder Spare. Niedriger ist besser; offene Frames sind die freundliche Punkte-Spende an alle anderen." benchmark={openFrameBenchmark(summary.openFrameRate)} />
-            </div>
+            </CardGrid>
           )}
-        </div>
+        </SectionCard>
 
-        <div className="section-card p-5">
-          <h2 className="text-lg font-semibold text-lane-800">Konstanz & Muster</h2>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <StatSection title="Konstanz & Muster" cols={4}>
             <InsightCard
               title="Schlussstärke"
               value={signedDelta(advanced.finishStrength)}
@@ -663,9 +661,9 @@ export default function PlayerDetailPage() {
               benchmark={streakBenchmark(advanced.bestStrikeStreak)}
               href={gameHref(advanced.bestStrikeStreakGameId)}
             />
-          </div>
+        </StatSection>
 
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatSection title="Würfe & Bilanz" cols={4}>
             <InsightCard
               title="Erster Wurf Ø"
               value={formatOneDecimal(advanced.firstThrowAverage)}
@@ -694,9 +692,9 @@ export default function PlayerDetailPage() {
               info={summary ? spareInfo(summary.openFrameRate, advanced.secondThrowZeroRate) : spareInfo(0, advanced.secondThrowZeroRate)}
               benchmark={countPerGameBenchmark(advanced.totalSpares, gamesPlayed, 'spare')}
             />
-          </div>
+        </StatSection>
 
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatSection title="Sieg-Punkte" cols={4}>
             <InsightCard
               title="Bester Punkt-Sieg"
               value={formatNullableScore(advanced.bestWinningPoints)}
@@ -728,14 +726,11 @@ export default function PlayerDetailPage() {
               benchmark={advanced.highestLosingPoints === null || !summary ? undefined : playerLossScoreBenchmark(advanced.highestLosingPoints, summary.avgScore)}
               href={gameHref(advanced.highestLosingPointsGameId)}
             />
-          </div>
-        </div>
+        </StatSection>
 
         {trendData.length > 1 && (
-          <div className="section-card p-4">
-            <h2 className="mb-3 text-lg font-semibold text-lane-800">Punkte pro Spiel</h2>
-            <div style={{ touchAction: 'none' }}>
-              <ResponsiveContainer width="100%" height={280}>
+          <SectionCard padding="md" title="Punkte pro Spiel">
+            <ChartFrame height={280}>
                 <LineChart data={trendData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
                   <XAxis dataKey="index" tick={{ fontSize: 12 }} label={{ value: 'Spiel #', position: 'insideBottomRight', offset: -5 }} />
@@ -756,23 +751,25 @@ export default function PlayerDetailPage() {
                   )}
                   <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} dot={{ r: 4 }} name={playerName} hide={!showScoreTrend} />
                 </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+            </ChartFrame>
+          </SectionCard>
         )}
 
         {scoreHeatmap.frames.some((frame) => frame.samples > 0) && (
-          <div className="section-card p-4">
-            <div className="mb-3">
-              <h2 className="text-lg font-semibold text-lane-800">Alle Spiele als Score-Heatmap</h2>
-              <p className="mt-1 text-xs text-lane-600">Verteilung der kumulativen Punkte pro Frame: Spanne, typische Bereiche, Durchschnitt sowie bestes und schlechtestes Spiel.</p>
-            </div>
-            <PlayerScoreHeatmap chart={scoreHeatmap} />
-          </div>
+          <SectionCard
+            padding="md"
+            title="Alle Spiele als Score-Heatmap"
+            subtitle="Verteilung der kumulativen Punkte pro Frame: Spanne, typische Bereiche, Durchschnitt sowie bestes und schlechtestes Spiel."
+          >
+            {playerGames.length < 2 ? (
+              <p className="text-sm text-lane-600">Für die Heatmap braucht es mindestens zwei Spiele — mit nur einem Spiel gibt es keine Verteilung zu zeigen.</p>
+            ) : (
+              <PlayerScoreHeatmap chart={scoreHeatmap} />
+            )}
+          </SectionCard>
         )}
 
-        <div className="section-card p-4">
-          <h2 className="mb-3 text-lg font-semibold text-lane-800">Spiele ({playerGames.length})</h2>
+        <SectionCard padding="md" title={`Spiele (${playerGames.length})`}>
           <div className="space-y-2">
             {playerGames.map((game) => (
               <GamePreviewCard
@@ -785,7 +782,7 @@ export default function PlayerDetailPage() {
               />
             ))}
           </div>
-        </div>
+        </SectionCard>
       </main>
     </>
   );

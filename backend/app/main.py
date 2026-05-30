@@ -19,10 +19,14 @@ settings = get_settings()
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
-    if "games" in inspector.get_table_names() and "created_at" not in {col["name"] for col in inspector.get_columns("games")}:
+    if "games" in inspector.get_table_names():
+        existing_columns = {col["name"] for col in inspector.get_columns("games")}
         with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE games ADD COLUMN created_at DATETIME"))
-            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_games_created_at ON games (created_at)"))
+            if "created_at" not in existing_columns:
+                connection.execute(text("ALTER TABLE games ADD COLUMN created_at DATETIME"))
+                connection.execute(text("CREATE INDEX IF NOT EXISTS ix_games_created_at ON games (created_at)"))
+            if "played_at_time" not in existing_columns:
+                connection.execute(text("ALTER TABLE games ADD COLUMN played_at_time TIME"))
     yield
 
 

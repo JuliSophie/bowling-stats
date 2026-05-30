@@ -1,9 +1,11 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { buildTable, checkApiHealth, createGame, extractScorecard, fetchRecentPlayerNames, guessScorecardCorners, rectifyScorecard } from '@/lib/api';
+import { invalidateGames } from '@/lib/use-games';
 import type { ExtractionResult, FrameData, GameRead, LineSegment, ManualCorner, RectifiedPreview, TableBuildResult } from '@/types';
 
 type TableSubView = 'morph-horizontal' | 'morph-vertical' | 'bw';
@@ -340,6 +342,7 @@ function scanVerticalLine(data: ImageData, nx: number, ny: number): LineSegment 
 }
 
 export default function UploadView() {
+  const router = useRouter();
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -371,6 +374,7 @@ export default function UploadView() {
   const [showRowCrops, setShowRowCrops] = useState(true);
   const [showSaveForm, setShowSaveForm] = useState(false);
   const [saveDate, setSaveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saveTime, setSaveTime] = useState('');
   const [saveLocation, setSaveLocation] = useState('Squash House');
   const [saving, setSaving] = useState(false);
   const [savedGame, setSavedGame] = useState<GameRead | null>(null);
@@ -421,6 +425,7 @@ export default function UploadView() {
     setShowRowCrops(true);
     setShowSaveForm(false);
     setSaveDate(new Date().toISOString().slice(0, 10));
+    setSaveTime('');
     setSaving(false);
     setSavedGame(null);
     setBwCanvasReady(false);
@@ -572,28 +577,26 @@ export default function UploadView() {
   }
 
   function getMagnifierStyle(pos: NonNullable<typeof magnifierPos>) {
-    if (typeof window === 'undefined') {
-      return { left: pos.px + MAGNIFIER_GAP, top: pos.py + MAGNIFIER_GAP, width: MAGNIFIER_SIZE, height: MAGNIFIER_SIZE };
-    }
-
-    const visualViewport = window.visualViewport;
-    const viewportLeft = visualViewport?.offsetLeft ?? 0;
-    const viewportTop = visualViewport?.offsetTop ?? 0;
-    const viewportWidth = visualViewport?.width ?? window.innerWidth;
-    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    // Position the magnifier absolutely inside the image container using the
+    // cursor coordinates relative to the image (pos.px / pos.py). Fixed
+    // positioning breaks here because an ancestor's backdrop-filter creates a
+    // containing block, so "fixed" would offset by the panel, not the viewport.
+    const rect = cornerImageRef.current?.getBoundingClientRect();
+    const width = rect?.width ?? 0;
+    const height = rect?.height ?? 0;
     const margin = MAGNIFIER_VIEWPORT_MARGIN;
-    const maxLeft = viewportLeft + viewportWidth - MAGNIFIER_SIZE - margin;
-    const maxTop = viewportTop + viewportHeight - MAGNIFIER_SIZE - margin;
 
-    const preferLeft = pos.clientX > viewportLeft + viewportWidth / 2;
-    const preferAbove = pos.clientY > viewportTop + viewportHeight / 2;
-    const rawLeft = pos.clientX + (preferLeft ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
-    const rawTop = pos.clientY + (preferAbove ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+    const preferLeft = width > 0 && pos.px > width / 2;
+    const preferAbove = height > 0 && pos.py > height / 2;
+    const rawLeft = pos.px + (preferLeft ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+    const rawTop = pos.py + (preferAbove ? -(MAGNIFIER_SIZE + MAGNIFIER_GAP) : MAGNIFIER_GAP);
+    const maxLeft = Math.max(margin, width - MAGNIFIER_SIZE - margin);
+    const maxTop = Math.max(margin, height - MAGNIFIER_SIZE - margin);
 
     return {
-      position: 'fixed' as const,
-      left: clamp(rawLeft, viewportLeft + margin, Math.max(viewportLeft + margin, maxLeft)),
-      top: clamp(rawTop, viewportTop + margin, Math.max(viewportTop + margin, maxTop)),
+      position: 'absolute' as const,
+      left: clamp(rawLeft, margin, maxLeft),
+      top: clamp(rawTop, margin, maxTop),
       width: MAGNIFIER_SIZE,
       height: MAGNIFIER_SIZE,
     };
@@ -617,6 +620,11 @@ export default function UploadView() {
       const guessResult = await guessScorecardCorners(file);
       setManualCorners(guessResult.guessed_corners);
       setCornerWarnings(guessResult.warnings);
+      // Prefill date & time from the photo's EXIF capture timestamp when present.
+      if (guessResult.captured_at) {
+        setSaveDate(guessResult.captured_at.slice(0, 10));
+        setSaveTime(guessResult.captured_at.slice(11, 16));
+      }
       setStatusMessage('');
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Monitor-Ecken konnten nicht erkannt werden.');
@@ -910,6 +918,7 @@ export default function UploadView() {
     try {
       const game = await createGame({
         played_at: saveDate,
+        played_at_time: saveTime || null,
         location: saveLocation.trim(),
         scores: extractionResult.players.map((player) => ({
           player_name: normalizePlayerName(player.name),
@@ -918,6 +927,10 @@ export default function UploadView() {
         })),
       });
       setSavedGame(game); setShowSaveForm(false);
+      // Drop the cached games list so the new game shows up everywhere, then
+      // jump straight to its detail page to see the charts.
+      invalidateGames();
+      router.push(`/stats/games/${game.id}`);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Speichern fehlgeschlagen.');
     } finally {
@@ -1318,7 +1331,7 @@ export default function UploadView() {
                 {savedGame ? (
                   <div className="rounded-[1.3rem] border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                     <p className="font-semibold">Spiel erfolgreich gespeichert!</p>
-                    <p className="mt-1 text-xs opacity-80">{saveLocation} • {saveDate}</p>
+                    <p className="mt-1 text-xs opacity-80">{saveLocation} • {saveDate}{saveTime ? ` • ${saveTime} Uhr` : ''}</p>
                   </div>
                 ) : null}
 
@@ -1335,7 +1348,7 @@ export default function UploadView() {
                       </button>
                     ) : (
                       <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-4">
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                           <div className="grid gap-1">
                             <label htmlFor="save-date" className="text-xs font-medium text-lane-700">
                               Datum
@@ -1348,7 +1361,19 @@ export default function UploadView() {
                               className="rounded-lg border border-lane-300 px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-lane-800"
                             />
                           </div>
-                          <div className="col-span-2 grid gap-1 sm:col-span-1">
+                          <div className="grid gap-1">
+                            <label htmlFor="save-time" className="text-xs font-medium text-lane-700">
+                              Uhrzeit
+                            </label>
+                            <input
+                              id="save-time"
+                              type="time"
+                              value={saveTime}
+                              onChange={(e) => setSaveTime(e.target.value)}
+                              className="rounded-lg border border-lane-300 px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-lane-800"
+                            />
+                          </div>
+                          <div className="col-span-2 grid gap-1">
                             <label htmlFor="save-location" className="text-xs font-medium text-lane-700">
                               Ort
                             </label>
