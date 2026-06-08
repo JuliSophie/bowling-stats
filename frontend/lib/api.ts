@@ -249,6 +249,13 @@ export async function setTrackingPlayers(sessionId: string, playerCount: number,
 }
 
 
+export async function resetTrackingSession(sessionId: string): Promise<TrackingSession> {
+  return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}/reset`, {
+    method: 'POST',
+  });
+}
+
+
 export async function fetchTrackingEvents(sessionId: string): Promise<LiveEvent[]> {
   return requestJson<LiveEvent[]>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}/events`);
 }

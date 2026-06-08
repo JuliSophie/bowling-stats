@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
@@ -22,6 +22,9 @@ router = APIRouter(tags=["tracking"])
 
 DEFAULT_LIVE_SESSION_ID = "demo-session"
 MAX_EVENT_HISTORY = 200
+# A session is dropped once it has gone this long without any activity (throws, roster
+# changes, or a live client connecting). Expiry is evaluated lazily on the next access.
+SESSION_TTL = timedelta(hours=10)
 
 
 class LiveSession:
@@ -29,6 +32,7 @@ class LiveSession:
         self.session_id = session_id
         self.pairing_token = pairing_token
         self.created_at = datetime.now(timezone.utc)
+        self.last_active_at = self.created_at
         names = [name.strip() for name in payload.player_names if name.strip()]
         self.player_names = names
         self.player_count = max(1, len(names))
@@ -41,6 +45,20 @@ class LiveSession:
         self.live_clients: set[WebSocket] = set()
         self.events: list[LiveEvent] = []
         self.seen_client_event_ids: set[str] = set()
+
+    def touch(self) -> None:
+        """Mark the session active so the inactivity timer restarts."""
+        self.last_active_at = datetime.now(timezone.utc)
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        return now - self.last_active_at > SESSION_TTL
+
+    def reset(self) -> None:
+        """Start a fresh game: wipe the throw log while keeping the roster and pairing."""
+        self.throw_log.clear()
+        self.seen_client_event_ids.clear()
+        self.touch()
 
     def scoreboard(self) -> ScoreboardResult:
         return compute_scoreboard(
@@ -96,6 +114,12 @@ def _new_event(event_type: str, payload: dict[str, Any]) -> LiveEvent:
 
 async def _get_session(session_id: str) -> LiveSession:
     session = sessions.get(session_id)
+    if session is not None and session.is_expired():
+        async with sessions_lock:
+            # Re-check under the lock; another request may have refreshed or replaced it.
+            if sessions.get(session_id) is session and session.is_expired():
+                del sessions[session_id]
+        session = None
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live-Session nicht gefunden.")
     return session
@@ -104,9 +128,10 @@ async def _get_session(session_id: str) -> LiveSession:
 async def _ensure_session(session_id: str, payload: TrackingSessionCreate | None = None) -> LiveSession:
     async with sessions_lock:
         session = sessions.get(session_id)
-        if session is not None:
+        if session is not None and not session.is_expired():
             return session
 
+        # No session, or the previous one lapsed after the inactivity window — start fresh.
         session = LiveSession(session_id, _new_pairing_token(), payload or TrackingSessionCreate())
         sessions[session_id] = session
         return session
@@ -202,6 +227,7 @@ async def _mark_companion_connected(session: LiveSession) -> None:
 
 
 async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> LiveEvent:
+    session.touch()
     if observation.client_event_id and observation.client_event_id in session.seen_client_event_ids:
         existing = next(
             (event for event in reversed(session.events) if event.payload.get("clientEventId") == observation.client_event_id),
@@ -265,11 +291,25 @@ async def join_companion(session_id: str) -> dict[str, bool]:
 @router.post("/tracking/sessions/{session_id}/players", response_model=TrackingSessionRead)
 async def set_players(session_id: str, payload: TrackingPlayersUpdate) -> TrackingSessionRead:
     session = await _get_session(session_id)
+    session.touch()
     session.player_count = payload.player_count
     names = [name.strip() for name in payload.player_names if name.strip()]
     if names:
         session.player_names = names
     # The score table is rebuilt from the throw log on snapshot(), so just rebroadcast it.
+    await _append_and_broadcast(
+        session,
+        _new_event("score_updated", {"session": session.snapshot().model_dump(mode="json", by_alias=True)}),
+    )
+    return session.snapshot()
+
+
+@router.post("/tracking/sessions/{session_id}/reset", response_model=TrackingSessionRead)
+async def reset_tracking_session(session_id: str) -> TrackingSessionRead:
+    """Start a new game on an existing session: clear the throw log, keep the roster."""
+    session = await _get_session(session_id)
+    session.reset()
+    await _append_and_broadcast(session, _new_event("session_reset", {"sessionId": session.session_id}))
     await _append_and_broadcast(
         session,
         _new_event("score_updated", {"session": session.snapshot().model_dump(mode="json", by_alias=True)}),
@@ -300,6 +340,7 @@ async def list_events(session_id: str) -> list[LiveEvent]:
 async def tracking_websocket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
     session = await _ensure_session(session_id)
+    session.touch()
     session.live_clients.add(websocket)
     try:
         await websocket.send_json(

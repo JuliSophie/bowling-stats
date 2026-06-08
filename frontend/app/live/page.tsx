@@ -9,6 +9,7 @@ import {
   fetchTrackingEvents,
   fetchTrackingSession,
   getTrackingWebSocketUrl,
+  resetTrackingSession,
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
@@ -47,6 +48,7 @@ function eventLabel(type: string) {
     throw_analyzed: 'Wurf analysiert',
     score_updated: 'Score aktualisiert',
     low_confidence_detection: 'Niedrige Konfidenz',
+    session_reset: 'Neues Spiel gestartet',
   };
   return labels[type] ?? type;
 }
@@ -322,6 +324,20 @@ export default function LivePage() {
 
   const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
 
+  const startNewGame = async () => {
+    if (!session) return;
+    if (scoreboard?.throwCount && !window.confirm('Neues Spiel starten? Der aktuelle Score wird zurückgesetzt.')) return;
+    setRosterBusy(true);
+    try {
+      const updated = await resetTrackingSession(session.sessionId);
+      setSession(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Neues Spiel konnte nicht gestartet werden.');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
   const changePlayerCount = async (delta: number) => {
     if (!session) return;
     const next = Math.max(1, Math.min(8, session.playerCount + delta));
@@ -378,8 +394,16 @@ export default function LivePage() {
             <span className="rounded-full border subtle-surface px-3 py-1.5 text-lane-700">{session?.liveClientCount ?? 1} Clients</span>
           </div>
 
-          {/* Player-count control (operator declares how many bowlers are on the lane) */}
-          <div className="flex items-center gap-2">
+          {/* Operator controls: start a fresh game, or set how many bowlers are on the lane. */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={startNewGame}
+              disabled={rosterBusy || !session}
+              className="rounded-full border subtle-surface px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
+            >
+              Neues Spiel
+            </button>
             <span className="text-xs font-bold text-lane-500">Spieler</span>
             <div className="flex items-center gap-1 rounded-full bg-lane-100 p-1">
               <button
