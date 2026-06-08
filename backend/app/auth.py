@@ -18,7 +18,7 @@ import hmac
 import logging
 import time
 
-from fastapi import Cookie, HTTPException, Response, status
+from fastapi import Cookie, Header, HTTPException, Response, status
 
 from app.config import get_settings
 
@@ -105,11 +105,29 @@ def clear_auth_cookie(response: Response) -> None:
     )
 
 
-def require_auth(bowling_auth: str | None = Cookie(default=None)) -> None:
-    """FastAPI dependency guarding protected routers."""
+def _token_from_authorization(authorization: str | None) -> str | None:
+    """Extract a bearer token from an ``Authorization: Bearer <token>`` header."""
+    if not authorization:
+        return None
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    return None
+
+
+def require_auth(
+    bowling_auth: str | None = Cookie(default=None),
+    authorization: str | None = Header(default=None),
+) -> None:
+    """FastAPI dependency guarding protected routers.
+
+    Accepts the auth token either from the ``bowling_auth`` cookie (browser) or an
+    ``Authorization: Bearer <token>`` header (the companion app / API clients).
+    """
     if not auth_enabled():
         return
-    if not verify_token(bowling_auth):
+    token = bowling_auth or _token_from_authorization(authorization)
+    if not verify_token(token):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nicht angemeldet.",

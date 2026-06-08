@@ -1,4 +1,4 @@
-import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, RectifiedPreview, StatsResponse, TableBuildResult } from '@/types';
+import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, LiveEvent, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, RectifiedPreview, StatsResponse, TableBuildResult, TrackingSession } from '@/types';
 
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
@@ -223,6 +223,49 @@ export async function fetchRecentPlayerNames(hours = 2): Promise<string[]> {
 
 export async function fetchStats(): Promise<StatsResponse> {
   return requestJson<StatsResponse>(`${API_BASE}/stats`);
+}
+
+
+export async function createTrackingSession(playerNames: string[] = [], sessionId?: string): Promise<TrackingSession> {
+  return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerNames, sessionId }),
+  });
+}
+
+
+export async function fetchTrackingSession(sessionId: string): Promise<TrackingSession> {
+  return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+
+export async function setTrackingPlayers(sessionId: string, playerCount: number, playerNames: string[] = []): Promise<TrackingSession> {
+  return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}/players`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerCount, playerNames }),
+  });
+}
+
+
+export async function fetchTrackingEvents(sessionId: string): Promise<LiveEvent[]> {
+  return requestJson<LiveEvent[]>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}/events`);
+}
+
+
+export function getTrackingWebSocketUrl(sessionId: string): string {
+  const encodedSessionId = encodeURIComponent(sessionId);
+  const base = API_BASE.replace(/\/$/, '');
+
+  if (base.startsWith('http://') || base.startsWith('https://')) {
+    const url = new URL(`${base}/tracking/sessions/${encodedSessionId}/ws`);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return url.toString();
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}${base}/tracking/sessions/${encodedSessionId}/ws`;
 }
 
 

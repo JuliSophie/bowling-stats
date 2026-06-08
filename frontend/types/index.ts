@@ -135,3 +135,98 @@ export type StatsResponse = {
   averages: PlayerAverage[];
   hall_of_fame: HighScoreEntry[];
 };
+
+export type TrackingFrame = {
+  throws: number[];
+  cumulative: number | null;
+  isStrike: boolean;
+  isSpare: boolean;
+};
+
+export type TrackingPlayerCard = {
+  index: number;
+  name: string;
+  frames: TrackingFrame[];
+  total: number;
+  isCurrent: boolean;
+};
+
+export type TrackingScoreboard = {
+  playerCount: number;
+  players: TrackingPlayerCard[];
+  throwCount: number;
+};
+
+export type TrackingSession = {
+  sessionId: string;
+  pairingToken: string;
+  createdAt: string;
+  playerNames: string[];
+  playerCount: number;
+  currentPlayer?: string | null;
+  currentPlayerIndex: number;
+  currentFrame: number;
+  currentThrow: number;
+  companionConnected: boolean;
+  liveClientCount: number;
+  scoreboard?: TrackingScoreboard | null;
+  location?: string | null;
+};
+
+export type TrajectorySample = {
+  timestampMs?: number;
+  timestamp_ms?: number;
+  distanceM?: number;
+  distance_m?: number;
+  board: number;
+  confidence?: number | null;
+};
+
+export type BallPathPoint = {
+  distanceM: number;
+  board: number;
+};
+
+export type ThrowCurve = {
+  launch?: BallPathPoint | null;
+  apex?: BallPathPoint | null;
+  impact?: BallPathPoint | null;
+};
+
+export type ThrowAnalysis = {
+  sessionId: string;
+  clientEventId?: string | null;
+  capturedAt: string;
+  player: string;
+  frame: number;
+  throw: number;
+  pinsKnockedDown?: number | null;
+  ballSpeedKmh?: number | null;
+  impactBoard?: number | null;
+  launchBoard?: number | null;
+  breakpointBoard?: number | null;
+  entryAngleDeg?: number | null;
+  curveBoards?: number | null;
+  isCurve?: boolean;
+  trackedPoints?: number | null;
+  isLikelyRatShot: boolean;
+  confidence?: number | null;
+  lowConfidence: boolean;
+  trajectory: TrajectorySample[];
+  // Smoothed reconstruction for redraw: polyline + key shape points.
+  path?: BallPathPoint[];
+  curve?: ThrowCurve | null;
+};
+
+export type LiveEvent = {
+  eventId: string;
+  type: string;
+  payload: {
+    session?: TrackingSession;
+    events?: LiveEvent[];
+    liveClientCount?: number;
+    sessionId?: string;
+    [key: string]: unknown;
+  };
+  createdAt: string;
+};

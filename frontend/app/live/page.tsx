@@ -1,0 +1,439 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+
+import Navigation from '@/components/navigation';
+import Card from '@/components/ui/card';
+import {
+  createTrackingSession,
+  fetchTrackingEvents,
+  fetchTrackingSession,
+  getTrackingWebSocketUrl,
+  setTrackingPlayers,
+} from '@/lib/api';
+import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
+
+const DEFAULT_SESSION_ID = 'demo-session';
+const MAX_VISIBLE_EVENTS = 30;
+const LANE_LENGTH_M = 18.29;
+const BOARD_COUNT = 39;
+const LANE_WIDTH_IN = 41.5;
+const PIN_CENTER_SPACING_IN = 12;
+const PIN_SPACING_PCT = (PIN_CENTER_SPACING_IN / LANE_WIDTH_IN) * 100;
+const PIN_DECK_HEIGHT_PCT = 13;
+const PIN_HEADER_Y_PCT = PIN_DECK_HEIGHT_PCT;
+
+function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['payload'] & ThrowAnalysis {
+  return typeof payload.player === 'string' && typeof payload.frame === 'number' && typeof payload.throw === 'number';
+}
+
+function formatNumber(value: number | null | undefined, suffix = '') {
+  if (value === null || value === undefined || Number.isNaN(value)) return '–';
+  return `${value.toFixed(1)}${suffix}`;
+}
+
+// Backend now serializes camelCase, but stay defensive against the snake_case spelling.
+function distanceOf(point: { distanceM?: number; distance_m?: number }): number {
+  return point.distanceM ?? point.distance_m ?? 0;
+}
+
+function eventLabel(type: string) {
+  const labels: Record<string, string> = {
+    session_created: 'Session erstellt',
+    session_snapshot: 'Session synchronisiert',
+    companion_connected: 'Companion verbunden',
+    live_client_connected: 'Live-Client verbunden',
+    live_client_disconnected: 'Live-Client getrennt',
+    throw_analyzed: 'Wurf analysiert',
+    score_updated: 'Score aktualisiert',
+    low_confidence_detection: 'Niedrige Konfidenz',
+  };
+  return labels[type] ?? type;
+}
+
+/** One ball's display glyph in the score table (X strike, / spare, - gutter). */
+function ballGlyph(frame: TrackingPlayerCard['frames'][number], ballIndex: number): string {
+  const pins = frame.throws[ballIndex];
+  if (pins === undefined) return '';
+  if (pins >= 10) return 'X';
+  if (ballIndex > 0) {
+    const prev = frame.throws[ballIndex - 1] ?? 0;
+    if (prev < 10 && prev + pins >= 10) return '/';
+  }
+  return pins === 0 ? '–' : String(pins);
+}
+
+/** A tall, realistic lane viewed from behind: pin deck at the top, foul line at the bottom. */
+function LaneView({ lastThrow }: { lastThrow: ThrowAnalysis | undefined }) {
+  const clampPct = (v: number) => Math.max(2, Math.min(98, v));
+  const mapX = (board: number) => clampPct((board / BOARD_COUNT) * 100);
+  const mapY = (distanceM: number) => {
+    const laneSurfacePct = 100 - PIN_HEADER_Y_PCT;
+    const y = PIN_HEADER_Y_PCT + (1 - distanceM / LANE_LENGTH_M) * laneSurfacePct;
+    return Math.max(PIN_HEADER_Y_PCT, Math.min(99, y));
+  };
+
+  const path: BallPathPoint[] = lastThrow?.path ?? [];
+  const curve = lastThrow?.curve;
+  const polyline = path.length >= 2 ? path.map((p) => `${mapX(p.board)},${mapY(distanceOf(p))}`).join(' ') : null;
+  const markers = [
+    { key: 'launch', label: 'Start', point: curve?.launch, color: '#16a34a' },
+    { key: 'apex', label: 'Hook', point: curve?.apex, color: '#f59e0b' },
+    { key: 'impact', label: 'Pins', point: curve?.impact, color: '#e11d48' },
+  ];
+  const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
+  const pinPositions = [
+    { pin: 7, row: 0, offset: -1.5 },
+    { pin: 8, row: 0, offset: -0.5 },
+    { pin: 9, row: 0, offset: 0.5 },
+    { pin: 10, row: 0, offset: 1.5 },
+    { pin: 4, row: 1, offset: -1 },
+    { pin: 5, row: 1, offset: 0 },
+    { pin: 6, row: 1, offset: 1 },
+    { pin: 2, row: 2, offset: -0.5 },
+    { pin: 3, row: 2, offset: 0.5 },
+    { pin: 1, row: 3, offset: 0 },
+  ].map((pin, index) => ({
+    ...pin,
+    x: 50 + pin.offset * PIN_SPACING_PCT,
+    y: 19 + pin.row * 23,
+    knocked: index < knockedPins,
+  }));
+  const boardGuides = [5, 10, 15, 20, 25, 30, 35];
+  const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
+
+  return (
+    <div
+      className="relative h-[440px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-b from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner sm:h-[560px]"
+      style={{ borderColor: 'var(--lane-edge)' }}
+    >
+        {/* Pin deck above the playable lane. The trajectory only maps from the foul line
+          up to the pin header line below this deck. */}
+      <div
+        className="absolute inset-x-0 top-0 h-[13%]"
+        style={{ background: 'var(--lane-deck)' }}
+      >
+        {pinPositions.map((pin) => (
+          <span
+            key={pin.pin}
+            className={`absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm sm:h-4 sm:w-4 ${
+              pin.knocked ? 'bg-transparent opacity-50' : 'bg-white'
+            }`}
+            style={{
+              left: `${pin.x}%`,
+              top: `${pin.y}%`,
+              borderColor: 'var(--lane-pin)',
+            }}
+            title={`Pin ${pin.pin}${pin.knocked ? ' gefallen' : ' steht'}`}
+          />
+        ))}
+      </div>
+
+      {/* Pin header line: end of the measured ball trajectory, before the pin deck. */}
+      <div
+        className="absolute inset-x-0 h-[2px]"
+        style={{ top: `${PIN_HEADER_Y_PCT}%`, background: 'var(--lane-foul)' }}
+      />
+
+      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+        {/* board guide lines */}
+        {boardGuides.map((b) => (
+          <line key={b} x1={mapX(b)} y1={PIN_HEADER_Y_PCT} x2={mapX(b)} y2={100} style={{ stroke: 'var(--lane-board-line)' }} strokeWidth={0.4} vectorEffect="non-scaling-stroke" />
+        ))}
+        {/* the throw */}
+        {polyline && (
+          <polyline
+            points={polyline}
+            fill="none"
+            style={{ stroke: 'var(--lane-path)' }}
+            strokeWidth={3}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
+      </svg>
+
+      {/* bowling arrows */}
+      {boardGuides.map((b) => (
+        <span
+          key={`arrow-${b}`}
+          className="absolute -translate-x-1/2 -translate-y-1/2 text-[0.6rem] font-black"
+          style={{ left: `${mapX(b)}%`, top: `${mapY(arrowDistance)}%`, color: 'var(--lane-arrow)' }}
+        >
+          ▲
+        </span>
+      ))}
+
+      {/* foul line */}
+      <div className="absolute inset-x-0 bottom-0 h-[1.5%]" style={{ background: 'var(--lane-foul)' }} />
+
+      {/* shape markers */}
+      {markers.map((m) =>
+        m.point ? (
+          <span
+            key={m.key}
+            className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg"
+            style={{ left: `${mapX(m.point.board)}%`, top: `${mapY(distanceOf(m.point))}%`, background: m.color }}
+            title={m.label}
+          />
+        ) : null,
+      )}
+
+      {/* label */}
+      <div className="absolute left-2 top-[15%] rounded-lg bg-lane-950/70 px-2 py-1 text-[0.7rem] font-black text-amber-50">
+        {!lastThrow
+          ? 'Warte auf Wurf…'
+          : lastThrow.isCurve
+            ? `Hook ${formatNumber(lastThrow.curveBoards)} Boards`
+            : 'Gerader Wurf'}
+      </div>
+      {!polyline && lastThrow && (
+        <p className="absolute inset-x-2 bottom-6 text-center text-xs font-bold" style={{ color: 'var(--foreground)' }}>
+          Keine Kurvendaten für diesen Wurf.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function LivePage() {
+  const [session, setSession] = useState<TrackingSession | null>(null);
+  const [events, setEvents] = useState<LiveEvent[]>([]);
+  const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [error, setError] = useState<string | null>(null);
+  const [rosterBusy, setRosterBusy] = useState(false);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const applyEvent = (event: LiveEvent) => {
+      if (event.type === 'session_snapshot') {
+        if (event.payload.session) setSession(event.payload.session);
+        if (Array.isArray(event.payload.events)) {
+          setEvents(event.payload.events.slice(-MAX_VISIBLE_EVENTS));
+        }
+        return;
+      }
+
+      if (event.payload.session) {
+        setSession(event.payload.session);
+      }
+
+      setEvents((current) => [...current, event].slice(-MAX_VISIBLE_EVENTS));
+    };
+
+    const openSocket = async () => {
+      try {
+        setError(null);
+        setConnectionState('connecting');
+        const existingSession = await fetchTrackingSession(DEFAULT_SESSION_ID).catch(() => createTrackingSession([], DEFAULT_SESSION_ID));
+        if (cancelled) return;
+        setSession(existingSession);
+
+        const history = await fetchTrackingEvents(existingSession.sessionId).catch(() => []);
+        if (!cancelled) setEvents(history.slice(-MAX_VISIBLE_EVENTS));
+
+        const socket = new WebSocket(getTrackingWebSocketUrl(existingSession.sessionId));
+        socketRef.current = socket;
+
+        socket.onopen = () => setConnectionState('open');
+        socket.onmessage = (message) => {
+          const event = JSON.parse(message.data) as LiveEvent;
+          applyEvent(event);
+        };
+        socket.onerror = () => setError('Live-Verbindung konnte nicht stabil aufgebaut werden.');
+        socket.onclose = () => {
+          setConnectionState('closed');
+          if (!cancelled) {
+            reconnectTimer = setTimeout(openSocket, 2000);
+          }
+        };
+      } catch (err) {
+        if (cancelled) return;
+        setConnectionState('closed');
+        setError(err instanceof Error ? err.message : 'Live-Session konnte nicht geladen werden.');
+        reconnectTimer = setTimeout(openSocket, 3000);
+      }
+    };
+
+    openSocket();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      socketRef.current?.close();
+    };
+  }, []);
+
+  const throwEvents = useMemo(
+    () => events.filter((event) => event.type === 'throw_analyzed' && isThrowAnalysis(event.payload)),
+    [events],
+  );
+  const lastThrow = throwEvents.at(-1)?.payload as ThrowAnalysis | undefined;
+  const scoreboard = session?.scoreboard ?? null;
+
+  const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
+
+  const changePlayerCount = async (delta: number) => {
+    if (!session) return;
+    const next = Math.max(1, Math.min(8, session.playerCount + delta));
+    if (next === session.playerCount) return;
+    setRosterBusy(true);
+    try {
+      const updated = await setTrackingPlayers(session.sessionId, next);
+      setSession(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Spieleranzahl konnte nicht geändert werden.');
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Navigation />
+      <main className="app-main">
+        {/* Compact status bar */}
+        <section className="soft-card flex flex-wrap items-center justify-between gap-3 p-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-[0.14em]">
+            <span className={`rounded-full px-3 py-1.5 ${connectionState === 'open' ? 'bg-emerald-400 text-emerald-950' : 'bg-lane-200 text-lane-700'}`}>{connectionText}</span>
+            <span className={`rounded-full px-3 py-1.5 ${session?.companionConnected ? 'bg-emerald-400 text-emerald-950' : 'bg-lane-200 text-lane-700'}`}>
+              Companion {session?.companionConnected ? 'online' : 'wartet'}
+            </span>
+            <span className="rounded-full bg-lane-200 px-3 py-1.5 text-lane-700">Code {session?.pairingToken ?? '––––––'}</span>
+            <span className="rounded-full bg-lane-200 px-3 py-1.5 text-lane-700">{session?.liveClientCount ?? 1} Clients</span>
+          </div>
+
+          {/* Player-count control (operator declares how many bowlers are on the lane) */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-lane-500">Spieler</span>
+            <div className="flex items-center gap-1 rounded-full bg-lane-100 p-1">
+              <button
+                type="button"
+                onClick={() => changePlayerCount(-1)}
+                disabled={rosterBusy || (session?.playerCount ?? 1) <= 1}
+                className="grid h-8 w-8 place-items-center rounded-full bg-white text-lg font-black text-lane-700 shadow disabled:opacity-40"
+                aria-label="Weniger Spieler"
+              >
+                −
+              </button>
+              <span className="min-w-[1.5rem] text-center text-lg font-black tabular-nums">{session?.playerCount ?? 1}</span>
+              <button
+                type="button"
+                onClick={() => changePlayerCount(1)}
+                disabled={rosterBusy || (session?.playerCount ?? 1) >= 8}
+                className="grid h-8 w-8 place-items-center rounded-full bg-white text-lg font-black text-lane-700 shadow disabled:opacity-40"
+                aria-label="Mehr Spieler"
+              >
+                +
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
+
+        {/* The core: lane (curve) on the left, live data on the right */}
+        <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5">
+          <LaneView lastThrow={lastThrow} />
+
+          <div className="flex flex-col gap-3">
+            <Card
+              title="Aktuell"
+              eyebrow
+              header={session?.currentPlayer ?? 'Spieler 1'}
+              headerSize="lg"
+              subtext={`Frame ${session?.currentFrame ?? 1} · Wurf ${session?.currentThrow ?? 1}`}
+            />
+
+            <div className="grid grid-cols-2 gap-3">
+              <Card title="Speed" header={lastThrow ? formatNumber(lastThrow.ballSpeedKmh) : '–'} headerSize="lg" padding="sm" />
+              <Card title="Pins" header={lastThrow?.pinsKnockedDown != null ? String(lastThrow.pinsKnockedDown) : '–'} headerSize="lg" padding="sm" />
+              <Card title="Board" header={lastThrow ? formatNumber(lastThrow.impactBoard) : '–'} headerSize="lg" padding="sm" />
+              <Card title="Hook" header={lastThrow?.isCurve ? formatNumber(lastThrow.curveBoards) : '0.0'} headerSize="lg" padding="sm" />
+              <Card title="Winkel" header={lastThrow ? formatNumber(lastThrow.entryAngleDeg, '°') : '–'} headerSize="lg" padding="sm" />
+              <Card title="Konfidenz" header={lastThrow?.confidence != null ? `${Math.round(lastThrow.confidence * 100)}%` : '–'} headerSize="lg" padding="sm" />
+            </div>
+
+            {lastThrow?.lowConfidence && (
+              <span className="rounded-full bg-coral px-3 py-2 text-center text-xs font-black text-lane-950">Wurf prüfen — niedrige Konfidenz</span>
+            )}
+          </div>
+        </section>
+
+        {/* Live score table, rebuilt from the throw log */}
+        <section className="soft-card p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <p className="eyebrow">Score</p>
+            <span className="text-xs font-bold text-lane-500">{scoreboard?.throwCount ?? 0} Würfe erfasst</span>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-left font-semibold text-lane-800">Name</th>
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <th key={i} className="border border-lane-200 bg-lane-50 px-1 py-1.5 text-center font-semibold text-lane-800">{i + 1}</th>
+                  ))}
+                  <th className="border border-lane-200 bg-lane-50 px-2 py-1.5 text-center font-semibold text-lane-800">Ges.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(scoreboard?.players ?? []).map((player) => (
+                  <tr key={player.index} className={player.isCurrent ? 'bg-amber-100/50' : ''}>
+                    <td className="border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
+                      {player.isCurrent && <span className="mr-1 text-coral">▸</span>}
+                      {player.name}
+                    </td>
+                    {Array.from({ length: 10 }, (_, fIdx) => {
+                      const frame = player.frames[fIdx];
+                      const bgClass = frame?.isStrike ? 'bg-amber-200/60' : frame?.isSpare ? 'bg-slate-200/60' : '';
+                      return (
+                        <td key={fIdx} className={`border border-lane-200 px-0 py-0 ${bgClass}`}>
+                          <div className="flex min-h-[1.1rem] border-b border-lane-100 text-[0.65rem]">
+                            <span className="w-1/2 border-r border-lane-100 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 0) : ''}</span>
+                            <span className="w-1/2 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 1) : ''}</span>
+                            {fIdx === 9 && <span className="w-1/2 border-l border-lane-100 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 2) : ''}</span>}
+                          </div>
+                          <div className="px-1 py-0.5 text-center text-lane-600">{frame?.cumulative ?? ''}</div>
+                        </td>
+                      );
+                    })}
+                    <td className="border border-lane-200 px-2 py-1 text-center font-black text-lane-900">{player.total}</td>
+                  </tr>
+                ))}
+                {!scoreboard?.players?.length && (
+                  <tr>
+                    <td colSpan={12} className="border border-lane-200 px-2 py-3 text-center text-sm font-bold text-lane-500">Noch keine Würfe.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Event stream */}
+        <section className="soft-card p-4 sm:p-6">
+          <p className="eyebrow">Event Stream</p>
+          <div className="mt-3 flex flex-col gap-2">
+            {[...events].reverse().slice(0, 12).map((event) => (
+              <div key={event.eventId} className="app-card p-2.5 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-black">{eventLabel(event.type)}</span>
+                  <span className="text-xs text-lane-500">{new Date(event.createdAt).toLocaleTimeString('de-DE')}</span>
+                </div>
+                {isThrowAnalysis(event.payload) && (
+                  <p className="mt-1 text-xs text-lane-600">{event.payload.player}: {event.payload.pinsKnockedDown ?? '–'} Pins · {formatNumber(event.payload.ballSpeedKmh, ' km/h')}</p>
+                )}
+              </div>
+            ))}
+            {!events.length && <p className="text-sm font-bold text-lane-600">Noch keine Events.</p>}
+          </div>
+        </section>
+      </main>
+    </>
+  );
+}

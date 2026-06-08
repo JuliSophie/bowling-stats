@@ -24,3 +24,4 @@ debug_crops/
 backend/dev.db
 backend/tmp
 backend/debug_images/
+experiments/

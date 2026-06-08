@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 
 const NAV_ITEMS = [
   { href: '/', label: 'Home', icon: '⌂' },
+  { href: '/live', label: 'Live', icon: '●' },
   { href: '/stats/games', label: 'Spiele', icon: '🎳' },
   { href: '/stats/players', label: 'Bestenliste', icon: '🏆' },
 ];
@@ -116,7 +117,7 @@ export default function Navigation() {
       </header>
 
       <nav className="fixed inset-x-3 bottom-3 z-50 rounded-[1.75rem] border p-2 text-white shadow-[0_18px_60px_rgba(0,0,0,0.36)] backdrop-blur-2xl md:hidden" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)' }}>
-        <div className="grid grid-cols-3 gap-1">
+        <div className="grid grid-cols-4 gap-1">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}

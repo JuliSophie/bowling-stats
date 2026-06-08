@@ -19,6 +19,18 @@
   --top-glow: rgba(255, 255, 255, 0.16);
   --nav-bg: rgba(20, 11, 4, 0.82);
   --nav-border: rgba(255, 255, 255, 0.14);
+
+  /* Live-view lane: muted maple tan (less saturated than the old amber). */
+  --lane-wood-top: #e7d6b8;
+  --lane-wood-mid: #dbc6a1;
+  --lane-wood-bottom: #cbb083;
+  --lane-deck: #1b1206;
+  --lane-edge: rgba(77, 46, 19, 0.35);
+  --lane-board-line: rgba(77, 46, 19, 0.16);
+  --lane-arrow: rgba(77, 46, 19, 0.40);
+  --lane-path: #1e1b4b;
+  --lane-foul: rgba(180, 35, 24, 0.65);
+  --lane-pin: #fbf3e4;
 }
 
 :root[data-theme="dark"] {
@@ -37,6 +49,18 @@
   --top-glow: rgba(255, 221, 174, 0.08);
   --nav-bg: rgba(8, 4, 2, 0.84);
   --nav-border: rgba(255, 226, 190, 0.12);
+
+  /* Live-view lane: dark stained wood with a bright ball line. */
+  --lane-wood-top: #2f2415;
+  --lane-wood-mid: #241a0e;
+  --lane-wood-bottom: #1a1209;
+  --lane-deck: #050302;
+  --lane-edge: rgba(255, 226, 190, 0.22);
+  --lane-board-line: rgba(255, 226, 190, 0.10);
+  --lane-arrow: rgba(255, 226, 190, 0.22);
+  --lane-path: #fbbf24;
+  --lane-foul: rgba(220, 70, 55, 0.55);
+  --lane-pin: #ece0cb;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,6 +80,17 @@
     --top-glow: rgba(255, 221, 174, 0.08);
     --nav-bg: rgba(8, 4, 2, 0.84);
     --nav-border: rgba(255, 226, 190, 0.12);
+
+    --lane-wood-top: #2f2415;
+    --lane-wood-mid: #241a0e;
+    --lane-wood-bottom: #1a1209;
+    --lane-deck: #050302;
+    --lane-edge: rgba(255, 226, 190, 0.22);
+    --lane-board-line: rgba(255, 226, 190, 0.10);
+    --lane-arrow: rgba(255, 226, 190, 0.22);
+    --lane-path: #fbbf24;
+    --lane-foul: rgba(220, 70, 55, 0.55);
+    --lane-pin: #ece0cb;
   }
 }
 

@@ -12,6 +12,7 @@ from app import models  # noqa: F401
 from app.routers.auth import router as auth_router
 from app.routers.games import router as games_router
 from app.routers.stats import router as stats_router
+from app.routers.tracking import router as tracking_router
 from app.routers.upload import router as upload_router
 
 
@@ -57,11 +58,17 @@ def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# Protected: everything below requires a valid auth cookie (browser) or bearer token (companion app).
+protected = [Depends(require_auth)]
+
 # Public: the login/session endpoints must be reachable before authentication.
 app.include_router(auth_router, prefix="/api")
 
-# Protected: everything else requires a valid auth cookie.
-protected = [Depends(require_auth)]
+# Tracking (live sessions + companion throw ingest) is now gated: strangers can't
+# post throws or read the live feed. The browser authenticates with the cookie, the
+# Android companion with its bearer token.
+app.include_router(tracking_router, prefix="/api", dependencies=protected)
+
 app.include_router(upload_router, prefix="/api", dependencies=protected)
 app.include_router(games_router, prefix="/api", dependencies=protected)
 app.include_router(stats_router, prefix="/api", dependencies=protected)
