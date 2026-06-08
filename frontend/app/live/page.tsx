@@ -63,19 +63,50 @@ function ballGlyph(frame: TrackingPlayerCard['frames'][number], ballIndex: numbe
   return pins === 0 ? '–' : String(pins);
 }
 
-/** A tall, realistic lane viewed from behind: pin deck at the top, foul line at the bottom. */
-function LaneView({ lastThrow }: { lastThrow: ThrowAnalysis | undefined }) {
+/** A realistic lane viewed from behind. Vertical (default, mobile): pin deck at the
+ *  top, foul line at the bottom. Horizontal (wide screens): pin deck on the right,
+ *  foul line on the left — the same lane rotated a quarter-turn. */
+function LaneView({
+  lastThrow,
+  orientation = 'vertical',
+}: {
+  lastThrow: ThrowAnalysis | undefined;
+  orientation?: 'vertical' | 'horizontal';
+}) {
+  const horizontal = orientation === 'horizontal';
+  // Distance from the foul line to the pin header, as a percentage of the lane's long axis.
+  const headerLengthPct = horizontal ? 100 - PIN_DECK_HEIGHT_PCT : PIN_HEADER_Y_PCT;
+
   const clampPct = (v: number) => Math.max(2, Math.min(98, v));
-  const mapX = (board: number) => clampPct((board / BOARD_COUNT) * 100);
-  const mapY = (distanceM: number) => {
+  const mapBoard = (board: number) => clampPct((board / BOARD_COUNT) * 100);
+  // Vertical: distance runs bottom (foul) → top (pins).
+  const mapDistanceV = (distanceM: number) => {
     const laneSurfacePct = 100 - PIN_HEADER_Y_PCT;
     const y = PIN_HEADER_Y_PCT + (1 - distanceM / LANE_LENGTH_M) * laneSurfacePct;
     return Math.max(PIN_HEADER_Y_PCT, Math.min(99, y));
   };
+  // Horizontal: distance runs left (foul) → right (pins).
+  const mapDistanceH = (distanceM: number) => {
+    const x = (distanceM / LANE_LENGTH_M) * headerLengthPct;
+    return Math.max(1, Math.min(headerLengthPct, x));
+  };
+  // Project a (board, distance) lane coordinate onto container percentages.
+  const pos = (board: number, distanceM: number) =>
+    horizontal
+      ? { left: mapDistanceH(distanceM), top: mapBoard(board) }
+      : { left: mapBoard(board), top: mapDistanceV(distanceM) };
 
   const path: BallPathPoint[] = lastThrow?.path ?? [];
   const curve = lastThrow?.curve;
-  const polyline = path.length >= 2 ? path.map((p) => `${mapX(p.board)},${mapY(distanceOf(p))}`).join(' ') : null;
+  const polyline =
+    path.length >= 2
+      ? path
+          .map((p) => {
+            const q = pos(p.board, distanceOf(p));
+            return `${q.left},${q.top}`;
+          })
+          .join(' ')
+      : null;
   const markers = [
     { key: 'launch', label: 'Start', point: curve?.launch, color: '#16a34a' },
     { key: 'apex', label: 'Hook', point: curve?.apex, color: '#f59e0b' },
@@ -95,22 +126,25 @@ function LaneView({ lastThrow }: { lastThrow: ThrowAnalysis | undefined }) {
     { pin: 1, row: 3, offset: 0 },
   ].map((pin, index) => ({
     ...pin,
-    x: 50 + pin.offset * PIN_SPACING_PCT,
-    y: 19 + pin.row * 23,
+    // Inside the deck strip: the board (offset) axis spreads across the strip's long
+    // side; the row axis stacks along its short side, back row farthest from the lane.
+    x: horizontal ? 88 - pin.row * 23 : 50 + pin.offset * PIN_SPACING_PCT,
+    y: horizontal ? 50 + pin.offset * PIN_SPACING_PCT : 19 + pin.row * 23,
     knocked: index < knockedPins,
   }));
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
 
+  const containerClass = horizontal
+    ? 'relative h-[170px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-l from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner xl:h-[200px]'
+    : 'relative h-[440px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-b from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner sm:h-[560px]';
+
   return (
-    <div
-      className="relative h-[440px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-b from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner sm:h-[560px]"
-      style={{ borderColor: 'var(--lane-edge)' }}
-    >
-        {/* Pin deck above the playable lane. The trajectory only maps from the foul line
-          up to the pin header line below this deck. */}
+    <div className={containerClass} style={{ borderColor: 'var(--lane-edge)' }}>
+      {/* Pin deck beyond the playable lane. The trajectory only maps from the foul
+        line up to the pin header line at the edge of this deck. */}
       <div
-        className="absolute inset-x-0 top-0 h-[13%]"
+        className={horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'}
         style={{ background: 'var(--lane-deck)' }}
       >
         {pinPositions.map((pin) => (
@@ -131,15 +165,21 @@ function LaneView({ lastThrow }: { lastThrow: ThrowAnalysis | undefined }) {
 
       {/* Pin header line: end of the measured ball trajectory, before the pin deck. */}
       <div
-        className="absolute inset-x-0 h-[2px]"
-        style={{ top: `${PIN_HEADER_Y_PCT}%`, background: 'var(--lane-foul)' }}
+        className={horizontal ? 'absolute inset-y-0 w-[2px]' : 'absolute inset-x-0 h-[2px]'}
+        style={
+          horizontal
+            ? { left: `${headerLengthPct}%`, background: 'var(--lane-foul)' }
+            : { top: `${headerLengthPct}%`, background: 'var(--lane-foul)' }
+        }
       />
 
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         {/* board guide lines */}
-        {boardGuides.map((b) => (
-          <line key={b} x1={mapX(b)} y1={PIN_HEADER_Y_PCT} x2={mapX(b)} y2={100} style={{ stroke: 'var(--lane-board-line)' }} strokeWidth={0.4} vectorEffect="non-scaling-stroke" />
-        ))}
+        {boardGuides.map((b) => {
+          const a = pos(b, 0);
+          const c = pos(b, LANE_LENGTH_M);
+          return <line key={b} x1={a.left} y1={a.top} x2={c.left} y2={c.top} style={{ stroke: 'var(--lane-board-line)' }} strokeWidth={0.4} vectorEffect="non-scaling-stroke" />;
+        })}
         {/* the throw */}
         {polyline && (
           <polyline
@@ -155,33 +195,38 @@ function LaneView({ lastThrow }: { lastThrow: ThrowAnalysis | undefined }) {
       </svg>
 
       {/* bowling arrows */}
-      {boardGuides.map((b) => (
-        <span
-          key={`arrow-${b}`}
-          className="absolute -translate-x-1/2 -translate-y-1/2 text-[0.6rem] font-black"
-          style={{ left: `${mapX(b)}%`, top: `${mapY(arrowDistance)}%`, color: 'var(--lane-arrow)' }}
-        >
-          ▲
-        </span>
-      ))}
+      {boardGuides.map((b) => {
+        const q = pos(b, arrowDistance);
+        return (
+          <span
+            key={`arrow-${b}`}
+            className="absolute -translate-x-1/2 -translate-y-1/2 text-[0.6rem] font-black"
+            style={{ left: `${q.left}%`, top: `${q.top}%`, color: 'var(--lane-arrow)' }}
+          >
+            ▲
+          </span>
+        );
+      })}
 
       {/* foul line */}
-      <div className="absolute inset-x-0 bottom-0 h-[1.5%]" style={{ background: 'var(--lane-foul)' }} />
+      <div className={horizontal ? 'absolute inset-y-0 left-0 w-[1.5%]' : 'absolute inset-x-0 bottom-0 h-[1.5%]'} style={{ background: 'var(--lane-foul)' }} />
 
       {/* shape markers */}
-      {markers.map((m) =>
-        m.point ? (
+      {markers.map((m) => {
+        if (!m.point) return null;
+        const q = pos(m.point.board, distanceOf(m.point));
+        return (
           <span
             key={m.key}
             className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg"
-            style={{ left: `${mapX(m.point.board)}%`, top: `${mapY(distanceOf(m.point))}%`, background: m.color }}
+            style={{ left: `${q.left}%`, top: `${q.top}%`, background: m.color }}
             title={m.label}
           />
-        ) : null,
-      )}
+        );
+      })}
 
       {/* label */}
-      <div className="absolute left-2 top-[15%] rounded-lg bg-lane-950/70 px-2 py-1 text-[0.7rem] font-black text-amber-50">
+      <div className={`absolute left-2 ${horizontal ? 'top-2' : 'top-[15%]'} rounded-lg bg-lane-950/70 px-2 py-1 text-[0.7rem] font-black text-amber-50`}>
         {!lastThrow
           ? 'Warte auf Wurf…'
           : lastThrow.isCurve
@@ -292,6 +337,32 @@ export default function LivePage() {
     }
   };
 
+  // Live-data blocks, shared between the narrow (side-by-side) and wide (stacked) layouts.
+  const aktuellCard = (
+    <Card
+      title="Aktuell"
+      eyebrow
+      header={session?.currentPlayer ?? 'Spieler 1'}
+      headerSize="lg"
+      subtext={`Frame ${session?.currentFrame ?? 1} · Wurf ${session?.currentThrow ?? 1}`}
+    />
+  );
+
+  const metricCards = (
+    <>
+      <Card title="Speed" header={lastThrow ? formatNumber(lastThrow.ballSpeedKmh) : '–'} headerSize="lg" padding="sm" />
+      <Card title="Pins" header={lastThrow?.pinsKnockedDown != null ? String(lastThrow.pinsKnockedDown) : '–'} headerSize="lg" padding="sm" />
+      <Card title="Board" header={lastThrow ? formatNumber(lastThrow.impactBoard) : '–'} headerSize="lg" padding="sm" />
+      <Card title="Hook" header={lastThrow?.isCurve ? formatNumber(lastThrow.curveBoards) : '0.0'} headerSize="lg" padding="sm" />
+      <Card title="Winkel" header={lastThrow ? formatNumber(lastThrow.entryAngleDeg, '°') : '–'} headerSize="lg" padding="sm" />
+      <Card title="Konfidenz" header={lastThrow?.confidence != null ? `${Math.round(lastThrow.confidence * 100)}%` : '–'} headerSize="lg" padding="sm" />
+    </>
+  );
+
+  const lowConfidenceBadge = lastThrow?.lowConfidence ? (
+    <span className="rounded-full bg-coral px-3 py-2 text-center text-xs font-black text-lane-950">Wurf prüfen — niedrige Konfidenz</span>
+  ) : null;
+
   return (
     <>
       <Navigation />
@@ -299,12 +370,12 @@ export default function LivePage() {
         {/* Compact status bar */}
         <section className="soft-card flex flex-wrap items-center justify-between gap-3 p-4">
           <div className="flex flex-wrap items-center gap-2 text-xs font-black uppercase tracking-[0.14em]">
-            <span className={`rounded-full px-3 py-1.5 ${connectionState === 'open' ? 'bg-emerald-400 text-emerald-950' : 'bg-lane-200 text-lane-700'}`}>{connectionText}</span>
-            <span className={`rounded-full px-3 py-1.5 ${session?.companionConnected ? 'bg-emerald-400 text-emerald-950' : 'bg-lane-200 text-lane-700'}`}>
+            <span className={`rounded-full border px-3 py-1.5 ${connectionState === 'open' ? 'border-transparent bg-emerald-400 text-emerald-950' : 'subtle-surface text-lane-700'}`}>{connectionText}</span>
+            <span className={`rounded-full border px-3 py-1.5 ${session?.companionConnected ? 'border-transparent bg-emerald-400 text-emerald-950' : 'subtle-surface text-lane-700'}`}>
               Companion {session?.companionConnected ? 'online' : 'wartet'}
             </span>
-            <span className="rounded-full bg-lane-200 px-3 py-1.5 text-lane-700">Code {session?.pairingToken ?? '––––––'}</span>
-            <span className="rounded-full bg-lane-200 px-3 py-1.5 text-lane-700">{session?.liveClientCount ?? 1} Clients</span>
+            <span className="rounded-full border subtle-surface px-3 py-1.5 text-lane-700">Code {session?.pairingToken ?? '––––––'}</span>
+            <span className="rounded-full border subtle-surface px-3 py-1.5 text-lane-700">{session?.liveClientCount ?? 1} Clients</span>
           </div>
 
           {/* Player-count control (operator declares how many bowlers are on the lane) */}
@@ -336,32 +407,25 @@ export default function LivePage() {
 
         {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
 
-        {/* The core: lane (curve) on the left, live data on the right */}
-        <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5">
+        {/* Narrow / mobile: lane (curve) on the left, live data on the right. */}
+        <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">
           <LaneView lastThrow={lastThrow} />
 
           <div className="flex flex-col gap-3">
-            <Card
-              title="Aktuell"
-              eyebrow
-              header={session?.currentPlayer ?? 'Spieler 1'}
-              headerSize="lg"
-              subtext={`Frame ${session?.currentFrame ?? 1} · Wurf ${session?.currentThrow ?? 1}`}
-            />
-
-            <div className="grid grid-cols-2 gap-3">
-              <Card title="Speed" header={lastThrow ? formatNumber(lastThrow.ballSpeedKmh) : '–'} headerSize="lg" padding="sm" />
-              <Card title="Pins" header={lastThrow?.pinsKnockedDown != null ? String(lastThrow.pinsKnockedDown) : '–'} headerSize="lg" padding="sm" />
-              <Card title="Board" header={lastThrow ? formatNumber(lastThrow.impactBoard) : '–'} headerSize="lg" padding="sm" />
-              <Card title="Hook" header={lastThrow?.isCurve ? formatNumber(lastThrow.curveBoards) : '0.0'} headerSize="lg" padding="sm" />
-              <Card title="Winkel" header={lastThrow ? formatNumber(lastThrow.entryAngleDeg, '°') : '–'} headerSize="lg" padding="sm" />
-              <Card title="Konfidenz" header={lastThrow?.confidence != null ? `${Math.round(lastThrow.confidence * 100)}%` : '–'} headerSize="lg" padding="sm" />
-            </div>
-
-            {lastThrow?.lowConfidence && (
-              <span className="rounded-full bg-coral px-3 py-2 text-center text-xs font-black text-lane-950">Wurf prüfen — niedrige Konfidenz</span>
-            )}
+            {aktuellCard}
+            <div className="grid grid-cols-2 gap-3">{metricCards}</div>
+            {lowConfidenceBadge}
           </div>
+        </section>
+
+        {/* Wide screens: live data on top, the lane laid out horizontally below. */}
+        <section className="hidden flex-col gap-5 lg:flex">
+          <div className="grid grid-cols-[minmax(13rem,1fr)_3fr] items-start gap-5">
+            {aktuellCard}
+            <div className="grid grid-cols-3 gap-3 xl:grid-cols-6">{metricCards}</div>
+          </div>
+          {lowConfidenceBadge}
+          <LaneView lastThrow={lastThrow} orientation="horizontal" />
         </section>
 
         {/* Live score table, rebuilt from the throw log */}
