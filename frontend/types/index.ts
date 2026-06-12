@@ -143,6 +143,8 @@ export type TrackingFrame = {
   cumulative: number | null;
   isStrike: boolean;
   isSpare: boolean;
+  // Pins (1..10) that fell on each ball of this frame, in ball order.
+  fallenPins?: number[][];
 };
 
 export type TrackingPlayerCard = {

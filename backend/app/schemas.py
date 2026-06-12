@@ -1,5 +1,5 @@
 from datetime import date, datetime, time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -164,6 +164,17 @@ class TrackingPlayersUpdate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class ThrowCorrection(BaseModel):
+    """Manual fix-ups to the ordered throw log when the camera mis-/under-detected a throw."""
+
+    action: Literal["edit_last", "insert_before_last", "insert_at_end", "delete_last"]
+    pins_knocked_down: int | None = Field(
+        default=None, validation_alias=AliasChoices("pinsKnockedDown", "pins_knocked_down"), ge=0, le=10
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class TrackingFrame(BaseModel):
     """One frame on a player's card: the pins per ball plus the running cumulative score."""
 
@@ -171,6 +182,8 @@ class TrackingFrame(BaseModel):
     cumulative: int | None = None
     is_strike: bool = Field(default=False, alias="isStrike")
     is_spare: bool = Field(default=False, alias="isSpare")
+    # Pins (1..10) that fell on each ball of this frame, in ball order. Empty when not tracked.
+    fallen_pins: list[list[int]] = Field(default_factory=list, alias="fallenPins")
 
     model_config = ConfigDict(populate_by_name=True)
 

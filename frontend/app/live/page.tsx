@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Navigation from '@/components/navigation';
 import Card from '@/components/ui/card';
 import {
+  type ThrowCorrectionAction,
+  correctTrackingThrow,
   createGame,
   createTrackingSession,
   fetchTrackingEvents,
@@ -50,6 +52,7 @@ function eventLabel(type: string) {
     score_updated: 'Score aktualisiert',
     low_confidence_detection: 'Niedrige Konfidenz',
     session_reset: 'Neues Spiel gestartet',
+    throw_corrected: 'Wurf korrigiert',
   };
   return labels[type] ?? type;
 }
@@ -267,6 +270,33 @@ function LaneView({
   );
 }
 
+/** Compact 0–10 pin stepper (10 shown as a strike "X"), matching the player-count control. */
+function PinStepper({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
+  return (
+    <div className="flex items-center gap-1 rounded-full bg-lane-100 p-1">
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(0, value - 1))}
+        disabled={disabled || value <= 0}
+        className="grid h-8 w-8 place-items-center rounded-full bg-white text-lg font-black text-lane-700 shadow disabled:opacity-40"
+        aria-label="Weniger Pins"
+      >
+        −
+      </button>
+      <span className="min-w-[2rem] text-center text-base font-black tabular-nums">{value >= 10 ? 'X' : value}</span>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(10, value + 1))}
+        disabled={disabled || value >= 10}
+        className="grid h-8 w-8 place-items-center rounded-full bg-white text-lg font-black text-lane-700 shadow disabled:opacity-40"
+        aria-label="Mehr Pins"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 export default function LivePage() {
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
@@ -275,33 +305,23 @@ export default function LivePage() {
   const [rosterBusy, setRosterBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [correcting, setCorrecting] = useState(false);
+  const [lastPins, setLastPins] = useState(0);
+  const [insertPins, setInsertPins] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
-  // Every throw's fallen pins, keyed by `${player}|${frame}|${throwInFrame}`, kept across the whole
-  // game (the visible event list is capped) so a saved game can carry per-throw pin data.
-  const pinsByThrowRef = useRef<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const recordThrowPins = (payload: LiveEvent['payload']) => {
-      if (!isThrowAnalysis(payload)) return;
-      const fallen = Array.isArray(payload.fallenPins) ? (payload.fallenPins as number[]) : [];
-      pinsByThrowRef.current.set(`${payload.player}|${payload.frame}|${payload.throw}`, fallen);
-    };
-
     const applyEvent = (event: LiveEvent) => {
       if (event.type === 'session_snapshot') {
         if (event.payload.session) setSession(event.payload.session);
         if (Array.isArray(event.payload.events)) {
-          event.payload.events.forEach((e) => recordThrowPins(e.payload));
           setEvents(event.payload.events.slice(-MAX_VISIBLE_EVENTS));
         }
         return;
       }
-
-      if (event.type === 'session_reset') pinsByThrowRef.current.clear();
-      if (event.type === 'throw_analyzed') recordThrowPins(event.payload);
 
       if (event.payload.session) {
         setSession(event.payload.session);
@@ -360,6 +380,11 @@ export default function LivePage() {
   const lastThrow = throwEvents.at(-1)?.payload as ThrowAnalysis | undefined;
   const scoreboard = session?.scoreboard ?? null;
 
+  // Seed the "edit last throw" stepper with each newly detected throw's pin count.
+  useEffect(() => {
+    setLastPins(lastThrow?.pinsKnockedDown ?? 0);
+  }, [lastThrow?.capturedAt, lastThrow?.pinsKnockedDown]);
+
   const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
 
   const startNewGame = async () => {
@@ -393,8 +418,9 @@ export default function LivePage() {
             throw2: ballGlyph(frame, 1),
             throw3: fIdx === 9 ? ballGlyph(frame, 2) : '',
             cumulative: frame.cumulative != null ? String(frame.cumulative) : '',
-            // Per-ball fallen pins recovered from the throw stream, so player stats can use them.
-            fallenPins: frame.throws.map((_, bIdx) => pinsByThrowRef.current.get(`${player.name}|${fIdx + 1}|${bIdx + 1}`) ?? []),
+            // Per-ball fallen pins come from the scoreboard (the backend keeps them aligned to the
+            // log, so they stay correct after manual corrections), for player pin stats.
+            fallenPins: frame.fallenPins ?? [],
           })),
         }));
       if (!scores.length) {
@@ -408,6 +434,27 @@ export default function LivePage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const applyCorrection = async (action: ThrowCorrectionAction, pins?: number) => {
+    if (!session) return;
+    setCorrecting(true);
+    setError(null);
+    setSaveMsg(null);
+    try {
+      const updated = await correctTrackingThrow(session.sessionId, action, pins);
+      setSession(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Korrektur konnte nicht angewendet werden.');
+    } finally {
+      setCorrecting(false);
+    }
+  };
+
+  const editLastPins = (next: number) => {
+    const clamped = Math.max(0, Math.min(10, next));
+    setLastPins(clamped);
+    applyCorrection('edit_last', clamped);
   };
 
   const changePlayerCount = async (delta: number) => {
@@ -531,6 +578,59 @@ export default function LivePage() {
           </div>
           {lowConfidenceBadge}
           <LaneView lastThrow={lastThrow} orientation="horizontal" />
+        </section>
+
+        {/* Manual throw-log fix-ups for when the camera missed or mis-scored a throw. */}
+        <section className="soft-card p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <p className="eyebrow">Wurf-Korrektur</p>
+            <span className="text-xs font-bold text-lane-500">
+              Letzter Wurf: {lastThrow ? `${lastThrow.player} · Frame ${lastThrow.frame} · Wurf ${lastThrow.throw}` : '—'}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-lane-600">Pins letzter Wurf</span>
+              <PinStepper value={lastPins} onChange={editLastPins} disabled={correcting || !scoreboard?.throwCount} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-lane-600">Fehlenden Wurf einfügen</span>
+              <div className="flex items-center gap-2">
+                <PinStepper value={insertPins} onChange={setInsertPins} disabled={correcting} />
+                <button
+                  type="button"
+                  onClick={() => applyCorrection('insert_at_end', insertPins)}
+                  disabled={correcting || !session}
+                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
+                  title="Wurf jetzt nachtragen (nächster Spieler ist dran)"
+                >
+                  Anhängen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyCorrection('insert_before_last', insertPins)}
+                  disabled={correcting || !scoreboard?.throwCount}
+                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
+                  title="Vor dem letzten Wurf einfügen (rückt den letzten Wurf zum richtigen Spieler)"
+                >
+                  Davor
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { if (window.confirm('Letzten Wurf löschen?')) applyCorrection('delete_last'); }}
+              disabled={correcting || !scoreboard?.throwCount}
+              className="rounded-full border border-transparent bg-coral px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-950 transition hover:-translate-y-0.5 disabled:opacity-40"
+            >
+              Letzten Wurf löschen
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-lane-500">
+            Eigener Wurf nicht erkannt? „Anhängen“ trägt ihn nach. Fiel erst durch den nächsten Wurf auf, dass die Zuordnung
+            verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
+            „Letzten Wurf löschen“.
+          </p>
         </section>
 
         {/* Live score table, rebuilt from the throw log */}

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, st
 from app.live_scoring import ScoreboardResult, compute_scoreboard
 from app.schemas import (
     LiveEvent,
+    ThrowCorrection,
     ThrowObservation,
     TrackingPlayersUpdate,
     TrackingScoreboard,
@@ -67,8 +68,23 @@ class LiveSession:
             self.player_names,
         )
 
+    def _inject_fallen_pins(self, board: ScoreboardResult) -> None:
+        """Attach each frame's per-ball fallen pins from the throw log, keyed by the scoring engine's
+        assignment of throws to (player, frame). Deriving it from the assignments keeps the pin data
+        aligned even after manual corrections shuffle the log."""
+        grouped: dict[tuple[int, int], list[list[int]]] = {}
+        for index, assignment in enumerate(board.assignments):
+            if index >= len(self.throw_log):
+                break
+            fallen = self.throw_log[index].get("fallenPins") or []
+            grouped.setdefault((assignment.player_index, assignment.frame - 1), []).append(fallen)
+        for player_index, player in enumerate(board.players):
+            for frame_index, frame in enumerate(player["frames"]):
+                frame["fallenPins"] = grouped.get((player_index, frame_index), [])
+
     def snapshot(self) -> TrackingSessionRead:
         board = self.scoreboard()
+        self._inject_fallen_pins(board)
         current_index = board.current_player_index
         current_name = board.players[current_index]["name"] if board.players else None
         scoreboard_model = TrackingScoreboard.model_validate(
@@ -215,6 +231,19 @@ def _analysis_metrics(session: LiveSession, observation: ThrowObservation) -> di
     }
 
 
+def _manual_throw(session: LiveSession, pins: int) -> dict[str, Any]:
+    """A minimal throw-log entry for an operator-inserted (missed-by-camera) throw. Only the pin
+    count drives scoring; no ball metrics exist for a manual entry."""
+    return {
+        "sessionId": session.session_id,
+        "clientEventId": None,
+        "capturedAt": datetime.now(timezone.utc).isoformat(),
+        "pinsKnockedDown": pins,
+        "fallenPins": [],
+        "manual": True,
+    }
+
+
 async def _mark_companion_connected(session: LiveSession) -> None:
     """Flag the companion online, emitting the event only on a real disconnected->connected flip.
 
@@ -322,6 +351,39 @@ async def reset_tracking_session(session_id: str) -> TrackingSessionRead:
 async def ingest_throw(session_id: str, observation: ThrowObservation) -> LiveEvent:
     session = await _get_session(session_id)
     return await _ingest_throw(session, observation)
+
+
+@router.post("/tracking/sessions/{session_id}/throws/correct", response_model=TrackingSessionRead)
+async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSessionRead:
+    """Fix the ordered throw log by hand when the camera missed or mis-scored a throw.
+
+    - ``insert_at_end`` registers a throw the camera missed right now (advances the turn normally).
+    - ``insert_before_last`` adds a missed throw just before the latest one, which shifts the latest
+      (and everything after) to the right player/frame — for when a later throw already misaligned.
+    - ``edit_last`` corrects the pin count of the most recent throw.
+    - ``delete_last`` removes a false/duplicate detection.
+    Everything downstream (player/frame/ball, score) is re-derived from the log automatically.
+    """
+    session = await _get_session(session_id)
+    session.touch()
+    log = session.throw_log
+    if payload.action == "delete_last":
+        if log:
+            log.pop()
+    elif payload.action == "edit_last":
+        if log and payload.pins_knocked_down is not None:
+            log[-1] = {**log[-1], "pinsKnockedDown": payload.pins_knocked_down, "fallenPins": []}
+    elif payload.action == "insert_before_last":
+        log.insert(max(0, len(log) - 1), _manual_throw(session, payload.pins_knocked_down or 0))
+    elif payload.action == "insert_at_end":
+        log.append(_manual_throw(session, payload.pins_knocked_down or 0))
+
+    await _append_and_broadcast(session, _new_event("throw_corrected", {"action": payload.action, "throwCount": len(log)}))
+    await _append_and_broadcast(
+        session,
+        _new_event("score_updated", {"session": session.snapshot().model_dump(mode="json", by_alias=True)}),
+    )
+    return session.snapshot()
 
 
 @router.post("/tracking/mock-throws", response_model=LiveEvent, status_code=status.HTTP_202_ACCEPTED)
