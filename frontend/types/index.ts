@@ -32,6 +32,8 @@ export type FrameData = {
   throw2: string;
   throw3: string;
   cumulative: string;
+  // Per-ball fallen pin numbers (1..10), index 0 = first ball. Present for live-tracked games.
+  fallenPins?: number[][];
 };
 
 export type PlayerData = {
@@ -201,6 +203,8 @@ export type ThrowAnalysis = {
   frame: number;
   throw: number;
   pinsKnockedDown?: number | null;
+  // Pin numbers (1..10) that fell on this delivery, from the overhead display.
+  fallenPins?: number[] | null;
   ballSpeedKmh?: number | null;
   impactBoard?: number | null;
   launchBoard?: number | null;

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Navigation from '@/components/navigation';
 import Card from '@/components/ui/card';
 import {
+  createGame,
   createTrackingSession,
   fetchTrackingEvents,
   fetchTrackingSession,
@@ -115,6 +116,9 @@ function LaneView({
     { key: 'impact', label: 'Pins', point: curve?.impact, color: '#e11d48' },
   ];
   const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
+  // Prefer the exact pins the display reported fallen; fall back to "first N" only for the count.
+  const fallenSet =
+    lastThrow?.fallenPins && lastThrow.fallenPins.length > 0 ? new Set(lastThrow.fallenPins) : null;
   const pinPositions = [
     { pin: 7, row: 0, offset: -1.5 },
     { pin: 8, row: 0, offset: -0.5 },
@@ -132,7 +136,7 @@ function LaneView({
     // side; the row axis stacks along its short side, back row farthest from the lane.
     x: horizontal ? 88 - pin.row * 23 : 50 + pin.offset * PIN_SPACING_PCT,
     y: horizontal ? 50 + pin.offset * PIN_SPACING_PCT : 19 + pin.row * 23,
-    knocked: index < knockedPins,
+    knocked: fallenSet ? fallenSet.has(pin.pin) : index < knockedPins,
   }));
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
@@ -174,6 +178,25 @@ function LaneView({
             : { top: `${headerLengthPct}%`, background: 'var(--lane-foul)' }
         }
       />
+
+      {/* Big transparent speed watermark, sized to the whole lane so it's readable from across the
+        room. Sits over the lane wood but under the ball curve (drawn by the svg below). */}
+      {lastThrow?.ballSpeedKmh != null && (
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center" aria-hidden>
+          <span
+            className={`font-black leading-none tabular-nums ${horizontal ? 'text-[5rem] xl:text-[7rem]' : 'text-[4rem] sm:text-[7rem]'}`}
+            style={{ color: 'var(--foreground)', opacity: 0.18 }}
+          >
+            {formatNumber(lastThrow.ballSpeedKmh)}
+          </span>
+          <span
+            className={`font-black tracking-[0.35em] ${horizontal ? 'text-sm' : 'text-xl sm:text-2xl'}`}
+            style={{ color: 'var(--foreground)', opacity: 0.18 }}
+          >
+            KM/H
+          </span>
+        </div>
+      )}
 
       <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         {/* board guide lines */}
@@ -250,20 +273,35 @@ export default function LivePage() {
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [error, setError] = useState<string | null>(null);
   const [rosterBusy, setRosterBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  // Every throw's fallen pins, keyed by `${player}|${frame}|${throwInFrame}`, kept across the whole
+  // game (the visible event list is capped) so a saved game can carry per-throw pin data.
+  const pinsByThrowRef = useRef<Map<string, number[]>>(new Map());
 
   useEffect(() => {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const recordThrowPins = (payload: LiveEvent['payload']) => {
+      if (!isThrowAnalysis(payload)) return;
+      const fallen = Array.isArray(payload.fallenPins) ? (payload.fallenPins as number[]) : [];
+      pinsByThrowRef.current.set(`${payload.player}|${payload.frame}|${payload.throw}`, fallen);
+    };
+
     const applyEvent = (event: LiveEvent) => {
       if (event.type === 'session_snapshot') {
         if (event.payload.session) setSession(event.payload.session);
         if (Array.isArray(event.payload.events)) {
+          event.payload.events.forEach((e) => recordThrowPins(e.payload));
           setEvents(event.payload.events.slice(-MAX_VISIBLE_EVENTS));
         }
         return;
       }
+
+      if (event.type === 'session_reset') pinsByThrowRef.current.clear();
+      if (event.type === 'throw_analyzed') recordThrowPins(event.payload);
 
       if (event.payload.session) {
         setSession(event.payload.session);
@@ -338,6 +376,40 @@ export default function LivePage() {
     }
   };
 
+  const saveGame = async () => {
+    if (!session || !scoreboard?.players?.length) return;
+    setSaving(true);
+    setSaveMsg(null);
+    setError(null);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const scores = scoreboard.players
+        .filter((player) => player.frames.length > 0)
+        .map((player) => ({
+          player_name: player.name,
+          total_score: player.total,
+          frames: player.frames.map((frame, fIdx) => ({
+            throw1: ballGlyph(frame, 0),
+            throw2: ballGlyph(frame, 1),
+            throw3: fIdx === 9 ? ballGlyph(frame, 2) : '',
+            cumulative: frame.cumulative != null ? String(frame.cumulative) : '',
+            // Per-ball fallen pins recovered from the throw stream, so player stats can use them.
+            fallenPins: frame.throws.map((_, bIdx) => pinsByThrowRef.current.get(`${player.name}|${fIdx + 1}|${bIdx + 1}`) ?? []),
+          })),
+        }));
+      if (!scores.length) {
+        setError('Noch keine Würfe zum Speichern.');
+        return;
+      }
+      await createGame({ played_at: today, location: session.location ?? 'Live-Tracking', mode: '10-Pin', scores });
+      setSaveMsg('Spiel gespeichert.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Spiel konnte nicht gespeichert werden.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const changePlayerCount = async (delta: number) => {
     if (!session) return;
     const next = Math.max(1, Math.min(8, session.playerCount + delta));
@@ -398,6 +470,14 @@ export default function LivePage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
+              onClick={saveGame}
+              disabled={saving || !session || !scoreboard?.throwCount}
+              className="rounded-full border border-transparent bg-emerald-400 px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-emerald-950 transition hover:-translate-y-0.5 disabled:opacity-40"
+            >
+              {saving ? 'Speichert…' : 'Spiel speichern'}
+            </button>
+            <button
+              type="button"
               onClick={startNewGame}
               disabled={rosterBusy || !session}
               className="rounded-full border subtle-surface px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
@@ -430,6 +510,7 @@ export default function LivePage() {
         </section>
 
         {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
+        {saveMsg && <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{saveMsg}</section>}
 
         {/* Narrow / mobile: lane (curve) on the left, live data on the right. */}
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">

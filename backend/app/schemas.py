@@ -74,9 +74,11 @@ class RecentPlayerNamesResponse(BaseModel):
 
 
 class ConfirmedScore(BaseModel):
+    # frame dicts may carry per-throw "fallenPins" (list[list[int]]) from live tracking, so values
+    # are typed Any rather than the OCR-only int|str.
     player_name: str = Field(min_length=1, max_length=120)
     total_score: int = Field(ge=0, le=300)
-    frames: list[int | dict[str, int | str]] = Field(default_factory=list)
+    frames: list[int | dict[str, Any]] = Field(default_factory=list)
     avatar_url: str | None = Field(default=None, max_length=255)
 
 
@@ -103,7 +105,7 @@ class PlayerRenameResponse(BaseModel):
 class StoredScore(BaseModel):
     player_name: str
     total_score: int
-    frames: list[int | dict[str, int | str]] = Field(default_factory=list)
+    frames: list[int | dict[str, Any]] = Field(default_factory=list)
 
 
 class GameRead(BaseModel):
@@ -257,6 +259,8 @@ class ThrowObservation(BaseModel):
     frame: int | None = Field(default=None, ge=1, le=10)
     throw: int | None = Field(default=None, ge=1, le=3)
     pins_knocked_down: int | None = Field(default=None, validation_alias=AliasChoices("pinsKnockedDown", "pins_knocked_down"), ge=0, le=10)
+    # Pin numbers (1..10) the overhead display showed as fallen on THIS delivery, from the companion.
+    fallen_pins: list[int] = Field(default_factory=list, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
     ball_speed_kmh: float | None = Field(default=None, validation_alias=AliasChoices("ballSpeedKmh", "ball_speed_kmh"), ge=0)
     launch_board: float | None = Field(default=None, validation_alias=AliasChoices("launchBoard", "launch_board"))
     breakpoint_board: float | None = Field(default=None, validation_alias=AliasChoices("breakpointBoard", "breakpoint_board"))

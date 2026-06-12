@@ -32,7 +32,9 @@ import {
 } from '@/lib/trash-talk';
 import type { GameRead, FrameData } from '@/types';
 import { isStrikeFrame, isSpareFrame, median, parseCumulative, getFirstThrowPins, getFramePoints, formatNullableScore, getPlayerGames } from '@/lib/frame-utils';
-import { type PlayerSummary, derivePlayerSummaries, buildPlayerTrendData } from '@/lib/player-stats';
+import { type PlayerSummary, type PinMode, derivePlayerSummaries, buildPlayerTrendData, derivePinFrequencies } from '@/lib/player-stats';
+import PinFrequencyHeatmap from '@/components/pin-frequency-deck';
+import ChartToggle from '@/components/ui/chart-toggle';
 import InfoTip from '@/components/ui/info-tip';
 import { StatCard, InsightCard } from '@/components/ui/stat-card';
 import SectionCard from '@/components/ui/section-card';
@@ -501,6 +503,7 @@ export default function PlayerDetailPage() {
   const [notice, setNotice] = useState('');
   const [showScoreTrend, setShowScoreTrend] = useStickyState<boolean>(`player:${playerName}:showTrend`, true);
   const [expandedGameId, setExpandedGameId] = useStickyState<number | null>(`player:${playerName}:expandedGame`, null);
+  const [pinMode, setPinMode] = useStickyState<PinMode>(`player:${playerName}:pinMode`, 'first');
 
   const handleRename = async () => {
     if (!playerName) return;
@@ -548,6 +551,15 @@ export default function PlayerDetailPage() {
   const advanced = buildPlayerAdvancedStats(games, playerName);
   const trendData = buildPlayerTrendData(games, playerName);
   const scoreHeatmap = buildPlayerScoreHeatmap(games, playerName);
+  const pinFrequencies = derivePinFrequencies(games, playerName);
+  const pinRates =
+    pinMode === 'first' ? pinFrequencies.firstThrowRate : pinMode === 'second' ? pinFrequencies.secondThrowRate : pinFrequencies.totalRate;
+  const pinSubtitle =
+    pinMode === 'first'
+      ? `Trefferquote je Pin beim 1. Wurf, aus ${pinFrequencies.framesWithData} live erfassten Frames. Kalte (rote) Pins bleiben oft stehen — links/rechts vergleichen zeigt eine Seitenvorliebe.`
+      : pinMode === 'second'
+        ? `Spare-Quote je Pin: wie oft ein nach dem 1. Wurf stehender Pin im 2. Wurf noch fällt (aus ${pinFrequencies.secondThrowFrames} Frames mit 2. Wurf).`
+        : `Trefferquote je Pin über den ganzen Frame, aus ${pinFrequencies.framesWithData} Frames.`;
   const gamesPlayed = summary?.gamesPlayed ?? playerGames.length;
   const maxScoreGame = summary ? playerGames.find((game) => game.scores.some((score) => score.player_name === playerName && score.total_score === summary.maxScore)) : null;
   const gameHref = (gameId: number | null | undefined) => gameId == null ? undefined : `/stats/games/${gameId}`;
@@ -766,6 +778,17 @@ export default function PlayerDetailPage() {
             ) : (
               <PlayerScoreHeatmap chart={scoreHeatmap} />
             )}
+          </SectionCard>
+        )}
+
+        {pinFrequencies.framesWithData > 0 && (
+          <SectionCard padding="md" title="Pin-Heatmap" subtitle={pinSubtitle}>
+            <div className="mb-4 flex flex-wrap justify-center gap-2">
+              <ChartToggle active={pinMode === 'first'} label="1. Wurf" onClick={() => setPinMode('first')} />
+              <ChartToggle active={pinMode === 'second'} label="2. Wurf" onClick={() => setPinMode('second')} />
+              <ChartToggle active={pinMode === 'total'} label="Gesamt" onClick={() => setPinMode('total')} />
+            </div>
+            <PinFrequencyHeatmap rates={pinRates} />
           </SectionCard>
         )}
 

@@ -196,6 +196,7 @@ def _analysis_metrics(session: LiveSession, observation: ThrowObservation) -> di
         "clientEventId": observation.client_event_id,
         "capturedAt": observation.captured_at.isoformat(),
         "pinsKnockedDown": observation.pins_knocked_down,
+        "fallenPins": sorted({pin for pin in observation.fallen_pins if 1 <= pin <= 10}),
         "ballSpeedKmh": _speed_from_trajectory(observation),
         "impactBoard": round(impact_board, 2) if impact_board is not None else None,
         "launchBoard": observation.launch_board if observation.launch_board is not None else (trajectory[0].board if trajectory else None),
