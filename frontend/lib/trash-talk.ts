@@ -1,4 +1,15 @@
 import * as T from './trash-talk-texts';
+import {
+  buildDayScoreContext,
+  buildLossScoreContext,
+  buildMatchReportContext,
+  buildOpenFrameContext,
+  buildPlayerScoreContext,
+  buildRateContext,
+  buildScoreContext,
+  buildStatContext,
+  selectTrashTalkV2,
+} from './trash-talk-v2/engine';
 
 export type StatBenchmark = {
   percent: number;
@@ -101,12 +112,14 @@ export type PlayerScoreKind = 'average' | 'peak' | 'winningPeak' | 'cheapWin' | 
 export function scoreBenchmark(score: number, seedKey?: string): StatBenchmark {
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `sc:${seedKey ? seedKey + ':' : ''}${score}`;
-  if (score >= 200) return { percent, label: 'Außerirdisch', detail: pick(T.score.legendary, s), tone: 'good' };
-  if (score >= 170) return { percent, label: 'Sehr stark', detail: pick(T.score.veryStrong, s), tone: 'good' };
-  if (score >= 145) return { percent, label: 'Stark', detail: pick(T.score.strong, s), tone: 'good' };
-  if (score >= 115) return { percent, label: 'Solide', detail: pick(T.score.solid, s), tone: 'okay' };
-  if (score >= 90) return { percent, label: 'Casual', detail: pick(T.score.casual, s), tone: 'neutral' };
-  return { percent, label: 'Ausbaufähig', detail: pick(T.score.needsWork, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildScoreContext(score, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (score >= 200) return { percent, label: 'Außerirdisch', detail: v2Detail ?? pick(T.score.legendary, s), tone: 'good' };
+  if (score >= 170) return { percent, label: 'Sehr stark', detail: v2Detail ?? pick(T.score.veryStrong, s), tone: 'good' };
+  if (score >= 145) return { percent, label: 'Stark', detail: v2Detail ?? pick(T.score.strong, s), tone: 'good' };
+  if (score >= 115) return { percent, label: 'Solide', detail: v2Detail ?? pick(T.score.solid, s), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Casual', detail: v2Detail ?? pick(T.score.casual, s), tone: 'neutral' };
+  return { percent, label: 'Ausbaufähig', detail: v2Detail ?? pick(T.score.needsWork, s), tone: 'warn' };
 }
 
 // --- Player-relative score: compares a score to that player's own average ---
@@ -119,6 +132,12 @@ export function playerScoreBenchmark(score: number, playerAverage: number, kind:
     ? scoreBenchmark(score).percent
     : clampPercent(50 + (delta / 50) * 45);
   const s = `psc:${seedKey ? seedKey + ':' : ''}${kind}:${score}:${roundedAverage}`;
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { won: kind === 'winningPeak' || kind === 'cheapWin' || kind === 'winningAverage' }), {
+    seed: v2Seed,
+    preferFragments: true,
+    maxIntensity: 4,
+  });
 
   if (kind === 'average') {
     const absolute = scoreBenchmark(score);
@@ -131,24 +150,24 @@ export function playerScoreBenchmark(score: number, playerAverage: number, kind:
   }
 
   if (delta <= -35 || score / roundedAverage <= 0.72) {
-    return { percent, label: 'Form vermisst', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
+    return { percent, label: 'Form vermisst', detail: v2Detail ?? pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
   }
   if (delta <= -20 || score / roundedAverage <= 0.84) {
-    return { percent, label: 'Unter Form', detail: pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
+    return { percent, label: 'Unter Form', detail: v2Detail ?? pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
   }
   if (delta <= -8) {
-    return { percent, label: 'Knapp drunter', detail: pick(T.playerRelativeScore.slightlyBelow(score, roundedAverage, formatSignedPins(delta)), s), tone: 'neutral' };
+    return { percent, label: 'Knapp drunter', detail: v2Detail ?? pick(T.playerRelativeScore.slightlyBelow(score, roundedAverage, formatSignedPins(delta)), s), tone: 'neutral' };
   }
   if (delta < 8) {
-    return { percent, label: 'Normalform', detail: pick(T.playerRelativeScore.onPar(score, roundedAverage), s), tone: 'okay' };
+    return { percent, label: 'Normalform', detail: v2Detail ?? pick(T.playerRelativeScore.onPar(score, roundedAverage), s), tone: 'okay' };
   }
   if (delta < 20) {
-    return { percent, label: 'Über Form', detail: pick(T.playerRelativeScore.above(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
+    return { percent, label: 'Über Form', detail: v2Detail ?? pick(T.playerRelativeScore.above(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
   }
   if (delta < 35) {
-    return { percent, label: 'Stark über Form', detail: pick(T.playerRelativeScore.great(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
+    return { percent, label: 'Stark über Form', detail: v2Detail ?? pick(T.playerRelativeScore.great(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
   }
-  return { percent, label: 'Peak-Alarm', detail: pick(T.playerRelativeScore.absurd(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
+  return { percent, label: 'Peak-Alarm', detail: v2Detail ?? pick(T.playerRelativeScore.absurd(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
 }
 
 export function playerLossScoreBenchmark(score: number, playerAverage: number, seedKey?: string): StatBenchmark {
@@ -159,21 +178,27 @@ export function playerLossScoreBenchmark(score: number, playerAverage: number, s
   const ratio = score / roundedAverage;
   const percent = clampPercent(50 + (delta / 50) * 45);
   const s = `plsc:${seedKey ? seedKey + ':' : ''}${score}:${roundedAverage}`;
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { lost: true }), {
+    seed: v2Seed,
+    preferFragments: true,
+    maxIntensity: 4,
+  });
 
-  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: pick(T.lossScore.legendary, s), tone: 'warn' };
-  if (delta >= 35 || ratio >= 1.35) return { percent, label: 'Tragisch stark', detail: pick(T.lossScore.veryStrong, s), tone: 'warn' };
-  if (delta >= 20 || ratio >= 1.2) return { percent, label: 'Stark, aber RIP', detail: pick(T.lossScore.strong, s), tone: 'warn' };
-  if (delta >= 8 || ratio >= 1.08) return { percent, label: 'Über Form verloren', detail: pick(T.lossScore.solid, s), tone: 'neutral' };
-  if (delta >= -8) return { percent, label: 'Normalform verloren', detail: pick(T.lossScore.shaky, s), tone: 'neutral' };
-  if (delta >= -20) return { percent, label: 'Unter Form verloren', detail: pick(T.lossScore.shaky, s), tone: 'warn' };
-  if (delta <= -60 || ratio <= 0.65) return { percent, label: 'Totalschaden', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
-  if (delta <= -35 || ratio <= 0.78) return { percent, label: 'Absturz verloren', detail: pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
-  if (delta <= -25 || ratio <= 0.86) return { percent, label: 'Schmerzhaft drunter', detail: pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
+  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: v2Detail ?? pick(T.lossScore.legendary, s), tone: 'warn' };
+  if (delta >= 35 || ratio >= 1.35) return { percent, label: 'Tragisch stark', detail: v2Detail ?? pick(T.lossScore.veryStrong, s), tone: 'warn' };
+  if (delta >= 20 || ratio >= 1.2) return { percent, label: 'Stark, aber RIP', detail: v2Detail ?? pick(T.lossScore.strong, s), tone: 'warn' };
+  if (delta >= 8 || ratio >= 1.08) return { percent, label: 'Über Form verloren', detail: v2Detail ?? pick(T.lossScore.solid, s), tone: 'neutral' };
+  if (delta >= -8) return { percent, label: 'Normalform verloren', detail: v2Detail ?? pick(T.lossScore.shaky, s), tone: 'neutral' };
+  if (delta >= -20) return { percent, label: 'Unter Form verloren', detail: v2Detail ?? pick(T.lossScore.shaky, s), tone: 'warn' };
+  if (delta <= -60 || ratio <= 0.65) return { percent, label: 'Totalschaden', detail: v2Detail ?? pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
+  if (delta <= -35 || ratio <= 0.78) return { percent, label: 'Absturz verloren', detail: v2Detail ?? pick(T.playerRelativeScore.disaster(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
+  if (delta <= -25 || ratio <= 0.86) return { percent, label: 'Schmerzhaft drunter', detail: v2Detail ?? pick(T.playerRelativeScore.bad(score, roundedAverage, formatSignedPins(delta)), s), tone: 'warn' };
 
   return {
     percent,
     label: 'Kein Wunder',
-    detail: pick(T.lossScore.weak, s),
+    detail: v2Detail ?? pick(T.lossScore.weak, s),
     tone: 'warn',
   };
 }
@@ -195,64 +220,72 @@ export function medianConsistencyBenchmark(avgScore: number, medianScore: number
   const absDiff = Math.abs(diff);
   const percent = clampPercent(100 - (absDiff / 10) * 100);
   const s = `mcons:${diff}`;
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildStatContext('medianConsistency', diff, s, absDiff), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
 
-  if (absDiff < 1) return { percent, label: 'Roboter', detail: pick(T.medianConsistency.nearIdentical, s), tone: 'good' };
-  if (absDiff < 2) return { percent, label: 'Sehr konstant', detail: pick(T.medianConsistency.veryConsistent, s), tone: 'good' };
-  if (diff >= 5) return { percent, label: 'Highscorer-Typ', detail: pick(T.medianConsistency.avgMuchHigher, s), tone: 'okay' };
-  if (diff >= 2) return { percent, label: 'Gute Ausreißer', detail: pick(T.medianConsistency.avgSlightlyHigher, s), tone: 'okay' };
-  if (diff <= -5) return { percent, label: 'Aussetzer-Typ', detail: pick(T.medianConsistency.medianMuchHigher, s), tone: 'warn' };
-  return { percent, label: 'Einzelne Aussetzer', detail: pick(T.medianConsistency.medianSlightlyHigher, s), tone: 'neutral' };
+  if (absDiff < 1) return { percent, label: 'Roboter', detail: v2Detail ?? pick(T.medianConsistency.nearIdentical, s), tone: 'good' };
+  if (absDiff < 2) return { percent, label: 'Sehr konstant', detail: v2Detail ?? pick(T.medianConsistency.veryConsistent, s), tone: 'good' };
+  if (diff >= 5) return { percent, label: 'Highscorer-Typ', detail: v2Detail ?? pick(T.medianConsistency.avgMuchHigher, s), tone: 'okay' };
+  if (diff >= 2) return { percent, label: 'Gute Ausreißer', detail: v2Detail ?? pick(T.medianConsistency.avgSlightlyHigher, s), tone: 'okay' };
+  if (diff <= -5) return { percent, label: 'Aussetzer-Typ', detail: v2Detail ?? pick(T.medianConsistency.medianMuchHigher, s), tone: 'warn' };
+  return { percent, label: 'Einzelne Aussetzer', detail: v2Detail ?? pick(T.medianConsistency.medianSlightlyHigher, s), tone: 'neutral' };
 }
 
 // --- Open frame rate: % frames without strike/spare (lower = better) ---
 export function openFrameBenchmark(rate: number): StatBenchmark {
   const percent = clampPercent(100 - rate * 1.7);
   const s = `ofr:${rate}`;
-  if (rate <= 20) return { percent, label: 'Sehr sauber', detail: pick(T.openFrame.veryClean, s), tone: 'good' };
-  if (rate <= 35) return { percent, label: 'Gut kontrolliert', detail: pick(T.openFrame.controlled, s), tone: 'okay' };
-  if (rate <= 50) return { percent, label: 'Wacklig, aber rettbar', detail: pick(T.openFrame.shaky, s), tone: 'neutral' };
-  return { percent, label: 'Viele Geschenke', detail: pick(T.openFrame.tooMany, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildOpenFrameContext(rate, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (rate <= 20) return { percent, label: 'Sehr sauber', detail: v2Detail ?? pick(T.openFrame.veryClean, s), tone: 'good' };
+  if (rate <= 35) return { percent, label: 'Gut kontrolliert', detail: v2Detail ?? pick(T.openFrame.controlled, s), tone: 'okay' };
+  if (rate <= 50) return { percent, label: 'Wacklig, aber rettbar', detail: v2Detail ?? pick(T.openFrame.shaky, s), tone: 'neutral' };
+  return { percent, label: 'Viele Geschenke', detail: v2Detail ?? pick(T.openFrame.tooMany, s), tone: 'warn' };
 }
 
 // --- Rate benchmark: win%, strike-follow%, comeback% ---
 export function rateBenchmark(rate: number, kind: 'strikeFollow' | 'comeback' | 'win'): StatBenchmark {
   const percent = clampPercent(rate);
   const s = `rate:${kind}:${rate}`;
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildRateContext(rate, kind, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'win') {
-    if (rate >= 65) return { percent, label: 'Dominant', detail: pick(T.winRate.dominant, s), tone: 'good' };
-    if (rate >= 50) return { percent, label: 'Siegtauglich', detail: pick(T.winRate.winning, s), tone: 'good' };
-    if (rate >= 35) return { percent, label: 'Ausgeglichen', detail: pick(T.winRate.balanced, s), tone: 'okay' };
-    return { percent, label: 'Jägerrolle', detail: pick(T.winRate.chasing, s), tone: 'warn' };
+    if (rate >= 65) return { percent, label: 'Dominant', detail: v2Detail ?? pick(T.winRate.dominant, s), tone: 'good' };
+    if (rate >= 50) return { percent, label: 'Siegtauglich', detail: v2Detail ?? pick(T.winRate.winning, s), tone: 'good' };
+    if (rate >= 35) return { percent, label: 'Ausgeglichen', detail: v2Detail ?? pick(T.winRate.balanced, s), tone: 'okay' };
+    return { percent, label: 'Jägerrolle', detail: v2Detail ?? pick(T.winRate.chasing, s), tone: 'warn' };
   }
   if (kind === 'strikeFollow') {
-    if (rate >= 35) return { percent, label: 'Heißer Lauf', detail: pick(T.strikeFollow.hot, s), tone: 'good' };
-    if (rate >= 20) return { percent, label: 'Gute Serienchance', detail: pick(T.strikeFollow.good, s), tone: 'okay' };
-    if (rate >= 10) return { percent, label: 'Normalbereich', detail: pick(T.strikeFollow.normal, s), tone: 'neutral' };
-    return { percent, label: 'Selten Serien', detail: pick(T.strikeFollow.rare, s), tone: 'warn' };
+    if (rate >= 35) return { percent, label: 'Heißer Lauf', detail: v2Detail ?? pick(T.strikeFollow.hot, s), tone: 'good' };
+    if (rate >= 20) return { percent, label: 'Gute Serienchance', detail: v2Detail ?? pick(T.strikeFollow.good, s), tone: 'okay' };
+    if (rate >= 10) return { percent, label: 'Normalbereich', detail: v2Detail ?? pick(T.strikeFollow.normal, s), tone: 'neutral' };
+    return { percent, label: 'Selten Serien', detail: v2Detail ?? pick(T.strikeFollow.rare, s), tone: 'warn' };
   }
   // comeback
-  if (rate >= 55) return { percent, label: 'Sehr resilient', detail: pick(T.comeback.veryResilient, s), tone: 'good' };
-  if (rate >= 40) return { percent, label: 'Gute Reaktion', detail: pick(T.comeback.goodReaction, s), tone: 'okay' };
-  if (rate >= 25) return { percent, label: 'Normalbereich', detail: pick(T.comeback.normal, s), tone: 'neutral' };
-  return { percent, label: 'Wackelig nach Fehlern', detail: pick(T.comeback.shaky, s), tone: 'warn' };
+  if (rate >= 55) return { percent, label: 'Sehr resilient', detail: v2Detail ?? pick(T.comeback.veryResilient, s), tone: 'good' };
+  if (rate >= 40) return { percent, label: 'Gute Reaktion', detail: v2Detail ?? pick(T.comeback.goodReaction, s), tone: 'okay' };
+  if (rate >= 25) return { percent, label: 'Normalbereich', detail: v2Detail ?? pick(T.comeback.normal, s), tone: 'neutral' };
+  return { percent, label: 'Wackelig nach Fehlern', detail: v2Detail ?? pick(T.comeback.shaky, s), tone: 'warn' };
 }
 
 // --- Delta benchmark: finish strength (10th frame) / fatigue (game-over-game) ---
 export function deltaBenchmark(value: number, kind: 'finish' | 'fatigue'): StatBenchmark {
   const s = `delta:${kind}:${value}`;
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildStatContext(kind, value, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'finish') {
     const percent = clampPercent(((value + 12) / 24) * 100);
-    if (value >= 6) return { percent, label: 'Clutch', detail: pick(T.finish.clutch, s), tone: 'good' };
-    if (value >= 0) return { percent, label: 'Stabiler Abschluss', detail: pick(T.finish.stable, s), tone: 'okay' };
-    if (value >= -6) return { percent, label: 'Leicht schwächer', detail: pick(T.finish.slightDrop, s), tone: 'neutral' };
-    return { percent, label: 'Finish trainieren', detail: pick(T.finish.weak, s), tone: 'warn' };
+    if (value >= 6) return { percent, label: 'Clutch', detail: v2Detail ?? pick(T.finish.clutch, s), tone: 'good' };
+    if (value >= 0) return { percent, label: 'Stabiler Abschluss', detail: v2Detail ?? pick(T.finish.stable, s), tone: 'okay' };
+    if (value >= -6) return { percent, label: 'Leicht schwächer', detail: v2Detail ?? pick(T.finish.slightDrop, s), tone: 'neutral' };
+    return { percent, label: 'Finish trainieren', detail: v2Detail ?? pick(T.finish.weak, s), tone: 'warn' };
   }
   // fatigue
   const percent = clampPercent(100 - ((value + 5) / 25) * 100);
-  if (value <= 0) return { percent, label: 'Hält durch', detail: pick(T.fatigue.endures, s), tone: 'good' };
-  if (value <= 7) return { percent, label: 'Kleiner Drop', detail: pick(T.fatigue.smallDrop, s), tone: 'okay' };
-  if (value <= 15) return { percent, label: 'Spürbarer Drop', detail: pick(T.fatigue.noticeableDrop, s), tone: 'neutral' };
-  return { percent, label: 'Starke Ermüdung', detail: pick(T.fatigue.heavy, s), tone: 'warn' };
+  if (value <= 0) return { percent, label: 'Hält durch', detail: v2Detail ?? pick(T.fatigue.endures, s), tone: 'good' };
+  if (value <= 7) return { percent, label: 'Kleiner Drop', detail: v2Detail ?? pick(T.fatigue.smallDrop, s), tone: 'okay' };
+  if (value <= 15) return { percent, label: 'Spürbarer Drop', detail: v2Detail ?? pick(T.fatigue.noticeableDrop, s), tone: 'neutral' };
+  return { percent, label: 'Starke Ermüdung', detail: v2Detail ?? pick(T.fatigue.heavy, s), tone: 'warn' };
 }
 
 // --- Counts per game: strikes/spares per game average ---
@@ -261,36 +294,43 @@ export function countPerGameBenchmark(total: number, gamesPlayed: number, kind: 
   const maxUseful = kind === 'strike' ? 4 : 5;
   const percent = clampPercent((perGame / maxUseful) * 100);
   const s = `cpg:${kind}:${perGame.toFixed(2)}`;
+  const statKind = kind === 'strike' ? 'strikeCount' : 'spareCount';
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildStatContext(statKind, perGame, s, total), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'strike') {
-    if (perGame >= 3) return { percent, label: `${perGame.toFixed(1)}/Spiel · stark`, detail: pick(T.strikesPerGame.strong, s), tone: 'good' };
-    if (perGame >= 1.5) return { percent, label: `${perGame.toFixed(1)}/Spiel · solide`, detail: pick(T.strikesPerGame.solid, s), tone: 'okay' };
-    return { percent, label: `${perGame.toFixed(1)}/Spiel · ausbaufähig`, detail: pick(T.strikesPerGame.needsWork, s), tone: 'warn' };
+    if (perGame >= 3) return { percent, label: `${perGame.toFixed(1)}/Spiel · stark`, detail: v2Detail ?? pick(T.strikesPerGame.strong, s), tone: 'good' };
+    if (perGame >= 1.5) return { percent, label: `${perGame.toFixed(1)}/Spiel · solide`, detail: v2Detail ?? pick(T.strikesPerGame.solid, s), tone: 'okay' };
+    return { percent, label: `${perGame.toFixed(1)}/Spiel · ausbaufähig`, detail: v2Detail ?? pick(T.strikesPerGame.needsWork, s), tone: 'warn' };
   }
   // spare
-  if (perGame >= 3.5) return { percent, label: `${perGame.toFixed(1)}/Spiel · stark`, detail: pick(T.sparesPerGame.strong, s), tone: 'good' };
-  if (perGame >= 2) return { percent, label: `${perGame.toFixed(1)}/Spiel · solide`, detail: pick(T.sparesPerGame.solid, s), tone: 'okay' };
-  return { percent, label: `${perGame.toFixed(1)}/Spiel · ausbaufähig`, detail: pick(T.sparesPerGame.needsWork, s), tone: 'warn' };
+  if (perGame >= 3.5) return { percent, label: `${perGame.toFixed(1)}/Spiel · stark`, detail: v2Detail ?? pick(T.sparesPerGame.strong, s), tone: 'good' };
+  if (perGame >= 2) return { percent, label: `${perGame.toFixed(1)}/Spiel · solide`, detail: v2Detail ?? pick(T.sparesPerGame.solid, s), tone: 'okay' };
+  return { percent, label: `${perGame.toFixed(1)}/Spiel · ausbaufähig`, detail: v2Detail ?? pick(T.sparesPerGame.needsWork, s), tone: 'warn' };
 }
 
 // --- First throw: average pins on first ball (scale 0–9) ---
 export function firstThrowBenchmark(value: number): StatBenchmark {
   const percent = clampPercent((value / 9) * 100);
   const s = `ftb:${value}`;
-  if (value >= 8) return { percent, label: 'Sehr guter erster Ball', detail: pick(T.firstThrow.veryGood, s), tone: 'good' };
-  if (value >= 7) return { percent, label: 'Guter erster Ball', detail: pick(T.firstThrow.good, s), tone: 'okay' };
-  if (value >= 6) return { percent, label: 'Normalbereich', detail: pick(T.firstThrow.normal, s), tone: 'neutral' };
-  return { percent, label: 'Trefferbild verbessern', detail: pick(T.firstThrow.needsWork, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildStatContext('firstThrow', value, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (value >= 8) return { percent, label: 'Sehr guter erster Ball', detail: v2Detail ?? pick(T.firstThrow.veryGood, s), tone: 'good' };
+  if (value >= 7) return { percent, label: 'Guter erster Ball', detail: v2Detail ?? pick(T.firstThrow.good, s), tone: 'okay' };
+  if (value >= 6) return { percent, label: 'Normalbereich', detail: v2Detail ?? pick(T.firstThrow.normal, s), tone: 'neutral' };
+  return { percent, label: 'Trefferbild verbessern', detail: v2Detail ?? pick(T.firstThrow.needsWork, s), tone: 'warn' };
 }
 
 // --- Best strike streak: longest consecutive strikes ---
 export function streakBenchmark(streak: number): StatBenchmark {
   const percent = clampPercent((streak / 5) * 100);
   const s = `stk:${streak}`;
-  if (streak >= 4) return { percent, label: 'Sehr selten', detail: pick(T.streak.veryRare, s), tone: 'good' };
-  if (streak === 3) return { percent, label: 'Turkey-Level', detail: pick(T.streak.turkey, s), tone: 'good' };
-  if (streak === 2) return { percent, label: 'Double', detail: pick(T.streak.double, s), tone: 'okay' };
-  if (streak === 1) return { percent, label: 'Einzelstrike', detail: pick(T.streak.single, s), tone: 'neutral' };
-  return { percent, label: 'Noch keine Serie', detail: pick(T.streak.none, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildStatContext('streak', streak, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (streak >= 4) return { percent, label: 'Sehr selten', detail: v2Detail ?? pick(T.streak.veryRare, s), tone: 'good' };
+  if (streak === 3) return { percent, label: 'Turkey-Level', detail: v2Detail ?? pick(T.streak.turkey, s), tone: 'good' };
+  if (streak === 2) return { percent, label: 'Double', detail: v2Detail ?? pick(T.streak.double, s), tone: 'okay' };
+  if (streak === 1) return { percent, label: 'Einzelstrike', detail: v2Detail ?? pick(T.streak.single, s), tone: 'neutral' };
+  return { percent, label: 'Noch keine Serie', detail: v2Detail ?? pick(T.streak.none, s), tone: 'warn' };
 }
 
 // --- Median vs. average: consistency indicator (info-tip) ---
@@ -351,12 +391,14 @@ export function strikeFollowInfo(strikeFollowRate: number, bestStrikeStreak: num
 export function lossScoreBenchmark(score: number, seedKey?: string): StatBenchmark {
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `lsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: pick(T.lossScore.legendary, s), tone: 'warn' };
-  if (score >= 170) return { percent, label: 'Stark, aber chancenlos', detail: pick(T.lossScore.veryStrong, s), tone: 'neutral' };
-  if (score >= 145) return { percent, label: 'Guter Score, kein Sieg', detail: pick(T.lossScore.strong, s), tone: 'neutral' };
-  if (score >= 115) return { percent, label: 'Solide, aber zu wenig', detail: pick(T.lossScore.solid, s), tone: 'okay' };
-  if (score >= 90) return { percent, label: 'Erwartbare Niederlage', detail: pick(T.lossScore.shaky, s), tone: 'neutral' };
-  return { percent, label: 'Kein Wunder', detail: pick(T.lossScore.weak, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildLossScoreContext(score, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: v2Detail ?? pick(T.lossScore.legendary, s), tone: 'warn' };
+  if (score >= 170) return { percent, label: 'Stark, aber chancenlos', detail: v2Detail ?? pick(T.lossScore.veryStrong, s), tone: 'neutral' };
+  if (score >= 145) return { percent, label: 'Guter Score, kein Sieg', detail: v2Detail ?? pick(T.lossScore.strong, s), tone: 'neutral' };
+  if (score >= 115) return { percent, label: 'Solide, aber zu wenig', detail: v2Detail ?? pick(T.lossScore.solid, s), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Erwartbare Niederlage', detail: v2Detail ?? pick(T.lossScore.shaky, s), tone: 'neutral' };
+  return { percent, label: 'Kein Wunder', detail: v2Detail ?? pick(T.lossScore.weak, s), tone: 'warn' };
 }
 
 // --- Day score: winning/losing score benchmark for day stats ---
@@ -364,12 +406,14 @@ export function dayScoreBenchmark(score: number | null, seedKey?: string): StatB
   if (score === null) return undefined;
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `dsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  if (score >= 200) return { percent, label: 'Unfassbar', detail: pick(T.dayScore.legendary, s), tone: 'good' };
-  if (score >= 170) return { percent, label: 'Brett', detail: pick(T.dayScore.strong, s), tone: 'good' };
-  if (score >= 145) return { percent, label: 'Stark', detail: pick(T.dayScore.good, s), tone: 'good' };
-  if (score >= 115) return { percent, label: 'Solide', detail: pick(T.dayScore.solid, s), tone: 'okay' };
-  if (score >= 90) return { percent, label: 'Wacklig', detail: pick(T.dayScore.shaky, s), tone: 'neutral' };
-  return { percent, label: 'Billiger Sieg', detail: pick(T.dayScore.cheap, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildDayScoreContext(score, false, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (score >= 200) return { percent, label: 'Unfassbar', detail: v2Detail ?? pick(T.dayScore.legendary, s), tone: 'good' };
+  if (score >= 170) return { percent, label: 'Brett', detail: v2Detail ?? pick(T.dayScore.strong, s), tone: 'good' };
+  if (score >= 145) return { percent, label: 'Stark', detail: v2Detail ?? pick(T.dayScore.good, s), tone: 'good' };
+  if (score >= 115) return { percent, label: 'Solide', detail: v2Detail ?? pick(T.dayScore.solid, s), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Wacklig', detail: v2Detail ?? pick(T.dayScore.shaky, s), tone: 'neutral' };
+  return { percent, label: 'Billiger Sieg', detail: v2Detail ?? pick(T.dayScore.cheap, s), tone: 'warn' };
 }
 
 // --- Day loss score: loss benchmark for day stats view ---
@@ -377,12 +421,14 @@ export function dayLossScoreBenchmark(score: number | null, seedKey?: string): S
   if (score === null) return undefined;
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `dlsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  if (score >= 200) return { percent, label: 'Tragödie', detail: pick(T.dayLossScore.legendary, s), tone: 'warn' };
-  if (score >= 170) return { percent, label: 'Bitter', detail: pick(T.dayLossScore.strong, s), tone: 'neutral' };
-  if (score >= 145) return { percent, label: 'Gut, aber verloren', detail: pick(T.dayLossScore.good, s), tone: 'neutral' };
-  if (score >= 115) return { percent, label: 'Solide, nicht genug', detail: pick(T.dayLossScore.solid, s), tone: 'okay' };
-  if (score >= 90) return { percent, label: 'Erwartbar', detail: pick(T.dayLossScore.shaky, s), tone: 'neutral' };
-  return { percent, label: 'Kein Wunder', detail: pick(T.dayLossScore.cheap, s), tone: 'warn' };
+  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Detail = selectTrashTalkV2(buildDayScoreContext(score, true, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  if (score >= 200) return { percent, label: 'Tragödie', detail: v2Detail ?? pick(T.dayLossScore.legendary, s), tone: 'warn' };
+  if (score >= 170) return { percent, label: 'Bitter', detail: v2Detail ?? pick(T.dayLossScore.strong, s), tone: 'neutral' };
+  if (score >= 145) return { percent, label: 'Gut, aber verloren', detail: v2Detail ?? pick(T.dayLossScore.good, s), tone: 'neutral' };
+  if (score >= 115) return { percent, label: 'Solide, nicht genug', detail: v2Detail ?? pick(T.dayLossScore.solid, s), tone: 'okay' };
+  if (score >= 90) return { percent, label: 'Erwartbar', detail: v2Detail ?? pick(T.dayLossScore.shaky, s), tone: 'neutral' };
+  return { percent, label: 'Kein Wunder', detail: v2Detail ?? pick(T.dayLossScore.cheap, s), tone: 'warn' };
 }
 
 // --- Games played: session length ---
@@ -480,6 +526,11 @@ export function playerDayContext(
 // --- Game excitement trash talk ---
 export function excitementTrash(tensionIndex: number): string {
   const s = `exc:${tensionIndex.toFixed(2)}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('excitement', { tensionIndex }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  if (v2) return v2;
   if (tensionIndex >= 3) return pick(T.excitement.insane, s);
   if (tensionIndex >= 1.5) return pick(T.excitement.thrilling, s);
   if (tensionIndex >= 0.5) return pick(T.excitement.decent, s);
@@ -489,6 +540,11 @@ export function excitementTrash(tensionIndex: number): string {
 // --- Match report trash talk ---
 export function comebackTrash(pins: number): string {
   const s = `cbt:${pins}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('comeback', { margin: pins }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  if (v2) return v2;
   if (pins >= 30) return pick(T.gameComeback.epic(pins), s);
   if (pins >= 15) return pick(T.gameComeback.solid(pins), s);
   return pick(T.gameComeback.minor(pins), s);
@@ -496,6 +552,11 @@ export function comebackTrash(pins: number): string {
 
 export function bigLeadTrash(margin: number, playerName: string): string {
   const s = `blt:${margin}:${playerName}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('bigLead', { margin, playerName }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  if (v2) return v2;
   if (margin >= 40) return pick(T.bigLead.dominant(margin, playerName), s);
   if (margin >= 20) return pick(T.bigLead.clear(margin, playerName), s);
   return pick(T.bigLead.narrow(margin), s);
@@ -503,13 +564,34 @@ export function bigLeadTrash(margin: number, playerName: string): string {
 
 export function closestMomentTrash(margin: number, frame: number): string {
   const s = `cmt:${margin}:${frame}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('closestMoment', { margin, frame }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  if (v2) return v2;
   if (margin <= 3) return pick(T.closestMoment.nailBiter(margin, frame), s);
   return pick(T.closestMoment.tight(margin, frame), s);
 }
 
 export function lateDramaTrash(leaderAfterFrame9: string, winner: string): string | null {
   if (leaderAfterFrame9 === winner) return null;
-  return pick(T.lateDrama.leaderLost(leaderAfterFrame9, winner), `ldt:${leaderAfterFrame9}:${winner}`);
+  const s = `ldt:${leaderAfterFrame9}:${winner}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('lateDrama', { leaderName: leaderAfterFrame9, winnerName: winner }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  if (v2) return v2;
+  return pick(T.lateDrama.leaderLost(leaderAfterFrame9, winner), s);
+}
+
+export function decidingFrameTrash(frame: number | null | undefined): string | undefined {
+  if (!frame) return undefined;
+  const s = `dft:${frame}`;
+  const v2 = selectTrashTalkV2(
+    buildMatchReportContext('decidingFrame', { frame }, s),
+    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+  );
+  return v2 ?? undefined;
 }
 
 // --- Day recap: sassy multi-sentence summary of the whole evening ---

@@ -7,7 +7,7 @@ import { BackButton } from '@/components/navigation-memory';
 import { useGames } from '@/lib/use-games';
 import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
 import { buildGameReport } from '@/lib/game-report';
-import { scoreBenchmark, playerScoreBenchmark, excitementTrash, comebackTrash, bigLeadTrash, closestMomentTrash, lateDramaTrash } from '@/lib/trash-talk';
+import { scoreBenchmark, playerScoreBenchmark, excitementTrash, comebackTrash, bigLeadTrash, closestMomentTrash, lateDramaTrash, decidingFrameTrash } from '@/lib/trash-talk';
 import { derivePlayerSummaries } from '@/lib/player-stats';
 import { formatPlayedAtTime, formatDateDE } from '@/lib/frame-utils';
 import Card from '@/components/ui/card';
@@ -227,6 +227,7 @@ export default function GameDetailPage() {
                 title="Entscheidendes Frame"
                 header={report.decidingFrame ? `Frame ${report.decidingFrame}` : '–'}
                 subtext="Führung bis zum Ende gehalten"
+                trashTalk={decidingFrameTrash(report.decidingFrame)}
               />
             </CardGrid>
 
