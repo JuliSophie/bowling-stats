@@ -210,6 +210,8 @@ class TrackingLoggedThrow(BaseModel):
     throw: int = Field(ge=1, le=3)
     pins_knocked_down: int | None = Field(default=None, alias="pinsKnockedDown")
     fallen_pins: list[int] = Field(default_factory=list, alias="fallenPins")
+    observed_fallen_pins: list[int] = Field(default_factory=list, alias="observedFallenPins")
+    already_down_pins: list[int] = Field(default_factory=list, alias="alreadyDownPins")
     captured_at: str | None = Field(default=None, alias="capturedAt")
     manual: bool = False
     low_confidence: bool = Field(default=False, alias="lowConfidence")

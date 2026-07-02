@@ -62,30 +62,31 @@ class LiveSession:
         self.touch()
 
     def scoreboard(self) -> ScoreboardResult:
+        normalized_log = self._normalized_throw_log()
         return compute_scoreboard(
-            [throw.get("pinsKnockedDown") for throw in self.throw_log],
+            [throw.get("pinsKnockedDown") for throw in normalized_log],
             self.player_count,
             self.player_names,
         )
 
-    def _inject_fallen_pins(self, board: ScoreboardResult) -> None:
+    def _inject_fallen_pins(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> None:
         """Attach each frame's per-ball fallen pins from the throw log, keyed by the scoring engine's
         assignment of throws to (player, frame). Deriving it from the assignments keeps the pin data
         aligned even after manual corrections shuffle the log."""
         grouped: dict[tuple[int, int], list[list[int]]] = {}
         for index, assignment in enumerate(board.assignments):
-            if index >= len(self.throw_log):
+            if index >= len(throw_log):
                 break
-            fallen = self.throw_log[index].get("fallenPins") or []
+            fallen = throw_log[index].get("fallenPins") or []
             grouped.setdefault((assignment.player_index, assignment.frame - 1), []).append(fallen)
         for player_index, player in enumerate(board.players):
             for frame_index, frame in enumerate(player["frames"]):
                 frame["fallenPins"] = grouped.get((player_index, frame_index), [])
 
-    def _logged_throws(self, board: ScoreboardResult) -> list[dict[str, Any]]:
+    def _logged_throws(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Expose the current replay log with the same player/frame assignment used for scoring."""
         rows: list[dict[str, Any]] = []
-        for index, throw in enumerate(self.throw_log):
+        for index, throw in enumerate(throw_log):
             assignment = board.assignments[index] if index < len(board.assignments) else None
             if assignment is not None and board.players:
                 player = board.players[assignment.player_index]["name"]
@@ -103,6 +104,8 @@ class LiveSession:
                     "throw": throw_in_frame,
                     "pinsKnockedDown": throw.get("pinsKnockedDown"),
                     "fallenPins": throw.get("fallenPins") or [],
+                    "observedFallenPins": throw.get("observedFallenPins") or throw.get("fallenPins") or [],
+                    "alreadyDownPins": throw.get("alreadyDownPins") or [],
                     "capturedAt": throw.get("capturedAt"),
                     "manual": bool(throw.get("manual")),
                     "lowConfidence": bool(throw.get("lowConfidence")),
@@ -111,9 +114,115 @@ class LiveSession:
             )
         return rows
 
+    def _fallen_pins_for_throw(
+        self,
+        board: ScoreboardResult,
+        throw_log: list[dict[str, Any]],
+        player_index: int,
+        frame: int,
+        throw_in_frame: int,
+    ) -> set[int]:
+        for index, assignment in enumerate(board.assignments):
+            if index >= len(throw_log):
+                break
+            if (
+                assignment.player_index == player_index
+                and assignment.frame == frame
+                and assignment.throw_in_frame == throw_in_frame
+            ):
+                return {pin for pin in throw_log[index].get("fallenPins", []) if 1 <= pin <= 10}
+        return set()
+
+    def _already_down_pins_for_next_throw(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> set[int]:
+        """Pins already down on the *same physical rack* before the next throw.
+
+        The companion reports all pins currently down after a delivery. For a second ball, that
+        includes pins knocked down by the first ball of the same player/frame. Bowling resets the
+        rack on a new frame, on strikes, and on 10th-frame bonus balls after a spare/strike, so only
+        same-rack prior throws should be subtracted.
+        """
+        player_index = board.current_player_index
+        frame = board.current_frame
+        throw_in_frame = board.current_throw
+        if throw_in_frame <= 1 or not board.players:
+            return set()
+
+        player = board.players[player_index]
+        frames = player.get("frames", [])
+        if frame - 1 >= len(frames):
+            return set()
+        frame_throws = frames[frame - 1].get("throws", [])
+
+        if frame < 10:
+            return self._fallen_pins_for_throw(board, throw_log, player_index, frame, 1) if throw_in_frame == 2 else set()
+
+        if throw_in_frame == 2:
+            first = frame_throws[0] if len(frame_throws) >= 1 else 0
+            return set() if first >= 10 else self._fallen_pins_for_throw(board, throw_log, player_index, frame, 1)
+
+        if throw_in_frame == 3:
+            first = frame_throws[0] if len(frame_throws) >= 1 else 0
+            second = frame_throws[1] if len(frame_throws) >= 2 else 0
+            # First strike: second ball starts a fresh rack. If it was not a strike, the third ball
+            # continues that rack. Otherwise the rack resets again.
+            if first >= 10:
+                return set() if second >= 10 else self._fallen_pins_for_throw(board, throw_log, player_index, frame, 2)
+            # First two balls made a spare: bonus ball gets a fresh rack.
+            return set()
+
+        return set()
+
+    def _normalize_observed_throw(
+        self,
+        metrics: dict[str, Any],
+        board_before: ScoreboardResult,
+        normalized_log_before: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Convert companion-observed fallen pins into newly knocked pins for scoring."""
+        observed_source = metrics.get("observedFallenPins") if "observedFallenPins" in metrics else metrics.get("fallenPins", [])
+        observed = sorted({pin for pin in observed_source if 1 <= pin <= 10})
+        metrics["observedFallenPins"] = observed
+        metrics["observedPinsKnockedDown"] = metrics.get("pinsKnockedDown")
+        if not observed:
+            metrics["alreadyDownPins"] = []
+            return metrics
+
+        already_down = self._already_down_pins_for_next_throw(board_before, normalized_log_before)
+        actual = sorted(set(observed) - already_down)
+        ignored = sorted(set(observed) & already_down)
+        metrics["fallenPins"] = actual
+        metrics["pinsKnockedDown"] = len(actual)
+        metrics["alreadyDownPins"] = ignored
+        return metrics
+
+    def _normalized_throw_log(self) -> list[dict[str, Any]]:
+        """Replay raw companion observations into a normalized log of newly knocked pins.
+
+        This keeps later throws correct even after an earlier false throw is deleted or edited.
+        """
+        normalized: list[dict[str, Any]] = []
+        for raw in self.throw_log:
+            entry = dict(raw)
+            if entry.get("manual") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
+                entry["alreadyDownPins"] = []
+                normalized.append(entry)
+                continue
+            board_before = compute_scoreboard(
+                [throw.get("pinsKnockedDown") for throw in normalized],
+                self.player_count,
+                self.player_names,
+            )
+            normalized.append(self._normalize_observed_throw(entry, board_before, normalized))
+        return normalized
+
     def snapshot(self) -> TrackingSessionRead:
-        board = self.scoreboard()
-        self._inject_fallen_pins(board)
+        normalized_log = self._normalized_throw_log()
+        board = compute_scoreboard(
+            [throw.get("pinsKnockedDown") for throw in normalized_log],
+            self.player_count,
+            self.player_names,
+        )
+        self._inject_fallen_pins(board, normalized_log)
         current_index = board.current_player_index
         current_name = board.players[current_index]["name"] if board.players else None
         scoreboard_model = TrackingScoreboard.model_validate(
@@ -121,7 +230,7 @@ class LiveSession:
                 "playerCount": self.player_count,
                 "players": board.players,
                 "throwCount": len(self.throw_log),
-                "throws": self._logged_throws(board),
+                "throws": self._logged_throws(board, normalized_log),
             }
         )
         return TrackingSessionRead(
@@ -303,7 +412,13 @@ async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> 
     session.throw_log.append(metrics)
 
     # Replay the full log so this throw gets assigned to the right player / frame / ball.
-    board = session.scoreboard()
+    normalized_log = session._normalized_throw_log()
+    board = compute_scoreboard(
+        [throw.get("pinsKnockedDown") for throw in normalized_log],
+        session.player_count,
+        session.player_names,
+    )
+    metrics = normalized_log[-1] if normalized_log else metrics
     assignment = board.assignments[-1] if board.assignments else None
     if assignment is not None and board.players:
         player_name = board.players[assignment.player_index]["name"]
@@ -409,7 +524,13 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
         log.pop(payload.throw_index)
     elif payload.action == "edit_last":
         if log and payload.pins_knocked_down is not None:
-            log[-1] = {**log[-1], "pinsKnockedDown": payload.pins_knocked_down, "fallenPins": []}
+            log[-1] = {
+                **log[-1],
+                "pinsKnockedDown": payload.pins_knocked_down,
+                "fallenPins": [],
+                "observedFallenPins": [],
+                "alreadyDownPins": [],
+            }
     elif payload.action == "insert_before_last":
         log.insert(max(0, len(log) - 1), _manual_throw(session, payload.pins_knocked_down or 0))
     elif payload.action == "insert_at_end":

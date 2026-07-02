@@ -657,10 +657,13 @@ export default function LivePage() {
                       <p className="truncate text-[0.68rem] font-bold text-lane-500">
                         {throwItem.manual ? 'manuell' : 'getrackt'}
                         {throwItem.lowConfidence ? ' · niedrige Konfidenz' : ''}
+                        {throwItem.alreadyDownPins?.length ? ` · ignoriert: ${throwItem.alreadyDownPins.join(', ')}` : ''}
                         {throwItem.capturedAt ? ` · ${new Date(throwItem.capturedAt).toLocaleTimeString('de-DE')}` : ''}
                       </p>
                     </div>
-                    <span className="font-black text-lane-800">{throwItem.pinsKnockedDown ?? '–'} Pins</span>
+                    <span className="font-black text-lane-800" title={throwItem.observedFallenPins?.length ? `Companion sah: ${throwItem.observedFallenPins.join(', ')}` : undefined}>
+                      {throwItem.pinsKnockedDown ?? '–'} Pins
+                    </span>
                     <span className="font-bold text-lane-600">{throwItem.ballSpeedKmh != null ? formatNumber(throwItem.ballSpeedKmh, ' km/h') : '–'}</span>
                     <button
                       type="button"

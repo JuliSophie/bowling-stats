@@ -162,6 +162,8 @@ export type TrackingLoggedThrow = {
   throw: number;
   pinsKnockedDown?: number | null;
   fallenPins?: number[];
+  observedFallenPins?: number[];
+  alreadyDownPins?: number[];
   capturedAt?: string | null;
   manual: boolean;
   lowConfidence: boolean;
