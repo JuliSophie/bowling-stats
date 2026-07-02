@@ -82,6 +82,35 @@ class LiveSession:
             for frame_index, frame in enumerate(player["frames"]):
                 frame["fallenPins"] = grouped.get((player_index, frame_index), [])
 
+    def _logged_throws(self, board: ScoreboardResult) -> list[dict[str, Any]]:
+        """Expose the current replay log with the same player/frame assignment used for scoring."""
+        rows: list[dict[str, Any]] = []
+        for index, throw in enumerate(self.throw_log):
+            assignment = board.assignments[index] if index < len(board.assignments) else None
+            if assignment is not None and board.players:
+                player = board.players[assignment.player_index]["name"]
+                frame = assignment.frame
+                throw_in_frame = assignment.throw_in_frame
+            else:
+                player = "—"
+                frame = 10
+                throw_in_frame = 1
+            rows.append(
+                {
+                    "index": index,
+                    "player": player,
+                    "frame": frame,
+                    "throw": throw_in_frame,
+                    "pinsKnockedDown": throw.get("pinsKnockedDown"),
+                    "fallenPins": throw.get("fallenPins") or [],
+                    "capturedAt": throw.get("capturedAt"),
+                    "manual": bool(throw.get("manual")),
+                    "lowConfidence": bool(throw.get("lowConfidence")),
+                    "ballSpeedKmh": throw.get("ballSpeedKmh"),
+                }
+            )
+        return rows
+
     def snapshot(self) -> TrackingSessionRead:
         board = self.scoreboard()
         self._inject_fallen_pins(board)
@@ -92,6 +121,7 @@ class LiveSession:
                 "playerCount": self.player_count,
                 "players": board.players,
                 "throwCount": len(self.throw_log),
+                "throws": self._logged_throws(board),
             }
         )
         return TrackingSessionRead(
@@ -362,6 +392,7 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
       (and everything after) to the right player/frame — for when a later throw already misaligned.
     - ``edit_last`` corrects the pin count of the most recent throw.
     - ``delete_last`` removes a false/duplicate detection.
+    - ``delete_at`` removes a specific false detection from the replay log.
     Everything downstream (player/frame/ball, score) is re-derived from the log automatically.
     """
     session = await _get_session(session_id)
@@ -370,6 +401,12 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
     if payload.action == "delete_last":
         if log:
             log.pop()
+    elif payload.action == "delete_at":
+        if payload.throw_index is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="throwIndex fehlt.")
+        if payload.throw_index >= len(log):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wurf nicht gefunden.")
+        log.pop(payload.throw_index)
     elif payload.action == "edit_last":
         if log and payload.pins_knocked_down is not None:
             log[-1] = {**log[-1], "pinsKnockedDown": payload.pins_knocked_down, "fallenPins": []}
@@ -378,7 +415,10 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
     elif payload.action == "insert_at_end":
         log.append(_manual_throw(session, payload.pins_knocked_down or 0))
 
-    await _append_and_broadcast(session, _new_event("throw_corrected", {"action": payload.action, "throwCount": len(log)}))
+    await _append_and_broadcast(
+        session,
+        _new_event("throw_corrected", {"action": payload.action, "throwIndex": payload.throw_index, "throwCount": len(log)}),
+    )
     await _append_and_broadcast(
         session,
         _new_event("score_updated", {"session": session.snapshot().model_dump(mode="json", by_alias=True)}),

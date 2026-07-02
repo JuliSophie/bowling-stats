@@ -249,17 +249,18 @@ export async function setTrackingPlayers(sessionId: string, playerCount: number,
 }
 
 
-export type ThrowCorrectionAction = 'edit_last' | 'insert_before_last' | 'insert_at_end' | 'delete_last';
+export type ThrowCorrectionAction = 'edit_last' | 'insert_before_last' | 'insert_at_end' | 'delete_last' | 'delete_at';
 
 export async function correctTrackingThrow(
   sessionId: string,
   action: ThrowCorrectionAction,
   pinsKnockedDown?: number,
+  throwIndex?: number,
 ): Promise<TrackingSession> {
   return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}/throws/correct`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, pinsKnockedDown }),
+    body: JSON.stringify({ action, pinsKnockedDown, throwIndex }),
   });
 }
 

@@ -155,10 +155,24 @@ export type TrackingPlayerCard = {
   isCurrent: boolean;
 };
 
+export type TrackingLoggedThrow = {
+  index: number;
+  player: string;
+  frame: number;
+  throw: number;
+  pinsKnockedDown?: number | null;
+  fallenPins?: number[];
+  capturedAt?: string | null;
+  manual: boolean;
+  lowConfidence: boolean;
+  ballSpeedKmh?: number | null;
+};
+
 export type TrackingScoreboard = {
   playerCount: number;
   players: TrackingPlayerCard[];
   throwCount: number;
+  throws?: TrackingLoggedThrow[];
 };
 
 export type TrackingSession = {

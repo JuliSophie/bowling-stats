@@ -167,9 +167,12 @@ class TrackingPlayersUpdate(BaseModel):
 class ThrowCorrection(BaseModel):
     """Manual fix-ups to the ordered throw log when the camera mis-/under-detected a throw."""
 
-    action: Literal["edit_last", "insert_before_last", "insert_at_end", "delete_last"]
+    action: Literal["edit_last", "insert_before_last", "insert_at_end", "delete_last", "delete_at"]
     pins_knocked_down: int | None = Field(
         default=None, validation_alias=AliasChoices("pinsKnockedDown", "pins_knocked_down"), ge=0, le=10
+    )
+    throw_index: int | None = Field(
+        default=None, validation_alias=AliasChoices("throwIndex", "throw_index"), ge=0
     )
 
     model_config = ConfigDict(populate_by_name=True)
@@ -198,12 +201,30 @@ class TrackingPlayerCard(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class TrackingLoggedThrow(BaseModel):
+    """One entry in the replayable throw log, enriched with current score-table assignment."""
+
+    index: int
+    player: str
+    frame: int = Field(ge=1, le=10)
+    throw: int = Field(ge=1, le=3)
+    pins_knocked_down: int | None = Field(default=None, alias="pinsKnockedDown")
+    fallen_pins: list[int] = Field(default_factory=list, alias="fallenPins")
+    captured_at: str | None = Field(default=None, alias="capturedAt")
+    manual: bool = False
+    low_confidence: bool = Field(default=False, alias="lowConfidence")
+    ball_speed_kmh: float | None = Field(default=None, alias="ballSpeedKmh")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class TrackingScoreboard(BaseModel):
     """The full score table, rebuilt from the stored throw log on every update."""
 
     player_count: int = Field(alias="playerCount")
     players: list[TrackingPlayerCard] = Field(default_factory=list)
     throw_count: int = Field(default=0, alias="throwCount")
+    throws: list[TrackingLoggedThrow] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 

@@ -379,6 +379,7 @@ export default function LivePage() {
   );
   const lastThrow = throwEvents.at(-1)?.payload as ThrowAnalysis | undefined;
   const scoreboard = session?.scoreboard ?? null;
+  const loggedThrows = scoreboard?.throws ?? [];
 
   // Seed the "edit last throw" stepper with each newly detected throw's pin count.
   useEffect(() => {
@@ -436,13 +437,13 @@ export default function LivePage() {
     }
   };
 
-  const applyCorrection = async (action: ThrowCorrectionAction, pins?: number) => {
+  const applyCorrection = async (action: ThrowCorrectionAction, pins?: number, throwIndex?: number) => {
     if (!session) return;
     setCorrecting(true);
     setError(null);
     setSaveMsg(null);
     try {
-      const updated = await correctTrackingThrow(session.sessionId, action, pins);
+      const updated = await correctTrackingThrow(session.sessionId, action, pins, throwIndex);
       setSession(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Korrektur konnte nicht angewendet werden.');
@@ -455,6 +456,13 @@ export default function LivePage() {
     const clamped = Math.max(0, Math.min(10, next));
     setLastPins(clamped);
     applyCorrection('edit_last', clamped);
+  };
+
+  const deleteLoggedThrow = (throwIndex: number) => {
+    const throwNumber = throwIndex + 1;
+    if (window.confirm(`Wurf #${throwNumber} löschen? Alle späteren Würfe werden neu zugeordnet.`)) {
+      applyCorrection('delete_at', undefined, throwIndex);
+    }
   };
 
   const changePlayerCount = async (delta: number) => {
@@ -631,6 +639,45 @@ export default function LivePage() {
             verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
             „Letzten Wurf löschen“.
           </p>
+
+          <div className="mt-5 border-t border-lane-200/70 pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-lane-600">Wurf-Historie</p>
+              <span className="text-xs font-bold text-lane-500">Beliebigen Fehlwurf löschen</span>
+            </div>
+            <div className="mt-3 overflow-x-auto">
+              <div className="min-w-[42rem] divide-y divide-lane-100 rounded-2xl border border-lane-200 bg-white/70">
+                {[...loggedThrows].reverse().map((throwItem) => (
+                  <div key={throwItem.index} className="grid grid-cols-[4.5rem_1fr_6rem_6rem_7rem] items-center gap-3 px-3 py-2 text-xs">
+                    <span className="font-black tabular-nums text-lane-700">#{throwItem.index + 1}</span>
+                    <div className="min-w-0">
+                      <p className="truncate font-black text-lane-900">
+                        {throwItem.player} · Frame {throwItem.frame} · Wurf {throwItem.throw}
+                      </p>
+                      <p className="truncate text-[0.68rem] font-bold text-lane-500">
+                        {throwItem.manual ? 'manuell' : 'getrackt'}
+                        {throwItem.lowConfidence ? ' · niedrige Konfidenz' : ''}
+                        {throwItem.capturedAt ? ` · ${new Date(throwItem.capturedAt).toLocaleTimeString('de-DE')}` : ''}
+                      </p>
+                    </div>
+                    <span className="font-black text-lane-800">{throwItem.pinsKnockedDown ?? '–'} Pins</span>
+                    <span className="font-bold text-lane-600">{throwItem.ballSpeedKmh != null ? formatNumber(throwItem.ballSpeedKmh, ' km/h') : '–'}</span>
+                    <button
+                      type="button"
+                      onClick={() => deleteLoggedThrow(throwItem.index)}
+                      disabled={correcting || !session}
+                      className="justify-self-end rounded-full border border-red-200 px-3 py-1.5 text-[0.68rem] font-black uppercase tracking-[0.12em] text-red-700 transition hover:-translate-y-0.5 hover:bg-red-50 disabled:opacity-40"
+                    >
+                      Löschen
+                    </button>
+                  </div>
+                ))}
+                {!loggedThrows.length && (
+                  <p className="px-3 py-4 text-sm font-bold text-lane-500">Noch keine Würfe in der Historie.</p>
+                )}
+              </div>
+            </div>
+          </div>
         </section>
 
         {/* Live score table, rebuilt from the throw log */}
