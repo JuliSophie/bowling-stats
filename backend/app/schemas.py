@@ -167,13 +167,14 @@ class TrackingPlayersUpdate(BaseModel):
 class ThrowCorrection(BaseModel):
     """Manual fix-ups to the ordered throw log when the camera mis-/under-detected a throw."""
 
-    action: Literal["edit_last", "insert_before_last", "insert_at_end", "delete_last", "delete_at"]
+    action: Literal["edit_last", "insert_before_last", "insert_at_end", "delete_last", "delete_at", "edit_at_pattern"]
     pins_knocked_down: int | None = Field(
         default=None, validation_alias=AliasChoices("pinsKnockedDown", "pins_knocked_down"), ge=0, le=10
     )
     throw_index: int | None = Field(
         default=None, validation_alias=AliasChoices("throwIndex", "throw_index"), ge=0
     )
+    fallen_pins: list[int] = Field(default_factory=list, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -214,6 +215,7 @@ class TrackingLoggedThrow(BaseModel):
     already_down_pins: list[int] = Field(default_factory=list, alias="alreadyDownPins")
     captured_at: str | None = Field(default=None, alias="capturedAt")
     manual: bool = False
+    manual_correction: bool = Field(default=False, alias="manualCorrection")
     low_confidence: bool = Field(default=False, alias="lowConfidence")
     ball_speed_kmh: float | None = Field(default=None, alias="ballSpeedKmh")
 

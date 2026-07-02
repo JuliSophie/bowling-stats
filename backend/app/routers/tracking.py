@@ -108,6 +108,7 @@ class LiveSession:
                     "alreadyDownPins": throw.get("alreadyDownPins") or [],
                     "capturedAt": throw.get("capturedAt"),
                     "manual": bool(throw.get("manual")),
+                    "manualCorrection": bool(throw.get("manualCorrection")),
                     "lowConfidence": bool(throw.get("lowConfidence")),
                     "ballSpeedKmh": throw.get("ballSpeedKmh"),
                 }
@@ -203,7 +204,7 @@ class LiveSession:
         normalized: list[dict[str, Any]] = []
         for raw in self.throw_log:
             entry = dict(raw)
-            if entry.get("manual") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
+            if entry.get("manual") or entry.get("manualCorrection") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
                 entry["alreadyDownPins"] = []
                 normalized.append(entry)
                 continue
@@ -508,6 +509,7 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
     - ``edit_last`` corrects the pin count of the most recent throw.
     - ``delete_last`` removes a false/duplicate detection.
     - ``delete_at`` removes a specific false detection from the replay log.
+    - ``edit_at_pattern`` overrides the exact pin pattern of a specific throw.
     Everything downstream (player/frame/ball, score) is re-derived from the log automatically.
     """
     session = await _get_session(session_id)
@@ -522,6 +524,20 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
         if payload.throw_index >= len(log):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wurf nicht gefunden.")
         log.pop(payload.throw_index)
+    elif payload.action == "edit_at_pattern":
+        if payload.throw_index is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="throwIndex fehlt.")
+        if payload.throw_index >= len(log):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wurf nicht gefunden.")
+        pattern = sorted({pin for pin in payload.fallen_pins if 1 <= pin <= 10})
+        log[payload.throw_index] = {
+            **log[payload.throw_index],
+            "pinsKnockedDown": len(pattern),
+            "fallenPins": pattern,
+            "observedFallenPins": [],
+            "alreadyDownPins": [],
+            "manualCorrection": True,
+        }
     elif payload.action == "edit_last":
         if log and payload.pins_knocked_down is not None:
             log[-1] = {
@@ -530,6 +546,7 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
                 "fallenPins": [],
                 "observedFallenPins": [],
                 "alreadyDownPins": [],
+                "manualCorrection": True,
             }
     elif payload.action == "insert_before_last":
         log.insert(max(0, len(log) - 1), _manual_throw(session, payload.pins_knocked_down or 0))

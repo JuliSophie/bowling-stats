@@ -27,6 +27,35 @@ const PIN_SPACING_PCT = (PIN_CENTER_SPACING_IN / LANE_WIDTH_IN) * 100;
 const PIN_DECK_HEIGHT_PCT = 13;
 const PIN_HEADER_Y_PCT = PIN_DECK_HEIGHT_PCT;
 
+const PIN_LAYOUT = [
+  { pin: 7, row: 0, offset: -1.5 },
+  { pin: 8, row: 0, offset: -0.5 },
+  { pin: 9, row: 0, offset: 0.5 },
+  { pin: 10, row: 0, offset: 1.5 },
+  { pin: 4, row: 1, offset: -1 },
+  { pin: 5, row: 1, offset: 0 },
+  { pin: 6, row: 1, offset: 1 },
+  { pin: 2, row: 2, offset: -0.5 },
+  { pin: 3, row: 2, offset: 0.5 },
+  { pin: 1, row: 3, offset: 0 },
+];
+
+type PinState = 'standing' | 'already-down' | 'new-down';
+
+function pinDeckPosition(pin: (typeof PIN_LAYOUT)[number], horizontal: boolean) {
+  return {
+    x: horizontal ? 88 - pin.row * 23 : 50 + pin.offset * PIN_SPACING_PCT,
+    y: horizontal ? 50 + pin.offset * PIN_SPACING_PCT : 19 + pin.row * 23,
+  };
+}
+
+function pinClass(state: PinState, interactive = false) {
+  const base = interactive ? 'transition hover:scale-110 focus:outline-none focus:ring-2 focus:ring-coral/60' : '';
+  if (state === 'new-down') return `${base} border-red-700 bg-red-500 text-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)]`;
+  if (state === 'already-down') return `${base} border-white bg-white text-lane-950 shadow`;
+  return `${base} border-lane-700 bg-lane-950/80 text-lane-300 opacity-70`;
+}
+
 function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['payload'] & ThrowAnalysis {
   return typeof payload.player === 'string' && typeof payload.frame === 'number' && typeof payload.throw === 'number';
 }
@@ -55,6 +84,84 @@ function eventLabel(type: string) {
     throw_corrected: 'Wurf korrigiert',
   };
   return labels[type] ?? type;
+}
+
+function PinLegend() {
+  const items: { state: PinState; label: string }[] = [
+    { state: 'new-down', label: 'neu gefallen' },
+    { state: 'already-down', label: 'bereits gefallen' },
+    { state: 'standing', label: 'steht noch' },
+  ];
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.68rem] font-bold text-lane-500">
+      {items.map((item) => (
+        <span key={item.state} className="inline-flex items-center gap-1.5">
+          <span className={`h-3 w-3 rounded-full border ${pinClass(item.state)}`} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function PinPatternDeck({
+  value,
+  alreadyDown = [],
+  onChange,
+  disabled,
+  compact = false,
+}: {
+  value: number[];
+  alreadyDown?: number[];
+  onChange?: (next: number[]) => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  const selected = new Set(value);
+  const already = new Set(alreadyDown);
+  const toggle = (pin: number) => {
+    if (!onChange || disabled) return;
+    const next = new Set(selected);
+    if (next.has(pin)) next.delete(pin);
+    else next.add(pin);
+    onChange([...next].sort((a, b) => a - b));
+  };
+
+  return (
+    <div
+      className={`relative shrink-0 rounded-xl border border-lane-200 bg-[var(--lane-deck)] ${compact ? 'h-24 w-32' : 'h-32 w-44'}`}
+      aria-label="Pin-Muster"
+    >
+      {PIN_LAYOUT.map((pin) => {
+        const { x, y } = pinDeckPosition(pin, false);
+        const state: PinState = selected.has(pin.pin) ? 'new-down' : already.has(pin.pin) ? 'already-down' : 'standing';
+        const size = compact ? 'h-6 w-6 text-[0.62rem]' : 'h-7 w-7 text-[0.68rem]';
+        const className = `absolute grid -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border-2 font-black tabular-nums ${size} ${pinClass(state, Boolean(onChange))}`;
+        if (onChange) {
+          return (
+            <button
+              key={pin.pin}
+              type="button"
+              onClick={() => toggle(pin.pin)}
+              disabled={disabled}
+              className={className}
+              style={{ left: `${x}%`, top: `${y}%` }}
+              aria-pressed={selected.has(pin.pin)}
+              aria-label={`Pin ${pin.pin} ${selected.has(pin.pin) ? 'entfernen' : 'als gefallen markieren'}`}
+              title={`Pin ${pin.pin}`}
+            >
+              {pin.pin}
+            </button>
+          );
+        }
+        return (
+          <span key={pin.pin} className={className} style={{ left: `${x}%`, top: `${y}%` }} title={`Pin ${pin.pin}`}>
+            {pin.pin}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /** One ball's display glyph in the score table (X strike, / spare, - gutter). */
@@ -119,28 +226,8 @@ function LaneView({
     { key: 'impact', label: 'Pins', point: curve?.impact, color: '#e11d48' },
   ];
   const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
-  // Prefer the exact pins the display reported fallen; fall back to "first N" only for the count.
-  const fallenSet =
-    lastThrow?.fallenPins && lastThrow.fallenPins.length > 0 ? new Set(lastThrow.fallenPins) : null;
-  const pinPositions = [
-    { pin: 7, row: 0, offset: -1.5 },
-    { pin: 8, row: 0, offset: -0.5 },
-    { pin: 9, row: 0, offset: 0.5 },
-    { pin: 10, row: 0, offset: 1.5 },
-    { pin: 4, row: 1, offset: -1 },
-    { pin: 5, row: 1, offset: 0 },
-    { pin: 6, row: 1, offset: 1 },
-    { pin: 2, row: 2, offset: -0.5 },
-    { pin: 3, row: 2, offset: 0.5 },
-    { pin: 1, row: 3, offset: 0 },
-  ].map((pin, index) => ({
-    ...pin,
-    // Inside the deck strip: the board (offset) axis spreads across the strip's long
-    // side; the row axis stacks along its short side, back row farthest from the lane.
-    x: horizontal ? 88 - pin.row * 23 : 50 + pin.offset * PIN_SPACING_PCT,
-    y: horizontal ? 50 + pin.offset * PIN_SPACING_PCT : 19 + pin.row * 23,
-    knocked: fallenSet ? fallenSet.has(pin.pin) : index < knockedPins,
-  }));
+  const newDownSet = lastThrow?.fallenPins && lastThrow.fallenPins.length > 0 ? new Set(lastThrow.fallenPins) : null;
+  const alreadyDownSet = new Set(lastThrow?.alreadyDownPins ?? []);
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
 
@@ -156,20 +243,26 @@ function LaneView({
         className={horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'}
         style={{ background: 'var(--lane-deck)' }}
       >
-        {pinPositions.map((pin) => (
-          <span
-            key={pin.pin}
-            className={`absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm sm:h-4 sm:w-4 ${
-              pin.knocked ? 'bg-transparent opacity-50' : 'bg-white'
-            }`}
-            style={{
-              left: `${pin.x}%`,
-              top: `${pin.y}%`,
-              borderColor: 'var(--lane-pin)',
-            }}
-            title={`Pin ${pin.pin}${pin.knocked ? ' gefallen' : ' steht'}`}
-          />
-        ))}
+        {PIN_LAYOUT.map((pin, index) => {
+          const { x, y } = pinDeckPosition(pin, horizontal);
+          const state: PinState = newDownSet
+            ? newDownSet.has(pin.pin)
+              ? 'new-down'
+              : alreadyDownSet.has(pin.pin)
+                ? 'already-down'
+                : 'standing'
+            : index < knockedPins
+              ? 'new-down'
+              : 'standing';
+          return (
+            <span
+              key={pin.pin}
+              className={`absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 sm:h-4 sm:w-4 ${pinClass(state)}`}
+              style={{ left: `${x}%`, top: `${y}%` }}
+              title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
+            />
+          );
+        })}
       </div>
 
       {/* Pin header line: end of the measured ball trajectory, before the pin deck. */}
@@ -306,13 +399,53 @@ export default function LivePage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [correcting, setCorrecting] = useState(false);
-  const [lastPins, setLastPins] = useState(0);
   const [insertPins, setInsertPins] = useState(0);
+  const [expandedThrowIndex, setExpandedThrowIndex] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  const getAudioContext = () => {
+    if (typeof window === 'undefined') return null;
+    if (!audioContextRef.current) {
+      const AudioContextCtor = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return null;
+      audioContextRef.current = new AudioContextCtor();
+    }
+    return audioContextRef.current;
+  };
+
+  const playThrowBing = () => {
+    const audio = getAudioContext();
+    if (!audio || audio.state !== 'running') return;
+
+    const now = audio.currentTime;
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(880, now);
+    oscillator.frequency.exponentialRampToValueAtTime(1320, now + 0.08);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    oscillator.connect(gain);
+    gain.connect(audio.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.24);
+  };
 
   useEffect(() => {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const unlockAudio = () => {
+      const audio = getAudioContext();
+      if (audio?.state === 'suspended') {
+        audio.resume().catch(() => undefined);
+      }
+    };
+
+    window.addEventListener('pointerdown', unlockAudio, { once: true });
+    window.addEventListener('keydown', unlockAudio, { once: true });
 
     const applyEvent = (event: LiveEvent) => {
       if (event.type === 'session_snapshot') {
@@ -347,6 +480,7 @@ export default function LivePage() {
         socket.onopen = () => setConnectionState('open');
         socket.onmessage = (message) => {
           const event = JSON.parse(message.data) as LiveEvent;
+          if (event.type === 'throw_analyzed') playThrowBing();
           applyEvent(event);
         };
         socket.onerror = () => setError('Live-Verbindung konnte nicht stabil aufgebaut werden.');
@@ -368,6 +502,8 @@ export default function LivePage() {
 
     return () => {
       cancelled = true;
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socketRef.current?.close();
     };
@@ -380,11 +516,7 @@ export default function LivePage() {
   const lastThrow = throwEvents.at(-1)?.payload as ThrowAnalysis | undefined;
   const scoreboard = session?.scoreboard ?? null;
   const loggedThrows = scoreboard?.throws ?? [];
-
-  // Seed the "edit last throw" stepper with each newly detected throw's pin count.
-  useEffect(() => {
-    setLastPins(lastThrow?.pinsKnockedDown ?? 0);
-  }, [lastThrow?.capturedAt, lastThrow?.pinsKnockedDown]);
+  const latestLoggedThrow = loggedThrows.at(-1);
 
   const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
 
@@ -437,13 +569,13 @@ export default function LivePage() {
     }
   };
 
-  const applyCorrection = async (action: ThrowCorrectionAction, pins?: number, throwIndex?: number) => {
+  const applyCorrection = async (action: ThrowCorrectionAction, pins?: number, throwIndex?: number, fallenPins?: number[]) => {
     if (!session) return;
     setCorrecting(true);
     setError(null);
     setSaveMsg(null);
     try {
-      const updated = await correctTrackingThrow(session.sessionId, action, pins, throwIndex);
+      const updated = await correctTrackingThrow(session.sessionId, action, pins, throwIndex, fallenPins);
       setSession(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Korrektur konnte nicht angewendet werden.');
@@ -452,10 +584,8 @@ export default function LivePage() {
     }
   };
 
-  const editLastPins = (next: number) => {
-    const clamped = Math.max(0, Math.min(10, next));
-    setLastPins(clamped);
-    applyCorrection('edit_last', clamped);
+  const editThrowPattern = (throwIndex: number, pattern: number[]) => {
+    applyCorrection('edit_at_pattern', pattern.length, throwIndex, pattern);
   };
 
   const deleteLoggedThrow = (throwIndex: number) => {
@@ -505,6 +635,76 @@ export default function LivePage() {
   const lowConfidenceBadge = lastThrow?.lowConfidence ? (
     <span className="rounded-full bg-coral px-3 py-2 text-center text-xs font-black text-lane-950">Wurf prüfen — niedrige Konfidenz</span>
   ) : null;
+
+  const historySection = (
+    <section className="soft-card p-4 sm:p-6">
+      <div className="flex items-center justify-between gap-3">
+        <p className="eyebrow">Wurf-Historie</p>
+        <span className="text-xs font-bold text-lane-500">Eintrag anklicken, um Pins zu bearbeiten</span>
+      </div>
+      <div className="mt-3 divide-y divide-lane-100 rounded-2xl border border-lane-200 bg-white/70">
+        {[...loggedThrows].reverse().map((throwItem) => {
+          const expanded = expandedThrowIndex === throwItem.index;
+          return (
+            <div key={throwItem.index} className="text-xs">
+              <button
+                type="button"
+                onClick={() => setExpandedThrowIndex(expanded ? null : throwItem.index)}
+                className="grid w-full grid-cols-[4.5rem_1fr_5rem_5rem_2rem] items-center gap-3 px-3 py-2 text-left transition hover:bg-lane-50/80"
+                aria-expanded={expanded}
+              >
+                <span className="font-black tabular-nums text-lane-700">#{throwItem.index + 1}</span>
+                <div className="min-w-0">
+                  <p className="truncate font-black text-lane-900">
+                    {throwItem.player} · Frame {throwItem.frame} · Wurf {throwItem.throw}
+                  </p>
+                  <p className="truncate text-[0.68rem] font-bold text-lane-500">
+                    {throwItem.manualCorrection ? 'korrigiert' : throwItem.manual ? 'manuell' : 'getrackt'}
+                    {throwItem.lowConfidence ? ' · niedrige Konfidenz' : ''}
+                    {throwItem.alreadyDownPins?.length ? ` · ignoriert: ${throwItem.alreadyDownPins.join(', ')}` : ''}
+                    {throwItem.capturedAt ? ` · ${new Date(throwItem.capturedAt).toLocaleTimeString('de-DE')}` : ''}
+                  </p>
+                </div>
+                <span className="font-black text-lane-800" title={throwItem.observedFallenPins?.length ? `Companion sah: ${throwItem.observedFallenPins.join(', ')}` : undefined}>
+                  {throwItem.pinsKnockedDown ?? '–'} Pins
+                </span>
+                <span className="font-bold text-lane-600">{throwItem.ballSpeedKmh != null ? formatNumber(throwItem.ballSpeedKmh, ' km/h') : '–'}</span>
+                <span className="justify-self-end text-lg font-black text-lane-500">{expanded ? '−' : '+'}</span>
+              </button>
+              {expanded && (
+                <div className="grid gap-4 border-t border-lane-100 bg-lane-50/60 px-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                  <PinPatternDeck
+                    value={throwItem.fallenPins ?? []}
+                    alreadyDown={throwItem.alreadyDownPins ?? []}
+                    onChange={(pattern) => editThrowPattern(throwItem.index, pattern)}
+                    disabled={correcting || !session}
+                  />
+                  <div className="space-y-2">
+                    <p className="text-sm font-black text-lane-900">Pin-Muster bearbeiten</p>
+                    <PinLegend />
+                    <p className="text-xs font-bold text-lane-500">
+                      Rot zählt für diesen Wurf. Weiß war in diesem Rack bereits unten und wird nicht erneut gezählt.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => deleteLoggedThrow(throwItem.index)}
+                    disabled={correcting || !session}
+                    className="rounded-full border border-red-200 px-3 py-2 text-xs font-black uppercase tracking-[0.12em] text-red-700 transition hover:-translate-y-0.5 hover:bg-red-50 disabled:opacity-40"
+                  >
+                    Löschen
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!loggedThrows.length && (
+          <p className="px-3 py-4 text-sm font-bold text-lane-500">Noch keine Würfe in der Historie.</p>
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <>
@@ -598,8 +798,17 @@ export default function LivePage() {
           </div>
           <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
             <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-lane-600">Pins letzter Wurf</span>
-              <PinStepper value={lastPins} onChange={editLastPins} disabled={correcting || !scoreboard?.throwCount} />
+              <span className="text-xs font-bold text-lane-600">Pin-Muster letzter Wurf</span>
+              <PinPatternDeck
+                value={latestLoggedThrow?.fallenPins ?? []}
+                alreadyDown={latestLoggedThrow?.alreadyDownPins ?? []}
+                onChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
+                disabled={correcting || !latestLoggedThrow}
+              />
+              <span className="text-[0.68rem] font-bold text-lane-500">
+                {latestLoggedThrow ? `${latestLoggedThrow.pinsKnockedDown ?? 0} Pins · #${latestLoggedThrow.index + 1}` : 'Noch kein Wurf'}
+              </span>
+              <PinLegend />
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-xs font-bold text-lane-600">Fehlenden Wurf einfügen</span>
@@ -639,48 +848,6 @@ export default function LivePage() {
             verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
             „Letzten Wurf löschen“.
           </p>
-
-          <div className="mt-5 border-t border-lane-200/70 pt-4">
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-lane-600">Wurf-Historie</p>
-              <span className="text-xs font-bold text-lane-500">Beliebigen Fehlwurf löschen</span>
-            </div>
-            <div className="mt-3 overflow-x-auto">
-              <div className="min-w-[42rem] divide-y divide-lane-100 rounded-2xl border border-lane-200 bg-white/70">
-                {[...loggedThrows].reverse().map((throwItem) => (
-                  <div key={throwItem.index} className="grid grid-cols-[4.5rem_1fr_6rem_6rem_7rem] items-center gap-3 px-3 py-2 text-xs">
-                    <span className="font-black tabular-nums text-lane-700">#{throwItem.index + 1}</span>
-                    <div className="min-w-0">
-                      <p className="truncate font-black text-lane-900">
-                        {throwItem.player} · Frame {throwItem.frame} · Wurf {throwItem.throw}
-                      </p>
-                      <p className="truncate text-[0.68rem] font-bold text-lane-500">
-                        {throwItem.manual ? 'manuell' : 'getrackt'}
-                        {throwItem.lowConfidence ? ' · niedrige Konfidenz' : ''}
-                        {throwItem.alreadyDownPins?.length ? ` · ignoriert: ${throwItem.alreadyDownPins.join(', ')}` : ''}
-                        {throwItem.capturedAt ? ` · ${new Date(throwItem.capturedAt).toLocaleTimeString('de-DE')}` : ''}
-                      </p>
-                    </div>
-                    <span className="font-black text-lane-800" title={throwItem.observedFallenPins?.length ? `Companion sah: ${throwItem.observedFallenPins.join(', ')}` : undefined}>
-                      {throwItem.pinsKnockedDown ?? '–'} Pins
-                    </span>
-                    <span className="font-bold text-lane-600">{throwItem.ballSpeedKmh != null ? formatNumber(throwItem.ballSpeedKmh, ' km/h') : '–'}</span>
-                    <button
-                      type="button"
-                      onClick={() => deleteLoggedThrow(throwItem.index)}
-                      disabled={correcting || !session}
-                      className="justify-self-end rounded-full border border-red-200 px-3 py-1.5 text-[0.68rem] font-black uppercase tracking-[0.12em] text-red-700 transition hover:-translate-y-0.5 hover:bg-red-50 disabled:opacity-40"
-                    >
-                      Löschen
-                    </button>
-                  </div>
-                ))}
-                {!loggedThrows.length && (
-                  <p className="px-3 py-4 text-sm font-bold text-lane-500">Noch keine Würfe in der Historie.</p>
-                )}
-              </div>
-            </div>
-          </div>
         </section>
 
         {/* Live score table, rebuilt from the throw log */}
@@ -733,6 +900,8 @@ export default function LivePage() {
             </table>
           </div>
         </section>
+
+        {historySection}
 
         {/* Event stream */}
         <section className="soft-card p-4 sm:p-6">

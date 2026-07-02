@@ -166,6 +166,7 @@ export type TrackingLoggedThrow = {
   alreadyDownPins?: number[];
   capturedAt?: string | null;
   manual: boolean;
+  manualCorrection?: boolean;
   lowConfidence: boolean;
   ballSpeedKmh?: number | null;
 };
@@ -223,6 +224,9 @@ export type ThrowAnalysis = {
   pinsKnockedDown?: number | null;
   // Pin numbers (1..10) that fell on this delivery, from the overhead display.
   fallenPins?: number[] | null;
+  // Raw companion observation and same-rack pins ignored because they were already down.
+  observedFallenPins?: number[] | null;
+  alreadyDownPins?: number[] | null;
   ballSpeedKmh?: number | null;
   impactBoard?: number | null;
   launchBoard?: number | null;
