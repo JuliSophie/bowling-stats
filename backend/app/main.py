@@ -11,6 +11,7 @@ from app.database import Base, engine
 from app import models  # noqa: F401
 from app.routers.auth import router as auth_router
 from app.routers.games import router as games_router
+from app.routers.lane_samples import router as lane_samples_router
 from app.routers.stats import router as stats_router
 from app.routers.tracking import router as tracking_router
 from app.routers.upload import router as upload_router
@@ -70,5 +71,6 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(tracking_router, prefix="/api", dependencies=protected)
 
 app.include_router(upload_router, prefix="/api", dependencies=protected)
+app.include_router(lane_samples_router, prefix="/api", dependencies=protected)
 app.include_router(games_router, prefix="/api", dependencies=protected)
 app.include_router(stats_router, prefix="/api", dependencies=protected)

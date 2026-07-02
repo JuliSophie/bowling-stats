@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     tesseract_cmd: str | None = None
     temp_dir: Path = DEFAULT_TEMP_DIR
 
+    # Lane-corner model training: runs on this server, debounced so it starts only once
+    # uploads have been quiet for the delay window (training always sees the newest data).
+    lane_train_enabled: bool = True
+    lane_train_delay_seconds: int = 300
+    lane_train_epochs: int = 80
+    lane_train_min_samples: int = 8
+
     # Auth (shared-password gate). Both must be set for auth to be enforced.
     app_password: str = ""
     auth_secret: str = ""

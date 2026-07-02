@@ -1,0 +1,9 @@
+# Extras for server-side lane-corner model training (app/services/lane_training.py
+# spawns scripts/train_lane_corners.py after sample uploads). Install into the same
+# venv that runs uvicorn:  pip install -r requirements-train.txt
+# CPU-only torch is sufficient; on a Linux server prefer the CPU wheel index:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+torch>=2.4.0,<3.0.0
+torchvision>=0.19.0,<1.0.0
+onnx>=1.16.0,<2.0.0
+pillow>=10.0.0,<13.0.0
