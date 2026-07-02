@@ -4,10 +4,6 @@ import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSeg
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
 
 function resolveApiBase() {
-  if (typeof window !== 'undefined' && window.location.hostname === 'bowling.sophiealexandra.de') {
-    // Keep production browser calls same-origin; Next rewrites /api/* to the API subdomain.
-    return '/api';
-  }
   // Android install checks can fail when a HTTPS web app still references HTTP API origins.
   if (typeof window !== 'undefined' && window.location.protocol === 'https:' && /^http:\/\//i.test(RAW_API_BASE)) {
     // Prefer same-origin reverse proxy path in secure contexts to avoid mixed content.
