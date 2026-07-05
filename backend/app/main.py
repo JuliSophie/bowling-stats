@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import inspect, text
 
 from app.auth import auth_enabled, require_auth
@@ -38,6 +39,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 if not auth_enabled():
@@ -50,6 +58,21 @@ if not auth_enabled():
 @app.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return JSON for unexpected errors so CORS middleware can add headers.
+
+    Without this, unhandled exceptions can be converted to a bare 500 by the
+    outer server-error middleware, which browsers surface as a misleading CORS
+    failure. The exception is still logged server-side.
+    """
+    logger.exception("Unhandled API error on %s %s", request.method, request.url.path, exc_info=exc)
+    detail = "Interner Serverfehler."
+    if settings.environment.lower() == "development":
+        detail = str(exc) or detail
+    return JSONResponse(status_code=500, content={"detail": detail})
 
 
 # Protected: everything below requires a valid auth cookie (browser) or bearer token (companion app).
@@ -67,15 +90,3 @@ app.include_router(upload_router, prefix="/api", dependencies=protected)
 app.include_router(lane_samples_router, prefix="/api", dependencies=protected)
 app.include_router(games_router, prefix="/api", dependencies=protected)
 app.include_router(stats_router, prefix="/api", dependencies=protected)
-
-# Keep CORS as the outermost ASGI wrapper. If an endpoint raises an unhandled
-# exception, FastAPI's server-error handler can otherwise generate a response
-# before CORSMiddleware sees it, which makes the browser report a misleading
-# "No Access-Control-Allow-Origin" error instead of the real backend error.
-app = CORSMiddleware(
-    app,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
