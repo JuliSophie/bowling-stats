@@ -36,6 +36,9 @@ const PIN_ROW_SPACING_M = 0.2637; // 12 in × sin 60°
 const RACK_BACK_DEPTH_M = 3 * PIN_ROW_SPACING_M;
 // Centre → pin 7/10 in boards (1.5 pin spacings expressed in board widths).
 const RACK_HALF_SPREAD_BOARDS = (1.5 * PIN_CENTER_SPACING_IN * BOARD_COUNT) / LANE_WIDTH_IN;
+// Collision reach for the first-hit search: ball centre within (ball + pin radius) of a pin centre.
+const BOARD_WIDTH_M = (LANE_WIDTH_IN * 0.0254) / BOARD_COUNT;
+const HIT_RADIUS_BOARDS = (0.108 + 0.061) / BOARD_WIDTH_M; // ball radius + pin body radius, ≈6 boards
 // Visible gutters on each side of the wood. Boards 1..39 span only the band between them, so a
 // ball at board 2–4 clearly renders ON the lane near the edge instead of appearing "in the gutter".
 const GUTTER_PCT = 7;
@@ -242,21 +245,35 @@ function LaneView({
 
   const path: BallPathPoint[] = lastThrow?.path ?? [];
   const curve = lastThrow?.curve;
-  // The path data ends at the head-pin line, but an off-centre ball rolls on into the rack until
-  // it meets the pin triangle (pin 1 in front, 7/10 three rows back). Extend the drawn line along
-  // its end direction to that envelope, so hitting the outermost pins looks like it.
+  // The path data ends at the head-pin line, but the ball rolls on into the rack until it MEETS a
+  // pin. First-collision search: walk the rows front-to-back and stop at the first pin whose
+  // centre line the ball's centre passes within collision reach (ball radius + pin radius) — not
+  // just the rack's outer triangle, which let the endpoint land "behind" a pin it grazed.
   const rackHit = (() => {
     if (path.length < 2) return null;
-    const a = path[path.length - 2];
-    const b = path[path.length - 1];
-    const dDist = distanceOf(b) - distanceOf(a);
-    const slope = dDist > 1e-6 ? (b.board - a.board) / dDist : 0;
-    const depthAt = (board: number) =>
-      Math.min(RACK_BACK_DEPTH_M, (Math.abs(board - 20) / RACK_HALF_SPREAD_BOARDS) * RACK_BACK_DEPTH_M);
-    let depth = depthAt(b.board);
-    depth = depthAt(b.board + slope * depth); // one refinement step along the slope
-    const board = Math.max(1, Math.min(BOARD_COUNT, b.board + slope * depth));
-    return { board, distanceM: LANE_LENGTH_M + depth };
+    const end = path[path.length - 1];
+    // Robust end direction: pair the last point with one a stretch back — the immediate
+    // neighbour may be a near-duplicate whose slope is noise, which kinked the extension.
+    let ref = path[path.length - 2];
+    for (let i = path.length - 2; i >= 0; i--) {
+      ref = path[i];
+      if (distanceOf(end) - distanceOf(ref) >= 1.5) break;
+    }
+    const dDist = distanceOf(end) - distanceOf(ref);
+    const slope = dDist > 1e-6 ? (end.board - ref.board) / dDist : 0;
+    const ballAt = (depth: number) => end.board + slope * depth;
+    for (let row = 3; row >= 0; row--) {
+      const depth = (3 - row) * PIN_ROW_SPACING_M;
+      const nearest = PIN_LAYOUT.filter((p) => p.row === row)
+        .map((p) => Math.abs(ballAt(depth) - (20 + p.offset * PIN_BOARD_SPACING)))
+        .reduce((min, d) => Math.min(min, d), Number.POSITIVE_INFINITY);
+      if (nearest <= HIT_RADIUS_BOARDS) {
+        return { board: ballAt(depth), distanceM: LANE_LENGTH_M + depth };
+      }
+    }
+    // Reaches nothing (edge/gutter ball): fall back to the rack's outer envelope.
+    const depth = Math.min(RACK_BACK_DEPTH_M, (Math.abs(ballAt(0) - 20) / RACK_HALF_SPREAD_BOARDS) * RACK_BACK_DEPTH_M);
+    return { board: ballAt(depth), distanceM: LANE_LENGTH_M + depth };
   })();
   const polyline =
     path.length >= 2

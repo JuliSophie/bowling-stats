@@ -38,13 +38,6 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 if not auth_enabled():
@@ -74,3 +67,15 @@ app.include_router(upload_router, prefix="/api", dependencies=protected)
 app.include_router(lane_samples_router, prefix="/api", dependencies=protected)
 app.include_router(games_router, prefix="/api", dependencies=protected)
 app.include_router(stats_router, prefix="/api", dependencies=protected)
+
+# Keep CORS as the outermost ASGI wrapper. If an endpoint raises an unhandled
+# exception, FastAPI's server-error handler can otherwise generate a response
+# before CORSMiddleware sees it, which makes the browser report a misleading
+# "No Access-Control-Allow-Origin" error instead of the real backend error.
+app = CORSMiddleware(
+    app,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
