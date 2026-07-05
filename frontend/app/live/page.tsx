@@ -26,6 +26,10 @@ const PIN_CENTER_SPACING_IN = 12;
 const PIN_SPACING_PCT = (PIN_CENTER_SPACING_IN / LANE_WIDTH_IN) * 100;
 const PIN_DECK_HEIGHT_PCT = 13;
 const PIN_HEADER_Y_PCT = PIN_DECK_HEIGHT_PCT;
+// Pin 1 stands ON the pin-header line (the lane coordinate 18.29 m IS the head pin), with the
+// deeper rows behind it — so the drawn trajectory ends exactly at pin 1, not short of the deck.
+const PIN_DECK_PIN1_PCT = 6; // small visual inset of pin 1 from the header line, % of deck depth
+const PIN_DECK_ROW_STEP_PCT = 26; // row-to-row spacing, % of deck depth
 // Visible gutters on each side of the wood. Boards 1..39 span only the band between them, so a
 // ball at board 2–4 clearly renders ON the lane near the edge instead of appearing "in the gutter".
 const GUTTER_PCT = 7;
@@ -203,16 +207,19 @@ function LaneView({
   const headerLengthPct = horizontal ? 100 - PIN_DECK_HEIGHT_PCT : PIN_HEADER_Y_PCT;
 
   const mapBoard = mapBoardPct;
+  // Full-scale endpoint: LANE_LENGTH_M is the head pin, which sits slightly INSIDE the deck — the
+  // trajectory is drawn all the way onto pin 1 instead of stopping at the header line.
+  const pin1AlongV = PIN_DECK_HEIGHT_PCT * (1 - PIN_DECK_PIN1_PCT / 100);
+  const pin1AlongH = headerLengthPct + PIN_DECK_HEIGHT_PCT * (PIN_DECK_PIN1_PCT / 100);
   // Vertical: distance runs bottom (foul) → top (pins).
   const mapDistanceV = (distanceM: number) => {
-    const laneSurfacePct = 100 - PIN_HEADER_Y_PCT;
-    const y = PIN_HEADER_Y_PCT + (1 - distanceM / LANE_LENGTH_M) * laneSurfacePct;
-    return Math.max(PIN_HEADER_Y_PCT, Math.min(99, y));
+    const y = pin1AlongV + (1 - distanceM / LANE_LENGTH_M) * (100 - pin1AlongV);
+    return Math.max(pin1AlongV, Math.min(99, y));
   };
   // Horizontal: distance runs left (foul) → right (pins).
   const mapDistanceH = (distanceM: number) => {
-    const x = (distanceM / LANE_LENGTH_M) * headerLengthPct;
-    return Math.max(1, Math.min(headerLengthPct, x));
+    const x = (distanceM / LANE_LENGTH_M) * pin1AlongH;
+    return Math.max(1, Math.min(pin1AlongH, x));
   };
   // Project a (board, distance) lane coordinate onto container percentages.
   const pos = (board: number, distanceM: number) =>
@@ -258,16 +265,14 @@ function LaneView({
         style={horizontal ? { height: `${GUTTER_PCT}%`, background: 'var(--lane-deck)', opacity: 0.55 } : { width: `${GUTTER_PCT}%`, background: 'var(--lane-deck)', opacity: 0.55 }}
       />
 
-      {/* Pin deck beyond the playable lane. The trajectory only maps from the foul
-        line up to the pin header line at the edge of this deck. */}
-      <div
-        className={horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'}
-        style={{ background: 'var(--lane-deck)' }}
-      >
+      {/* Pin deck beyond the playable lane — same wood as the lane; the header line marks it.
+        Pin 1 stands right at that line (lane coordinate 18.29 m = head pin). */}
+      <div className={horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'}>
         {PIN_LAYOUT.map((pin, index) => {
           // Cross-axis from the pin's true BOARD, so the drawn line points at the pin it hit.
           const cross = mapBoardPct(20 + pin.offset * PIN_BOARD_SPACING);
-          const along = horizontal ? 88 - pin.row * 23 : 19 + pin.row * 23;
+          const inset = PIN_DECK_PIN1_PCT + (3 - pin.row) * PIN_DECK_ROW_STEP_PCT;
+          const along = horizontal ? inset : 100 - inset;
           const x = horizontal ? along : cross;
           const y = horizontal ? cross : along;
           const state: PinState = newDownSet
