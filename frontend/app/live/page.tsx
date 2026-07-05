@@ -30,6 +30,12 @@ const PIN_HEADER_Y_PCT = PIN_DECK_HEIGHT_PCT;
 // deeper rows behind it — so the drawn trajectory ends exactly at pin 1, not short of the deck.
 const PIN_DECK_PIN1_PCT = 6; // small visual inset of pin 1 from the header line, % of deck depth
 const PIN_DECK_ROW_STEP_PCT = 26; // row-to-row spacing, % of deck depth
+// The rack's front envelope is a triangle: pin 1 at the head-pin line, pins 7/10 three rows
+// deeper. An off-centre ball rolls past the header line until it meets that envelope.
+const PIN_ROW_SPACING_M = 0.2637; // 12 in × sin 60°
+const RACK_BACK_DEPTH_M = 3 * PIN_ROW_SPACING_M;
+// Centre → pin 7/10 in boards (1.5 pin spacings expressed in board widths).
+const RACK_HALF_SPREAD_BOARDS = (1.5 * PIN_CENTER_SPACING_IN * BOARD_COUNT) / LANE_WIDTH_IN;
 // Visible gutters on each side of the wood. Boards 1..39 span only the band between them, so a
 // ball at board 2–4 clearly renders ON the lane near the edge instead of appearing "in the gutter".
 const GUTTER_PCT = 7;
@@ -211,15 +217,22 @@ function LaneView({
   // trajectory is drawn all the way onto pin 1 instead of stopping at the header line.
   const pin1AlongV = PIN_DECK_HEIGHT_PCT * (1 - PIN_DECK_PIN1_PCT / 100);
   const pin1AlongH = headerLengthPct + PIN_DECK_HEIGHT_PCT * (PIN_DECK_PIN1_PCT / 100);
+  // Distances beyond the head pin (into the rack) map along the deck's row spacing.
+  const deckPctPerMeter = ((PIN_DECK_ROW_STEP_PCT / 100) * PIN_DECK_HEIGHT_PCT) / PIN_ROW_SPACING_M;
   // Vertical: distance runs bottom (foul) → top (pins).
   const mapDistanceV = (distanceM: number) => {
+    if (distanceM >= LANE_LENGTH_M) {
+      return Math.max(1, pin1AlongV - (distanceM - LANE_LENGTH_M) * deckPctPerMeter);
+    }
     const y = pin1AlongV + (1 - distanceM / LANE_LENGTH_M) * (100 - pin1AlongV);
-    return Math.max(pin1AlongV, Math.min(99, y));
+    return Math.min(99, y);
   };
   // Horizontal: distance runs left (foul) → right (pins).
   const mapDistanceH = (distanceM: number) => {
-    const x = (distanceM / LANE_LENGTH_M) * pin1AlongH;
-    return Math.max(1, Math.min(pin1AlongH, x));
+    if (distanceM >= LANE_LENGTH_M) {
+      return Math.min(99, pin1AlongH + (distanceM - LANE_LENGTH_M) * deckPctPerMeter);
+    }
+    return Math.max(1, (distanceM / LANE_LENGTH_M) * pin1AlongH);
   };
   // Project a (board, distance) lane coordinate onto container percentages.
   const pos = (board: number, distanceM: number) =>
@@ -229,9 +242,25 @@ function LaneView({
 
   const path: BallPathPoint[] = lastThrow?.path ?? [];
   const curve = lastThrow?.curve;
+  // The path data ends at the head-pin line, but an off-centre ball rolls on into the rack until
+  // it meets the pin triangle (pin 1 in front, 7/10 three rows back). Extend the drawn line along
+  // its end direction to that envelope, so hitting the outermost pins looks like it.
+  const rackHit = (() => {
+    if (path.length < 2) return null;
+    const a = path[path.length - 2];
+    const b = path[path.length - 1];
+    const dDist = distanceOf(b) - distanceOf(a);
+    const slope = dDist > 1e-6 ? (b.board - a.board) / dDist : 0;
+    const depthAt = (board: number) =>
+      Math.min(RACK_BACK_DEPTH_M, (Math.abs(board - 20) / RACK_HALF_SPREAD_BOARDS) * RACK_BACK_DEPTH_M);
+    let depth = depthAt(b.board);
+    depth = depthAt(b.board + slope * depth); // one refinement step along the slope
+    const board = Math.max(1, Math.min(BOARD_COUNT, b.board + slope * depth));
+    return { board, distanceM: LANE_LENGTH_M + depth };
+  })();
   const polyline =
     path.length >= 2
-      ? path
+      ? [...path, ...(rackHit ? [rackHit] : [])]
           .map((p) => {
             const q = pos(p.board, distanceOf(p));
             return `${q.left},${q.top}`;
@@ -241,7 +270,7 @@ function LaneView({
   const markers = [
     { key: 'launch', label: 'Start', point: curve?.launch, color: '#16a34a' },
     { key: 'apex', label: 'Hook', point: curve?.apex, color: '#f59e0b' },
-    { key: 'impact', label: 'Pins', point: curve?.impact, color: '#e11d48' },
+    { key: 'impact', label: 'Pins', point: rackHit ?? curve?.impact, color: '#e11d48' },
   ];
   const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
   const newDownSet = lastThrow?.fallenPins && lastThrow.fallenPins.length > 0 ? new Set(lastThrow.fallenPins) : null;
@@ -431,6 +460,8 @@ export default function LivePage() {
   const [correcting, setCorrecting] = useState(false);
   const [insertPins, setInsertPins] = useState(0);
   const [expandedThrowIndex, setExpandedThrowIndex] = useState<number | null>(null);
+  const [playerNameDrafts, setPlayerNameDrafts] = useState<string[]>([]);
+  const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
 
@@ -547,6 +578,16 @@ export default function LivePage() {
   const scoreboard = session?.scoreboard ?? null;
   const loggedThrows = scoreboard?.throws ?? [];
   const latestLoggedThrow = loggedThrows.at(-1);
+  const sessionNameKey = session?.playerNames.join('\u0000') ?? '';
+
+  useEffect(() => {
+    if (!session || editingNameIndex !== null) return;
+    setPlayerNameDrafts(
+      Array.from({ length: session.playerCount }, (_, index) =>
+        session.playerNames[index] ?? scoreboard?.players?.[index]?.name ?? `Spieler ${index + 1}`,
+      ),
+    );
+  }, [editingNameIndex, scoreboard?.players, session, sessionNameKey]);
 
   const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
 
@@ -625,13 +666,34 @@ export default function LivePage() {
     }
   };
 
+  const savePlayerNames = async (drafts = playerNameDrafts) => {
+    if (!session) return;
+    const count = session.playerCount;
+    const nextNames = Array.from({ length: count }, (_, index) => (drafts[index] ?? '').trim());
+    const currentNames = Array.from({ length: count }, (_, index) => (session.playerNames[index] ?? '').trim());
+    if (nextNames.every((name, index) => name === currentNames[index])) return;
+
+    setRosterBusy(true);
+    setError(null);
+    try {
+      const updated = await setTrackingPlayers(session.sessionId, count, nextNames);
+      setSession(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Spielernamen konnten nicht gespeichert werden.');
+      setPlayerNameDrafts(currentNames);
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
   const changePlayerCount = async (delta: number) => {
     if (!session) return;
     const next = Math.max(1, Math.min(8, session.playerCount + delta));
     if (next === session.playerCount) return;
+    const nextNames = Array.from({ length: next }, (_, index) => playerNameDrafts[index] ?? session.playerNames[index] ?? '');
     setRosterBusy(true);
     try {
-      const updated = await setTrackingPlayers(session.sessionId, next);
+      const updated = await setTrackingPlayers(session.sessionId, next, nextNames);
       setSession(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spieleranzahl konnte nicht geändert werden.');
@@ -884,7 +946,7 @@ export default function LivePage() {
         <section className="soft-card p-4 sm:p-6">
           <div className="flex items-center justify-between">
             <p className="eyebrow">Score</p>
-            <span className="text-xs font-bold text-lane-500">{scoreboard?.throwCount ?? 0} Würfe erfasst</span>
+            <span className="text-xs font-bold text-lane-500">{scoreboard?.throwCount ?? 0} Würfe erfasst · Namen antippen zum Bearbeiten</span>
           </div>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full border-collapse text-xs">
@@ -902,7 +964,39 @@ export default function LivePage() {
                   <tr key={player.index} className={player.isCurrent ? 'bg-amber-100/50' : ''}>
                     <td className="border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
                       {player.isCurrent && <span className="mr-1 text-coral">▸</span>}
-                      {player.name}
+                      <input
+                        type="text"
+                        value={playerNameDrafts[player.index] ?? player.name}
+                        onFocus={() => setEditingNameIndex(player.index)}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setPlayerNameDrafts((current) => {
+                            const next = [...current];
+                            next[player.index] = value;
+                            return next;
+                          });
+                        }}
+                        onBlur={() => {
+                          setEditingNameIndex(null);
+                          savePlayerNames();
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.currentTarget.blur();
+                          }
+                          if (event.key === 'Escape') {
+                            setPlayerNameDrafts(
+                              Array.from({ length: session?.playerCount ?? 1 }, (_, index) =>
+                                session?.playerNames[index] ?? scoreboard?.players?.[index]?.name ?? `Spieler ${index + 1}`,
+                              ),
+                            );
+                            event.currentTarget.blur();
+                          }
+                        }}
+                        disabled={rosterBusy || !session}
+                        className="min-w-[7rem] rounded-md border border-transparent bg-transparent px-1 py-0.5 font-black text-lane-900 outline-none transition focus:border-coral focus:bg-white focus:ring-2 focus:ring-coral/20 disabled:opacity-60"
+                        aria-label={`Name für Spieler ${player.index + 1}`}
+                      />
                     </td>
                     {Array.from({ length: 10 }, (_, fIdx) => {
                       const frame = player.frames[fIdx];

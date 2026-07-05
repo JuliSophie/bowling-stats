@@ -469,9 +469,10 @@ async def set_players(session_id: str, payload: TrackingPlayersUpdate) -> Tracki
     session = await _get_session(session_id)
     session.touch()
     session.player_count = payload.player_count
-    names = [name.strip() for name in payload.player_names if name.strip()]
-    if names:
-        session.player_names = names
+    if payload.player_names:
+        # Preserve roster positions: an empty name at index N should fall back to "Spieler N",
+        # not shift later players left.
+        session.player_names = [name.strip() for name in payload.player_names[: payload.player_count]]
     # The score table is rebuilt from the throw log on snapshot(), so just rebroadcast it.
     await _append_and_broadcast(
         session,
