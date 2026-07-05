@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -150,10 +151,22 @@ def rename_player(payload: PlayerRenameRequest, db: Session = Depends(get_db)) -
     if not target_player.avatar_url and current_player.avatar_url:
         target_player.avatar_url = current_player.avatar_url
 
-    for score in db.scalars(select(Score).where(Score.player_id == current_player.id)).all():
-        score.player_id = target_player.id
-
-    db.delete(current_player)
-    db.commit()
+    try:
+        # Bulk-update the foreign keys before deleting the duplicate player. Updating the
+        # Score objects through the relationship and then deleting the player can make
+        # SQLAlchemy try to NULL out scores.player_id during flush, which violates the
+        # non-null FK and surfaces as a 500 only for merge operations.
+        db.execute(
+            update(Score)
+            .where(Score.player_id == current_player.id)
+            .values(player_id=target_player.id)
+            .execution_options(synchronize_session=False)
+        )
+        db.flush()
+        db.delete(current_player)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Spieler konnten nicht zusammengeführt werden.") from exc
 
     return PlayerRenameResponse(previous_name=previous_name, player_name=target_player.name, merged=True)
