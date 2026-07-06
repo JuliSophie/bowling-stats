@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import Navigation from '@/components/navigation';
+import SplitPatternPopover from '@/components/split-pattern-popover';
 import Card from '@/components/ui/card';
 import {
   type ThrowCorrectionAction,
@@ -78,9 +79,8 @@ function pinDeckPosition(pin: (typeof PIN_LAYOUT)[number], horizontal: boolean) 
 
 function pinClass(state: PinState, interactive = false) {
   const base = interactive ? 'transition hover:scale-110 focus:outline-none focus:ring-2 focus:ring-coral/60' : '';
-  if (state === 'new-down') return `${base} border-red-700 bg-red-500 text-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)]`;
-  if (state === 'already-down') return `${base} border-lane-950 bg-lane-950 text-lane-100 shadow`;
-  return `${base} border-white bg-white text-lane-950 shadow`;
+  if (state === 'new-down' || state === 'already-down') return `${base} border-2 border-[var(--split-pin-color)] bg-transparent text-transparent opacity-95 shadow`;
+  return `${base} border-2 border-[var(--split-pin-color)] bg-[var(--split-pin-color)] text-lane-950 shadow`;
 }
 
 function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['payload'] & ThrowAnalysis {
@@ -97,6 +97,52 @@ function formatLocalDate(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function splitMetadata(fallenPins: number[][] | undefined) {
+  const firstBallFallen = new Set(fallenPins?.[0] ?? []);
+  if (!firstBallFallen.has(1)) return null;
+
+  const standingPins = PIN_LAYOUT.map((pin) => pin.pin).filter((pin) => !firstBallFallen.has(pin)).sort((a, b) => a - b);
+  if (standingPins.length < 2) return null;
+
+  const pinByNumber = new Map(PIN_LAYOUT.map((pin) => [pin.pin, pin]));
+  const seen = new Set<number>();
+  let groups = 0;
+
+  const adjacentPins = (pinNumber: number) => {
+    const pin = pinByNumber.get(pinNumber);
+    if (!pin) return [];
+    return standingPins.filter((candidateNumber) => {
+      if (candidateNumber === pinNumber) return false;
+      const candidate = pinByNumber.get(candidateNumber);
+      if (!candidate) return false;
+      const dx = candidate.offset - pin.offset;
+      const dy = (candidate.row - pin.row) * 0.866;
+      return Math.hypot(dx, dy) <= 1.05;
+    });
+  };
+
+  for (const pin of standingPins) {
+    if (seen.has(pin)) continue;
+    groups += 1;
+    const queue = [pin];
+    seen.add(pin);
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const next of adjacentPins(current)) {
+        if (!seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+    }
+  }
+
+  if (groups <= 1) return null;
+  const secondBallFallen = new Set(fallenPins?.[1] ?? []);
+  const converted = standingPins.every((pin) => secondBallFallen.has(pin));
+  return { isSplit: true, converted, standingPins };
 }
 
 // Backend now serializes camelCase, but stay defensive against the snake_case spelling.
@@ -356,7 +402,7 @@ function LaneView({
             : index < knockedPins
               ? 'new-down'
               : 'standing';
-          const pinClassName = `absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 sm:h-4 sm:w-4 ${pinClass(state, canEditPins)}`;
+          const visualPinClassName = `h-3.5 w-3.5 rounded-full border-2 sm:h-4 sm:w-4 ${pinClass(state, canEditPins)}`;
           if (onPinPatternChange) {
             return (
               <button
@@ -364,18 +410,20 @@ function LaneView({
                 type="button"
                 onClick={() => togglePin(pin.pin)}
                 disabled={pinPatternDisabled}
-                className={pinClassName}
+                className="absolute grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center p-0 sm:h-12 sm:w-12"
                 style={{ left: `${x}%`, top: `${y}%` }}
                 aria-pressed={newDownSet?.has(pin.pin) ?? false}
                 aria-label={`Pin ${pin.pin} ${newDownSet?.has(pin.pin) ? 'entfernen' : 'als gefallen markieren'}`}
                 title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
-              />
+              >
+                <span className={`pointer-events-none ${visualPinClassName}`} />
+              </button>
             );
           }
           return (
             <span
               key={pin.pin}
-              className={pinClassName}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 ${visualPinClassName}`}
               style={{ left: `${x}%`, top: `${y}%` }}
               title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
             />
@@ -682,15 +730,20 @@ export default function LivePage() {
         .map((player) => ({
           player_name: player.name,
           total_score: player.total,
-          frames: player.frames.map((frame, fIdx) => ({
-            throw1: ballGlyph(frame, 0),
-            throw2: ballGlyph(frame, 1),
-            throw3: fIdx === 9 ? ballGlyph(frame, 2) : '',
-            cumulative: frame.cumulative != null ? String(frame.cumulative) : '',
-            // Per-ball fallen pins come from the scoreboard (the backend keeps them aligned to the
-            // log, so they stay correct after manual corrections), for player pin stats.
-            fallenPins: frame.fallenPins ?? [],
-          })),
+          frames: player.frames.map((frame, fIdx) => {
+            const fallenPins = frame.fallenPins ?? [];
+            const split = splitMetadata(fallenPins);
+            return {
+              throw1: ballGlyph(frame, 0),
+              throw2: ballGlyph(frame, 1),
+              throw3: fIdx === 9 ? ballGlyph(frame, 2) : '',
+              cumulative: frame.cumulative != null ? String(frame.cumulative) : '',
+              // Per-ball fallen pins come from the scoreboard (the backend keeps them aligned to the
+              // log, so they stay correct after manual corrections), for player pin stats.
+              fallenPins,
+              ...(split ? { split } : {}),
+            };
+          }),
         }));
       if (!scores.length) {
         setError('Noch keine Würfe zum Speichern.');
@@ -780,7 +833,6 @@ export default function LivePage() {
 
   const metricCards = (
     <>
-      <Card title="Speed" header={lastThrow ? formatNumber(lastThrow.ballSpeedKmh) : '–'} headerSize="lg" padding="sm" />
       <Card title="Pins" header={lastThrow?.pinsKnockedDown != null ? String(lastThrow.pinsKnockedDown) : '–'} headerSize="lg" padding="sm" />
       <Card title="Board" header={lastThrow ? formatNumber(lastThrow.impactBoard) : '–'} headerSize="lg" padding="sm" />
       <Card title="Hook" header={lastThrow?.isCurve ? formatNumber(lastThrow.curveBoards) : '0.0'} headerSize="lg" padding="sm" />
@@ -799,7 +851,7 @@ export default function LivePage() {
         <p className="eyebrow">Wurf-Historie</p>
         <span className="text-xs font-bold text-lane-500">Eintrag anklicken, um Pins zu bearbeiten</span>
       </div>
-      <div className="mt-3 divide-y divide-lane-100 rounded-2xl border border-lane-200 bg-white/70">
+      <div className="mt-3 divide-y divide-[var(--border)] rounded-2xl border" style={{ background: 'var(--surface-soft)', borderColor: 'var(--border)' }}>
         {[...loggedThrows].reverse().map((throwItem) => {
           const expanded = expandedThrowIndex === throwItem.index;
           return (
@@ -807,7 +859,7 @@ export default function LivePage() {
               <button
                 type="button"
                 onClick={() => setExpandedThrowIndex(expanded ? null : throwItem.index)}
-                className="grid w-full grid-cols-[4.5rem_1fr_5rem_5rem_2rem] items-center gap-3 px-3 py-2 text-left transition hover:bg-lane-50/80"
+                className="grid w-full grid-cols-[4.5rem_1fr_5rem_5rem_2rem] items-center gap-3 px-3 py-2 text-left transition"
                 aria-expanded={expanded}
               >
                 <span className="font-black tabular-nums text-lane-700">#{throwItem.index + 1}</span>
@@ -829,7 +881,7 @@ export default function LivePage() {
                 <span className="justify-self-end text-lg font-black text-lane-500">{expanded ? '−' : '+'}</span>
               </button>
               {expanded && (
-                <div className="grid gap-4 border-t border-lane-100 bg-lane-50/60 px-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                <div className="grid gap-4 border-t px-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
                   <PinPatternDeck
                     value={throwItem.fallenPins ?? []}
                     alreadyDown={throwItem.alreadyDownPins ?? []}
@@ -840,7 +892,7 @@ export default function LivePage() {
                     <p className="text-sm font-black text-lane-900">Pin-Muster bearbeiten</p>
                     <PinLegend />
                     <p className="text-xs font-bold text-lane-500">
-                      Rot zählt für diesen Wurf. Weiß war in diesem Rack bereits unten und wird nicht erneut gezählt.
+                      Rot zählt für diesen Wurf. Weiß steht noch. Nur Rahmen bedeutet: bereits unten.
                     </p>
                   </div>
                   <button
@@ -1027,8 +1079,8 @@ export default function LivePage() {
               </thead>
               <tbody>
                 {(scoreboard?.players ?? []).map((player) => (
-                  <tr key={player.index} className={player.isCurrent ? 'bg-amber-100/50' : ''}>
-                    <td className="border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
+                  <tr key={player.index} className={player.isCurrent ? 'live-current-player-row' : ''}>
+                    <td className="h-10 border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
                       {player.isCurrent && <span className="mr-1 text-coral">▸</span>}
                       <input
                         type="text"
@@ -1066,19 +1118,25 @@ export default function LivePage() {
                     </td>
                     {Array.from({ length: 10 }, (_, fIdx) => {
                       const frame = player.frames[fIdx];
+                      const split = splitMetadata(frame?.fallenPins);
                       const bgClass = frame?.isStrike ? 'bg-amber-200/60' : frame?.isSpare ? 'bg-slate-200/60' : '';
                       return (
-                        <td key={fIdx} className={`border border-lane-200 px-0 py-0 ${bgClass}`}>
-                          <div className="flex min-h-[1.1rem] border-b border-lane-100 text-[0.65rem]">
-                            <span className="w-1/2 border-r border-lane-100 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 0) : ''}</span>
-                            <span className="w-1/2 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 1) : ''}</span>
-                            {fIdx === 9 && <span className="w-1/2 border-l border-lane-100 px-1 py-0.5 text-center">{frame ? ballGlyph(frame, 2) : ''}</span>}
+                        <td key={fIdx} className={`h-10 border border-lane-200 px-0 py-0 align-top ${bgClass}`}>
+                          <div className="relative flex h-5 border-b border-lane-100 text-[0.65rem] leading-5">
+                            <span className="relative h-full w-1/2 border-r border-lane-100 px-1 text-center">
+                              {frame ? ballGlyph(frame, 0) : ''}
+                              {split && (
+                                <SplitPatternPopover standingPins={split.standingPins} converted={split.converted} />
+                              )}
+                            </span>
+                            <span className="h-full w-1/2 px-1 text-center">{frame ? ballGlyph(frame, 1) : ''}</span>
+                            {fIdx === 9 && <span className="h-full w-1/2 border-l border-lane-100 px-1 text-center">{frame ? ballGlyph(frame, 2) : ''}</span>}
                           </div>
-                          <div className="px-1 py-0.5 text-center text-lane-600">{frame?.cumulative ?? ''}</div>
+                          <div className="h-5 px-1 text-center text-lane-600 leading-5">{frame?.cumulative ?? ''}</div>
                         </td>
                       );
                     })}
-                    <td className="border border-lane-200 px-2 py-1 text-center font-black text-lane-900">{player.total}</td>
+                    <td className="h-10 border border-lane-200 px-2 py-1 text-center font-black text-lane-900">{player.total}</td>
                   </tr>
                 ))}
                 {!scoreboard?.players?.length && (

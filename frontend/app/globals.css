@@ -9,6 +9,7 @@
   --surface: rgba(255, 250, 241, 0.76);
   --surface-strong: rgba(255, 252, 247, 0.9);
   --surface-soft: rgba(255, 249, 239, 0.58);
+  --popover-bg: #fffaf1;
   --border: rgba(111, 67, 30, 0.13);
   --card-shadow: 0 16px 46px rgba(21, 12, 5, 0.12);
   --page-bg:
@@ -31,6 +32,8 @@
   --lane-path: #1e1b4b;
   --lane-foul: rgba(180, 35, 24, 0.65);
   --lane-pin: #fbf3e4;
+  --split-pin-color: #ffffff;
+  --current-player-bg: rgba(254, 243, 199, 0.50);
 }
 
 :root[data-theme="dark"] {
@@ -39,6 +42,7 @@
   --surface: rgba(35, 21, 11, 0.72);
   --surface-strong: rgba(43, 26, 14, 0.88);
   --surface-soft: rgba(255, 255, 255, 0.07);
+  --popover-bg: #2b1a0e;
   --border: rgba(255, 226, 190, 0.13);
   --card-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
   --page-bg:
@@ -61,6 +65,8 @@
   --lane-path: #fbbf24;
   --lane-foul: rgba(220, 70, 55, 0.55);
   --lane-pin: #ece0cb;
+  --split-pin-color: #fbbf24;
+  --current-player-bg: rgba(251, 191, 36, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -70,6 +76,7 @@
     --surface: rgba(35, 21, 11, 0.72);
     --surface-strong: rgba(43, 26, 14, 0.88);
     --surface-soft: rgba(255, 255, 255, 0.07);
+    --popover-bg: #2b1a0e;
     --border: rgba(255, 226, 190, 0.13);
     --card-shadow: 0 18px 54px rgba(0, 0, 0, 0.28);
     --page-bg:
@@ -91,6 +98,8 @@
     --lane-path: #fbbf24;
     --lane-foul: rgba(220, 70, 55, 0.55);
     --lane-pin: #ece0cb;
+    --split-pin-color: #fbbf24;
+    --current-player-bg: rgba(251, 191, 36, 0.12);
   }
 }
 
@@ -368,6 +377,10 @@ select {
   .leaderboard-chip {
     @apply rounded-full py-1 text-xs font-bold;
     color: var(--muted);
+  }
+
+  .live-current-player-row {
+    background: var(--current-player-bg);
   }
 }
 

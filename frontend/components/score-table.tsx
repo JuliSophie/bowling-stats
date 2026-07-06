@@ -1,3 +1,6 @@
+'use client';
+
+import SplitPatternPopover from '@/components/split-pattern-popover';
 import { getFrameType } from '@/lib/frame-utils';
 import type { FrameData, GameRead } from '@/types';
 
@@ -19,24 +22,29 @@ export default function ScoreTable({ game }: { game: GameRead }) {
             const frames = score.frames as FrameData[];
             return (
               <tr key={score.player_name}>
-                <td className="border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">{score.player_name}</td>
+                <td className="h-10 border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">{score.player_name}</td>
                 {Array.from({ length: 10 }, (_, fIdx) => {
                   const frame = frames[fIdx];
-                  if (!frame) return <td key={fIdx} className="border border-lane-200" />;
+                  if (!frame) return <td key={fIdx} className="h-10 border border-lane-200" />;
                   const ft = getFrameType(frame);
                   const bgClass = ft === 'strike' ? 'bg-amber-200/60' : ft === 'spare' ? 'bg-slate-200/60' : '';
                   return (
-                    <td key={fIdx} className={`border border-lane-200 px-0 py-0 ${bgClass}`}>
-                      <div className="flex border-b border-lane-100">
-                        <span className="w-1/2 border-r border-lane-100 px-1 py-0.5 text-center">{frame.throw1}</span>
-                        <span className="w-1/2 px-1 py-0.5 text-center">{frame.throw2}</span>
-                        {fIdx === 9 && <span className="w-1/2 border-l border-lane-100 px-1 py-0.5 text-center">{frame.throw3}</span>}
+                    <td key={fIdx} className={`h-10 border border-lane-200 px-0 py-0 align-top ${bgClass}`}>
+                      <div className="flex h-5 border-b border-lane-100 text-[0.65rem] leading-5">
+                        <span className="relative h-full w-1/2 border-r border-lane-100 px-1 text-center">
+                          {frame.throw1}
+                          {frame.split?.isSplit && (
+                            <SplitPatternPopover standingPins={frame.split.standingPins} converted={frame.split.converted} />
+                          )}
+                        </span>
+                        <span className="h-full w-1/2 px-1 text-center">{frame.throw2}</span>
+                        {fIdx === 9 && <span className="h-full w-1/2 border-l border-lane-100 px-1 text-center">{frame.throw3}</span>}
                       </div>
-                      <div className="px-1 py-0.5 text-center text-lane-600">{frame.cumulative}</div>
+                      <div className="h-5 px-1 text-center text-lane-600 leading-5">{frame.cumulative}</div>
                     </td>
                   );
                 })}
-                <td className="border border-lane-200 px-2 py-1 text-center font-semibold text-lane-900">{score.total_score}</td>
+                <td className="h-10 border border-lane-200 px-2 py-1 text-center font-semibold text-lane-900">{score.total_score}</td>
               </tr>
             );
           })}

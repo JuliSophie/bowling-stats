@@ -34,6 +34,11 @@ export type FrameData = {
   cumulative: string;
   // Per-ball fallen pin numbers (1..10), index 0 = first ball. Present for live-tracked games.
   fallenPins?: number[][];
+  split?: {
+    isSplit: boolean;
+    converted: boolean;
+    standingPins: number[];
+  };
 };
 
 export type PlayerData = {
