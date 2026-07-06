@@ -9,6 +9,7 @@ import {
   correctTrackingThrow,
   createGame,
   createTrackingSession,
+  fetchGames,
   fetchTrackingEvents,
   fetchTrackingSession,
   getTrackingWebSocketUrl,
@@ -18,6 +19,7 @@ import {
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
 
 const DEFAULT_SESSION_ID = 'demo-session';
+const DEFAULT_GAME_LOCATION = 'Squash House';
 const MAX_VISIBLE_EVENTS = 30;
 const LANE_LENGTH_M = 18.29;
 const BOARD_COUNT = 39;
@@ -77,8 +79,8 @@ function pinDeckPosition(pin: (typeof PIN_LAYOUT)[number], horizontal: boolean) 
 function pinClass(state: PinState, interactive = false) {
   const base = interactive ? 'transition hover:scale-110 focus:outline-none focus:ring-2 focus:ring-coral/60' : '';
   if (state === 'new-down') return `${base} border-red-700 bg-red-500 text-white shadow-[0_0_0_2px_rgba(239,68,68,0.25)]`;
-  if (state === 'already-down') return `${base} border-white bg-white text-lane-950 shadow`;
-  return `${base} border-lane-700 bg-lane-950/80 text-lane-300 opacity-70`;
+  if (state === 'already-down') return `${base} border-lane-950 bg-lane-950 text-lane-100 shadow`;
+  return `${base} border-white bg-white text-lane-950 shadow`;
 }
 
 function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['payload'] & ThrowAnalysis {
@@ -88,6 +90,13 @@ function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['p
 function formatNumber(value: number | null | undefined, suffix = '') {
   if (value === null || value === undefined || Number.isNaN(value)) return '–';
   return `${value.toFixed(1)}${suffix}`;
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 // Backend now serializes camelCase, but stay defensive against the snake_case spelling.
@@ -207,9 +216,17 @@ function ballGlyph(frame: TrackingPlayerCard['frames'][number], ballIndex: numbe
 function LaneView({
   lastThrow,
   orientation = 'vertical',
+  pinPattern,
+  alreadyDownPins = [],
+  onPinPatternChange,
+  pinPatternDisabled,
 }: {
   lastThrow: ThrowAnalysis | undefined;
   orientation?: 'vertical' | 'horizontal';
+  pinPattern?: number[];
+  alreadyDownPins?: number[];
+  onPinPatternChange?: (next: number[]) => void;
+  pinPatternDisabled?: boolean;
 }) {
   const horizontal = orientation === 'horizontal';
   // Distance from the foul line to the pin header, as a percentage of the lane's long axis.
@@ -290,10 +307,19 @@ function LaneView({
     { key: 'impact', label: 'Pins', point: rackHit ?? curve?.impact, color: '#e11d48' },
   ];
   const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
-  const newDownSet = lastThrow?.fallenPins && lastThrow.fallenPins.length > 0 ? new Set(lastThrow.fallenPins) : null;
-  const alreadyDownSet = new Set(lastThrow?.alreadyDownPins ?? []);
+  const canEditPins = Boolean(onPinPatternChange) && !pinPatternDisabled;
+  const shownFallenPins = pinPattern ?? lastThrow?.fallenPins ?? null;
+  const newDownSet = shownFallenPins ? new Set(shownFallenPins) : null;
+  const alreadyDownSet = new Set(alreadyDownPins.length ? alreadyDownPins : lastThrow?.alreadyDownPins ?? []);
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
+  const togglePin = (pin: number) => {
+    if (!onPinPatternChange || pinPatternDisabled) return;
+    const selected = new Set(pinPattern ?? []);
+    if (selected.has(pin)) selected.delete(pin);
+    else selected.add(pin);
+    onPinPatternChange([...selected].sort((a, b) => a - b));
+  };
 
   const containerClass = horizontal
     ? 'relative h-[170px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-l from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner xl:h-[200px]'
@@ -330,10 +356,26 @@ function LaneView({
             : index < knockedPins
               ? 'new-down'
               : 'standing';
+          const pinClassName = `absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 sm:h-4 sm:w-4 ${pinClass(state, canEditPins)}`;
+          if (onPinPatternChange) {
+            return (
+              <button
+                key={pin.pin}
+                type="button"
+                onClick={() => togglePin(pin.pin)}
+                disabled={pinPatternDisabled}
+                className={pinClassName}
+                style={{ left: `${x}%`, top: `${y}%` }}
+                aria-pressed={newDownSet?.has(pin.pin) ?? false}
+                aria-label={`Pin ${pin.pin} ${newDownSet?.has(pin.pin) ? 'entfernen' : 'als gefallen markieren'}`}
+                title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
+              />
+            );
+          }
           return (
             <span
               key={pin.pin}
-              className={`absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 sm:h-4 sm:w-4 ${pinClass(state)}`}
+              className={pinClassName}
               style={{ left: `${x}%`, top: `${y}%` }}
               title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
             />
@@ -370,7 +412,7 @@ function LaneView({
         </div>
       )}
 
-      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         {/* board guide lines */}
         {boardGuides.map((b) => {
           const a = pos(b, 0);
@@ -628,7 +670,13 @@ export default function LivePage() {
     setSaveMsg(null);
     setError(null);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = formatLocalDate(new Date());
+      const defaultLocation = await fetchGames()
+        .then((games) => games.find((game) => game.played_at === today)?.location?.trim() || DEFAULT_GAME_LOCATION)
+        .catch(() => DEFAULT_GAME_LOCATION);
+      const locationInput = window.prompt('Wo wurde gespielt?', defaultLocation);
+      if (locationInput === null) return;
+      const location = locationInput.trim() || DEFAULT_GAME_LOCATION;
       const scores = scoreboard.players
         .filter((player) => player.frames.length > 0)
         .map((player) => ({
@@ -648,8 +696,8 @@ export default function LivePage() {
         setError('Noch keine Würfe zum Speichern.');
         return;
       }
-      await createGame({ played_at: today, location: session.location ?? 'Live-Tracking', mode: '10-Pin', scores });
-      setSaveMsg('Spiel gespeichert.');
+      await createGame({ played_at: today, location, mode: '10-Pin', scores });
+      setSaveMsg(`Spiel gespeichert: ${location}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spiel konnte nicht gespeichert werden.');
     } finally {
@@ -878,7 +926,13 @@ export default function LivePage() {
 
         {/* Narrow / mobile: lane (curve) on the left, live data on the right. */}
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">
-          <LaneView lastThrow={lastThrow} />
+          <LaneView
+            lastThrow={lastThrow}
+            pinPattern={latestLoggedThrow?.fallenPins ?? []}
+            alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
+            onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
+            pinPatternDisabled={correcting || !latestLoggedThrow}
+          />
 
           <div className="flex flex-col gap-3">
             {aktuellCard}
@@ -894,7 +948,14 @@ export default function LivePage() {
             <div className="grid grid-cols-3 gap-3 xl:grid-cols-6">{metricCards}</div>
           </div>
           {lowConfidenceBadge}
-          <LaneView lastThrow={lastThrow} orientation="horizontal" />
+          <LaneView
+            lastThrow={lastThrow}
+            orientation="horizontal"
+            pinPattern={latestLoggedThrow?.fallenPins ?? []}
+            alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
+            onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
+            pinPatternDisabled={correcting || !latestLoggedThrow}
+          />
         </section>
 
         {/* Manual throw-log fix-ups for when the camera missed or mis-scored a throw. */}
@@ -906,19 +967,6 @@ export default function LivePage() {
             </span>
           </div>
           <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-lane-600">Pin-Muster letzter Wurf</span>
-              <PinPatternDeck
-                value={latestLoggedThrow?.fallenPins ?? []}
-                alreadyDown={latestLoggedThrow?.alreadyDownPins ?? []}
-                onChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
-                disabled={correcting || !latestLoggedThrow}
-              />
-              <span className="text-[0.68rem] font-bold text-lane-500">
-                {latestLoggedThrow ? `${latestLoggedThrow.pinsKnockedDown ?? 0} Pins · #${latestLoggedThrow.index + 1}` : 'Noch kein Wurf'}
-              </span>
-              <PinLegend />
-            </div>
             <div className="flex flex-col gap-1">
               <span className="text-xs font-bold text-lane-600">Fehlenden Wurf einfügen</span>
               <div className="flex items-center gap-2">
@@ -953,6 +1001,7 @@ export default function LivePage() {
             </button>
           </div>
           <p className="mt-2 text-xs text-lane-500">
+            Pin-Muster des letzten Wurfs direkt oben auf der Bahn antippen, um es zu korrigieren.{' '}
             Eigener Wurf nicht erkannt? „Anhängen“ trägt ihn nach. Fiel erst durch den nächsten Wurf auf, dass die Zuordnung
             verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
             „Letzten Wurf löschen“.
