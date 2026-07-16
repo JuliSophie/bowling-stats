@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import Navigation from '@/components/navigation';
+import LaneCalibrationPanel from '@/components/lane-calibration-panel';
 import SplitPatternPopover from '@/components/split-pattern-popover';
 import Card from '@/components/ui/card';
 import {
@@ -18,6 +19,7 @@ import {
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
+import { isLaneControlMessage, type LaneControlMessage } from '@/lib/lane-calibration';
 
 const DEFAULT_SESSION_ID = 'demo-session';
 const DEFAULT_GAME_LOCATION = 'Squash House';
@@ -560,6 +562,7 @@ export default function LivePage() {
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [laneControlMessage, setLaneControlMessage] = useState<LaneControlMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -627,6 +630,11 @@ export default function LivePage() {
       if (event.payload.session) {
         setSession(event.payload.session);
       }
+      if (event.type === 'companion_connected') {
+        setSession((current) => current ? { ...current, companionConnected: true } : current);
+      } else if (event.type === 'companion_disconnected') {
+        setSession((current) => current ? { ...current, companionConnected: false } : current);
+      }
 
       setEvents((current) => [...current, event].slice(-MAX_VISIBLE_EVENTS));
     };
@@ -647,13 +655,19 @@ export default function LivePage() {
 
         socket.onopen = () => setConnectionState('open');
         socket.onmessage = (message) => {
-          const event = JSON.parse(message.data) as LiveEvent;
+          const parsed: unknown = JSON.parse(message.data);
+          if (isLaneControlMessage(parsed)) {
+            setLaneControlMessage(parsed);
+            return;
+          }
+          const event = parsed as LiveEvent;
           if (event.type === 'throw_analyzed') playThrowBing();
           applyEvent(event);
         };
         socket.onerror = () => setError('Live-Verbindung konnte nicht stabil aufgebaut werden.');
         socket.onclose = () => {
           setConnectionState('closed');
+          setLaneControlMessage(null);
           if (!cancelled) {
             reconnectTimer = setTimeout(openSocket, 2000);
           }
@@ -697,6 +711,11 @@ export default function LivePage() {
   }, [editingNameIndex, scoreboard?.players, session, sessionNameKey]);
 
   const connectionText = connectionState === 'open' ? 'Verbunden' : connectionState === 'connecting' ? 'Verbinde…' : 'Getrennt';
+  const sendLaneMessage = (message: string) => {
+    if (socketRef.current?.readyState !== WebSocket.OPEN) return false;
+    socketRef.current.send(message);
+    return true;
+  };
 
   const startNewGame = async () => {
     if (!session) return;
@@ -975,6 +994,14 @@ export default function LivePage() {
 
         {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
         {saveMsg && <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{saveMsg}</section>}
+
+        <LaneCalibrationPanel
+          sessionId={session?.sessionId ?? DEFAULT_SESSION_ID}
+          connected={connectionState === 'open'}
+          companionConnected={Boolean(session?.companionConnected)}
+          message={laneControlMessage}
+          send={sendLaneMessage}
+        />
 
         {/* Narrow / mobile: lane (curve) on the left, live data on the right. */}
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">

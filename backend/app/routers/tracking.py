@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import json
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,9 +27,23 @@ router = APIRouter(tags=["tracking"])
 
 DEFAULT_LIVE_SESSION_ID = "demo-session"
 MAX_EVENT_HISTORY = 200
+CALIBRATION_PROTOCOL_VERSION = 1
+MAX_CALIBRATION_MESSAGE_CHARS = 2_100_000
+MAX_CALIBRATION_JPEG_BYTES = 1_500_000
+MAX_CALIBRATION_IMAGE_EDGE = 2048
+MAX_CALIBRATION_IMAGE_PIXELS = 4_000_000
 # A session is dropped once it has gone this long without any activity (throws, roster
 # changes, or a live client connecting). Expiry is evaluated lazily on the next access.
 SESSION_TTL = timedelta(hours=10)
+CALIBRATION_REQUEST_TTL = timedelta(seconds=30)
+MAX_CALIBRATION_REQUESTS = 50
+
+
+@dataclass
+class CalibrationRequest:
+    requester: WebSocket
+    companion: WebSocket
+    created_at: datetime
 
 
 class LiveSession:
@@ -42,8 +60,10 @@ class LiveSession:
         # The score table is *derived* from this by replaying it through the scoring engine,
         # so changing the player count just re-runs the replay — no mutable game state to drift.
         self.throw_log: list[dict[str, Any]] = []
-        self.companion_connected = False
         self.live_clients: set[WebSocket] = set()
+        self.companion_clients: set[WebSocket] = set()
+        self.companion_replacement_in_progress = False
+        self.calibration_requests: dict[str, CalibrationRequest] = {}
         self.events: list[LiveEvent] = []
         self.seen_client_event_ids: set[str] = set()
 
@@ -244,7 +264,7 @@ class LiveSession:
             currentPlayerIndex=current_index,
             currentFrame=board.current_frame,
             currentThrow=board.current_throw,
-            companionConnected=self.companion_connected,
+            companionConnected=bool(self.companion_clients),
             liveClientCount=len(self.live_clients),
             scoreboard=scoreboard_model,
             location=self.location,
@@ -302,7 +322,7 @@ async def _append_and_broadcast(session: LiveSession, event: LiveEvent) -> None:
     for websocket in session.live_clients:
         try:
             await websocket.send_json(event_payload)
-        except RuntimeError:
+        except (WebSocketDisconnect, RuntimeError):
             stale_clients.append(websocket)
 
     for websocket in stale_clients:
@@ -384,18 +404,6 @@ def _manual_throw(session: LiveSession, pins: int) -> dict[str, Any]:
     }
 
 
-async def _mark_companion_connected(session: LiveSession) -> None:
-    """Flag the companion online, emitting the event only on a real disconnected->connected flip.
-
-    The companion has no persistent connection — it POSTs one throw at a time — so without this
-    guard every throw would spam a fresh "companion_connected" into the event stream.
-    """
-    if session.companion_connected:
-        return
-    session.companion_connected = True
-    await _append_and_broadcast(session, _new_event("companion_connected", {"sessionId": session.session_id}))
-
-
 async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> LiveEvent:
     session.touch()
     if observation.client_event_id and observation.client_event_id in session.seen_client_event_ids:
@@ -460,8 +468,7 @@ async def get_tracking_session(session_id: str) -> TrackingSessionRead:
 @router.post("/tracking/sessions/{session_id}/join-companion")
 async def join_companion(session_id: str) -> dict[str, bool]:
     session = await _get_session(session_id)
-    await _mark_companion_connected(session)
-    return {"connected": True}
+    return {"connected": bool(session.companion_clients)}
 
 
 @router.post("/tracking/sessions/{session_id}/players", response_model=TrackingSessionRead)
@@ -568,7 +575,6 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
 @router.post("/tracking/mock-throws", response_model=LiveEvent, status_code=status.HTTP_202_ACCEPTED)
 async def ingest_mock_throw(observation: ThrowObservation) -> LiveEvent:
     session = await _ensure_session(observation.session_id or DEFAULT_LIVE_SESSION_ID)
-    await _mark_companion_connected(session)
     return await _ingest_throw(session, observation)
 
 
@@ -596,7 +602,227 @@ async def tracking_websocket(websocket: WebSocket, session_id: str) -> None:
         )
         await _append_and_broadcast(session, _new_event("live_client_connected", {"liveClientCount": len(session.live_clients)}))
         while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
+            raw_message = await websocket.receive_text()
+            await _handle_browser_calibration_message(session, websocket, raw_message)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
         session.live_clients.discard(websocket)
+        for request_id, request in list(session.calibration_requests.items()):
+            if request.requester is websocket:
+                session.calibration_requests.pop(request_id, None)
         await _append_and_broadcast(session, _new_event("live_client_disconnected", {"liveClientCount": len(session.live_clients)}))
+
+
+def _lane_envelope(message_type: str, session_id: str, request_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "protocolVersion": CALIBRATION_PROTOCOL_VERSION,
+        "type": message_type,
+        "sessionId": session_id,
+        "requestId": request_id,
+        "payload": payload,
+    }
+
+
+def _parse_lane_message(raw_message: str, session_id: str) -> dict[str, Any]:
+    if len(raw_message) > MAX_CALIBRATION_MESSAGE_CHARS:
+        raise ValueError("Kalibrierungsnachricht ist zu groß.")
+    try:
+        message = json.loads(raw_message)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Ungültiges JSON.") from exc
+    if not isinstance(message, dict):
+        raise ValueError("Nachricht muss ein Objekt sein.")
+    if message.get("protocolVersion") != CALIBRATION_PROTOCOL_VERSION:
+        raise ValueError("Nicht unterstützte Protokollversion.")
+    if message.get("sessionId") != session_id:
+        raise ValueError("Session stimmt nicht mit dem WebSocket-Pfad überein.")
+    request_id = message.get("requestId")
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        raise ValueError("requestId fehlt oder ist ungültig.")
+    if not isinstance(message.get("payload"), dict):
+        raise ValueError("payload muss ein Objekt sein.")
+    return message
+
+
+def _validate_corners(corners: Any) -> None:
+    if not isinstance(corners, dict) or set(corners) != {"topLeft", "topRight", "bottomRight", "bottomLeft"}:
+        raise ValueError("Vier benannte Eckpunkte sind erforderlich.")
+    for point in corners.values():
+        if not isinstance(point, dict) or set(point) != {"x", "y"}:
+            raise ValueError("Jeder Eckpunkt benötigt x und y.")
+        if any(not isinstance(point[axis], (int, float)) or isinstance(point[axis], bool) or not 0 <= point[axis] <= 1 for axis in ("x", "y")):
+            raise ValueError("Eckpunkte müssen zwischen 0 und 1 liegen.")
+
+
+def _validate_browser_lane_message(message: dict[str, Any]) -> None:
+    message_type = message.get("type")
+    payload = message["payload"]
+    if message_type == "lane.screenshot.request":
+        if payload:
+            raise ValueError("Screenshot-Anfrage erwartet ein leeres payload.")
+        return
+    if message_type == "lane.quad.apply":
+        if not isinstance(payload.get("screenshotId"), str) or not payload["screenshotId"]:
+            raise ValueError("screenshotId fehlt.")
+        _validate_corners(payload.get("corners"))
+        return
+    raise ValueError("Diese Nachrichtenrichtung ist für Browser nicht erlaubt.")
+
+
+def _validate_companion_lane_message(message: dict[str, Any]) -> None:
+    message_type = message.get("type")
+    payload = message["payload"]
+    if message_type == "lane.screenshot":
+        if not isinstance(payload.get("screenshotId"), str) or not payload["screenshotId"]:
+            raise ValueError("screenshotId fehlt.")
+        image = payload.get("image")
+        if not isinstance(image, dict) or image.get("mimeType") != "image/jpeg":
+            raise ValueError("Nur JPEG-Screenshots werden akzeptiert.")
+        if any(not isinstance(image.get(key), int) or image[key] <= 0 for key in ("width", "height")):
+            raise ValueError("Bildabmessungen sind ungültig.")
+        if image["width"] > MAX_CALIBRATION_IMAGE_EDGE or image["height"] > MAX_CALIBRATION_IMAGE_EDGE or image["width"] * image["height"] > MAX_CALIBRATION_IMAGE_PIXELS:
+            raise ValueError("Bildabmessungen überschreiten das erlaubte Limit.")
+        if not isinstance(payload.get("reason"), str) or not payload["reason"]:
+            raise ValueError("Screenshot-Grund fehlt.")
+        if not isinstance(payload.get("capturedAt"), str) or not payload["capturedAt"]:
+            raise ValueError("Aufnahmezeit fehlt.")
+        encoded = image.get("jpegBase64")
+        if not isinstance(encoded, str) or len(encoded) > ((MAX_CALIBRATION_JPEG_BYTES + 2) // 3) * 4:
+            raise ValueError("Screenshot ist zu groß.")
+        try:
+            decoded_size = len(base64.b64decode(encoded, validate=True))
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Screenshot enthält ungültiges Base64.") from exc
+        if decoded_size > MAX_CALIBRATION_JPEG_BYTES:
+            raise ValueError("Screenshot ist zu groß.")
+        _validate_corners(payload.get("corners"))
+        return
+    if message_type == "lane.quad.applied":
+        if not isinstance(payload.get("screenshotId"), str) or not payload["screenshotId"]:
+            raise ValueError("screenshotId fehlt.")
+        return
+    if message_type == "lane.error":
+        if not isinstance(payload.get("message"), str) or not payload["message"]:
+            raise ValueError("Fehlermeldung fehlt.")
+        return
+    raise ValueError("Diese Nachrichtenrichtung ist für Companion nicht erlaubt.")
+
+
+async def _send_lane_error(websocket: WebSocket, session_id: str, request_id: str, message: str) -> None:
+    await websocket.send_json(_lane_envelope("lane.error", session_id, request_id or "invalid", {"message": message}))
+
+
+async def _relay_ephemeral(clients: set[WebSocket], message: dict[str, Any]) -> None:
+    stale_clients: list[WebSocket] = []
+    for client in clients.copy():
+        try:
+            await client.send_json(message)
+        except (WebSocketDisconnect, RuntimeError):
+            stale_clients.append(client)
+    for client in stale_clients:
+        clients.discard(client)
+
+
+async def _cleanup_calibration_requests(session: LiveSession) -> None:
+    cutoff = datetime.now(timezone.utc) - CALIBRATION_REQUEST_TTL
+    expired = [
+        (request_id, request)
+        for request_id, request in session.calibration_requests.items()
+        if request.created_at <= cutoff
+    ]
+    for request_id, request in expired:
+        session.calibration_requests.pop(request_id, None)
+        await _relay_ephemeral(
+            {request.requester},
+            _lane_envelope("lane.error", session.session_id, request_id, {"message": "Kalibrierungsanfrage ist abgelaufen."}),
+        )
+
+
+async def _remove_companion_requests(session: LiveSession, companion: WebSocket) -> None:
+    tied_requests = [
+        (request_id, request)
+        for request_id, request in session.calibration_requests.items()
+        if request.companion is companion
+    ]
+    for request_id, request in tied_requests:
+        session.calibration_requests.pop(request_id, None)
+        await _relay_ephemeral(
+            {request.requester},
+            _lane_envelope("lane.error", session.session_id, request_id, {"message": "Companion ist nicht verbunden."}),
+        )
+
+
+async def _handle_browser_calibration_message(session: LiveSession, websocket: WebSocket, raw_message: str) -> None:
+    request_id = "invalid"
+    try:
+        message = _parse_lane_message(raw_message, session.session_id)
+        request_id = message["requestId"]
+        _validate_browser_lane_message(message)
+        await _cleanup_calibration_requests(session)
+        companion = next(iter(session.companion_clients), None)
+        if companion is None:
+            raise ValueError("Companion ist nicht verbunden.")
+        if request_id in session.calibration_requests:
+            session.calibration_requests.pop(request_id, None)
+        if len(session.calibration_requests) >= MAX_CALIBRATION_REQUESTS:
+            raise ValueError("Zu viele offene Kalibrierungsanfragen.")
+        session.calibration_requests[request_id] = CalibrationRequest(
+            requester=websocket,
+            companion=companion,
+            created_at=datetime.now(timezone.utc),
+        )
+        await _relay_ephemeral({companion}, message)
+    except ValueError as exc:
+        session.calibration_requests.pop(request_id, None)
+        await _send_lane_error(websocket, session.session_id, request_id, str(exc))
+
+
+@router.websocket("/tracking/sessions/{session_id}/companion-ws")
+async def companion_tracking_websocket(websocket: WebSocket, session_id: str) -> None:
+    await websocket.accept()
+    session = await _ensure_session(session_id)
+    session.touch()
+    was_disconnected = not session.companion_clients
+    session.companion_replacement_in_progress = bool(session.companion_clients)
+    for older_companion in list(session.companion_clients):
+        session.companion_clients.discard(older_companion)
+        try:
+            await older_companion.close(1000, "Replaced by newer companion")
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+    session.companion_clients.add(websocket)
+    session.companion_replacement_in_progress = False
+    if was_disconnected:
+        await _append_and_broadcast(session, _new_event("companion_connected", {"sessionId": session.session_id}))
+    try:
+        while True:
+            raw_message = await websocket.receive_text()
+            request_id = "invalid"
+            try:
+                message = _parse_lane_message(raw_message, session.session_id)
+                request_id = message["requestId"]
+                _validate_companion_lane_message(message)
+                await _cleanup_calibration_requests(session)
+                request = session.calibration_requests.get(request_id)
+                target = request.requester if request is not None and request.companion is websocket else None
+                if message["type"] in {"lane.screenshot", "lane.error"}:
+                    if target is not None:
+                        session.calibration_requests.pop(request_id, None)
+                if target is not None:
+                    await _relay_ephemeral({target}, message)
+            except ValueError as exc:
+                error_message = _lane_envelope("lane.error", session.session_id, request_id, {"message": str(exc)})
+                request = session.calibration_requests.get(request_id)
+                target = request.requester if request is not None and request.companion is websocket else None
+                if target is not None:
+                    session.calibration_requests.pop(request_id, None)
+                if target is not None:
+                    await _relay_ephemeral({target}, error_message)
+    except (WebSocketDisconnect, RuntimeError):
+        pass
+    finally:
+        session.companion_clients.discard(websocket)
+        await _remove_companion_requests(session, websocket)
+        if not session.companion_clients and not session.companion_replacement_in_progress:
+            await _append_and_broadcast(session, _new_event("companion_disconnected", {"sessionId": session.session_id}))
