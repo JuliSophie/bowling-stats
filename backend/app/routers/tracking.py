@@ -28,8 +28,9 @@ router = APIRouter(tags=["tracking"])
 DEFAULT_LIVE_SESSION_ID = "demo-session"
 MAX_EVENT_HISTORY = 200
 CALIBRATION_PROTOCOL_VERSION = 1
-MAX_CALIBRATION_MESSAGE_CHARS = 2_100_000
+MAX_CALIBRATION_MESSAGE_CHARS = 2_800_000
 MAX_CALIBRATION_JPEG_BYTES = 1_500_000
+MAX_CALIBRATION_PIN_DECK_JPEG_BYTES = 450_000
 MAX_CALIBRATION_IMAGE_EDGE = 2048
 MAX_CALIBRATION_IMAGE_PIXELS = 4_000_000
 # A session is dropped once it has gone this long without any activity (throws, roster
@@ -697,6 +698,7 @@ def _validate_companion_lane_message(message: dict[str, Any]) -> None:
         if decoded_size > MAX_CALIBRATION_JPEG_BYTES:
             raise ValueError("Screenshot ist zu groß.")
         _validate_corners(payload.get("corners"))
+        _validate_lane_debug(payload.get("debug"))
         return
     if message_type == "lane.quad.applied":
         if not isinstance(payload.get("screenshotId"), str) or not payload["screenshotId"]:
@@ -707,6 +709,46 @@ def _validate_companion_lane_message(message: dict[str, Any]) -> None:
             raise ValueError("Fehlermeldung fehlt.")
         return
     raise ValueError("Diese Nachrichtenrichtung ist für Companion nicht erlaubt.")
+
+
+def _validate_lane_debug(debug: Any) -> None:
+    if debug is None:
+        return
+    if not isinstance(debug, dict):
+        raise ValueError("Debug-Metadaten sind ungültig.")
+    pin_deck = debug.get("pinDeck")
+    if pin_deck is not None:
+        if not isinstance(pin_deck, dict) or pin_deck.get("mimeType") != "image/jpeg":
+            raise ValueError("Pin-Deck muss ein JPEG sein.")
+        if any(not isinstance(pin_deck.get(key), int) or pin_deck[key] <= 0 for key in ("width", "height")):
+            raise ValueError("Pin-Deck-Abmessungen sind ungültig.")
+        if pin_deck["width"] > 1024 or pin_deck["height"] > 1024 or pin_deck["width"] * pin_deck["height"] > 1_000_000:
+            raise ValueError("Pin-Deck-Abmessungen überschreiten das erlaubte Limit.")
+        encoded_deck = pin_deck.get("jpegBase64")
+        if not isinstance(encoded_deck, str) or len(encoded_deck) > ((MAX_CALIBRATION_PIN_DECK_JPEG_BYTES + 2) // 3) * 4:
+            raise ValueError("Pin-Deck ist zu groß.")
+        try:
+            if len(base64.b64decode(encoded_deck, validate=True)) > MAX_CALIBRATION_PIN_DECK_JPEG_BYTES:
+                raise ValueError("Pin-Deck ist zu groß.")
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Pin-Deck enthält ungültiges Base64.") from exc
+        line = pin_deck.get("laneEndLine")
+        if line is not None and (not isinstance(line, list) or len(line) != 4 or any(not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 1 for value in line)):
+            raise ValueError("Linie im Pin-Deck ist ungültig.")
+    pin_status = debug.get("pinStatus")
+    if pin_status is not None:
+        if not isinstance(pin_status, dict):
+            raise ValueError("Pin-Status ist ungültig.")
+        for key in ("standing", "total", "down"):
+            if not isinstance(pin_status.get(key), int) or not 0 <= pin_status[key] <= 10:
+                raise ValueError("Pin-Zähler ist ungültig.")
+        if pin_status["standing"] > pin_status["total"] or pin_status["down"] != pin_status["total"] - pin_status["standing"]:
+            raise ValueError("Pin-Zähler sind nicht konsistent.")
+        for key in ("referenceAvailable", "pinCountingArmed", "deckSettled", "autoReferenceReady"):
+            if not isinstance(pin_status.get(key), bool):
+                raise ValueError("Pin-Status ist ungültig.")
+        if not isinstance(pin_status.get("autoReferenceStatus"), str) or len(pin_status["autoReferenceStatus"]) > 160:
+            raise ValueError("Auto-Referenzstatus ist ungültig.")
 
 
 async def _send_lane_error(websocket: WebSocket, session_id: str, request_id: str, message: str) -> None:

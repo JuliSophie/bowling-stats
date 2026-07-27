@@ -10,6 +10,26 @@ export type LaneCorners = {
   bottomLeft: LanePoint;
 };
 
+export type LaneDebugMetadata = {
+  pinDeck?: {
+    mimeType: 'image/jpeg';
+    width: number;
+    height: number;
+    jpegBase64: string;
+    laneEndLine?: [number, number, number, number];
+  };
+  pinStatus?: {
+    standing: number;
+    total: number;
+    down: number;
+    referenceAvailable: boolean;
+    pinCountingArmed: boolean;
+    deckSettled: boolean;
+    autoReferenceStatus: string;
+    autoReferenceReady: boolean;
+  };
+};
+
 type LaneEnvelope<TType extends string, TPayload> = {
   protocolVersion: typeof LANE_PROTOCOL_VERSION;
   type: TType;
@@ -26,6 +46,7 @@ export type LaneScreenshotMessage = LaneEnvelope<
     capturedAt: string;
     image: { mimeType: 'image/jpeg'; width: number; height: number; jpegBase64: string };
     corners: LaneCorners;
+    debug?: LaneDebugMetadata | null;
   }
 >;
 
@@ -47,7 +68,23 @@ export function isLaneControlMessage(value: unknown): value is LaneControlMessag
     typeof message.requestId === 'string' &&
     (message.type === 'lane.screenshot' || message.type === 'lane.quad.applied' || message.type === 'lane.error') &&
     Boolean(message.payload && typeof message.payload === 'object')
+    && (message.type !== 'lane.screenshot' || isLaneScreenshotPayload(message.payload))
   );
+}
+
+function isLaneScreenshotPayload(payload: unknown): payload is LaneScreenshotMessage['payload'] {
+  if (!payload || typeof payload !== 'object') return false;
+  const candidate = payload as LaneScreenshotMessage['payload'];
+  const image = candidate.image;
+  if (!image || image.mimeType !== 'image/jpeg' || !isLaneImageSizeValid(image.width, image.height) || typeof image.jpegBase64 !== 'string' || image.jpegBase64.length > 2_000_000) return false;
+  const debug = candidate.debug;
+  if (debug == null) return true;
+  const crop = debug.pinDeck;
+  if (crop && (!isLaneImageSizeValid(crop.width, crop.height) || crop.width > 1024 || crop.height > 1024 || typeof crop.jpegBase64 !== 'string' || crop.jpegBase64.length > 600_000 || (crop.laneEndLine && (crop.laneEndLine.length !== 4 || crop.laneEndLine.some((value) => !Number.isFinite(value) || value < 0 || value > 1))))) return false;
+  const status = debug.pinStatus;
+  return !status || [status.standing, status.total, status.down].every((value) => Number.isInteger(value) && value >= 0 && value <= 10)
+    && [status.referenceAvailable, status.pinCountingArmed, status.deckSettled, status.autoReferenceReady].every((value) => typeof value === 'boolean')
+    && typeof status.autoReferenceStatus === 'string' && status.autoReferenceStatus.length <= 160;
 }
 
 export function laneRequest(
