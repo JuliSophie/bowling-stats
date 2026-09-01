@@ -67,6 +67,7 @@ class ScoreboardResult:
     current_player_index: int
     current_frame: int  # 1-based
     current_throw: int  # 1-based
+    is_finished: bool
 
 
 def _balls_after(frames: list[list[int]], frame_index: int) -> list[int]:
@@ -208,4 +209,5 @@ def compute_scoreboard(
         current_player_index=current,
         current_frame=current_frame,
         current_throw=current_throw,
+        is_finished=all(card.is_finished() for card in cards),
     )

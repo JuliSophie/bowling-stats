@@ -117,6 +117,35 @@ function averageOrNull(values: number[]) {
   return Math.round(average(values) * 10) / 10;
 }
 
+function buildPlayerSpeedStats(games: GameRead[], playerName: string) {
+  const perGame = getPlayerGames(games, playerName)
+    .slice()
+    .sort((a, b) => a.played_at.localeCompare(b.played_at) || (a.played_at_time ?? '').localeCompare(b.played_at_time ?? '') || a.id - b.id)
+    .map((game, index) => {
+      const score = game.scores.find((entry) => entry.player_name === playerName);
+      const speeds = (score?.frames ?? []).flatMap((frame) => frame.ballSpeedKmh ?? []).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+      return {
+        index: index + 1,
+        label: `${game.played_at}\n${game.location}`,
+        speed: speeds.length ? Math.round(average(speeds) * 10) / 10 : null,
+        samples: speeds.length,
+      };
+    });
+  const values = perGame.flatMap((game) => game.speed === null ? [] : [game.speed]);
+  const deliveries = getPlayerGames(games, playerName).flatMap((game) => {
+    const score = game.scores.find((entry) => entry.player_name === playerName);
+    return (score?.frames ?? []).flatMap((frame) => frame.ballSpeedKmh ?? []).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  });
+  return {
+    average: deliveries.length ? Math.round(average(deliveries) * 10) / 10 : null,
+    median: deliveries.length ? Math.round(median(deliveries) * 10) / 10 : null,
+    max: deliveries.length ? Math.round(Math.max(...deliveries) * 10) / 10 : null,
+    samples: deliveries.length,
+    perGame: perGame.filter((game): game is typeof game & { speed: number } => game.speed !== null),
+    gameAverage: values.length ? Math.round(average(values) * 10) / 10 : null,
+  };
+}
+
 function buildBestStrikeStreakLabel(streak: number) {
   if (streak >= 3) return 'Turkey';
   if (streak === 2) return 'Double';
@@ -552,6 +581,7 @@ export default function PlayerDetailPage() {
   const trendData = buildPlayerTrendData(games, playerName);
   const scoreHeatmap = buildPlayerScoreHeatmap(games, playerName);
   const pinFrequencies = derivePinFrequencies(games, playerName);
+  const speedStats = buildPlayerSpeedStats(games, playerName);
   const pinRates =
     pinMode === 'first' ? pinFrequencies.firstThrowRate : pinMode === 'second' ? pinFrequencies.secondThrowRate : pinFrequencies.totalRate;
   const pinSubtitle =
@@ -705,6 +735,29 @@ export default function PlayerDetailPage() {
               benchmark={countPerGameBenchmark(advanced.totalSpares, gamesPlayed, 'spare')}
             />
         </StatSection>
+
+        {speedStats.samples > 0 && (
+          <SectionCard padding="md" title="Ballgeschwindigkeit" subtitle={`${speedStats.samples} erfasste Würfe`}>
+            <CardGrid cols={4} dense>
+              <StatCard label="Durchschnitt" value={`${formatOneDecimal(speedStats.average ?? 0)} km/h`} />
+              <StatCard label="Median" value={`${formatOneDecimal(speedStats.median ?? 0)} km/h`} />
+              <StatCard label="Maximum" value={`${formatOneDecimal(speedStats.max ?? 0)} km/h`} />
+              <StatCard label="Stichprobe" value={speedStats.samples} sub="Würfe mit Messwert" />
+            </CardGrid>
+            {speedStats.perGame.length > 1 && (
+              <ChartFrame height={260}>
+                <LineChart data={speedStats.perGame} margin={{ top: 18, right: 20, bottom: 5, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e0db" />
+                  <XAxis dataKey="index" tick={{ fontSize: 12 }} label={{ value: 'Spiel #', position: 'insideBottomRight', offset: -5 }} />
+                  <YAxis tick={{ fontSize: 12 }} domain={['dataMin - 2', 'dataMax + 2']} unit=" km/h" />
+                  <Tooltip labelFormatter={() => ''} formatter={(value: number) => [`${value.toFixed(1)} km/h`, 'Ø Geschwindigkeit']} />
+                  {speedStats.gameAverage !== null && <ReferenceLine y={speedStats.gameAverage} stroke="#d97706" strokeDasharray="6 4" />}
+                  <Line type="monotone" dataKey="speed" stroke="#7c3aed" strokeWidth={2.5} dot={{ r: 4 }} name="Ø Geschwindigkeit" />
+                </LineChart>
+              </ChartFrame>
+            )}
+          </SectionCard>
+        )}
 
         <StatSection title="Sieg-Punkte" cols={4}>
             <InsightCard

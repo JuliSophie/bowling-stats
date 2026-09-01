@@ -188,6 +188,7 @@ class TrackingFrame(BaseModel):
     is_spare: bool = Field(default=False, alias="isSpare")
     # Pins (1..10) that fell on each ball of this frame, in ball order. Empty when not tracked.
     fallen_pins: list[list[int]] = Field(default_factory=list, alias="fallenPins")
+    ball_speed_kmh: list[float | None] = Field(default_factory=list, alias="ballSpeedKmh")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -229,6 +230,7 @@ class TrackingScoreboard(BaseModel):
     players: list[TrackingPlayerCard] = Field(default_factory=list)
     throw_count: int = Field(default=0, alias="throwCount")
     throws: list[TrackingLoggedThrow] = Field(default_factory=list)
+    is_finished: bool = Field(default=False, alias="isFinished")
 
     model_config = ConfigDict(populate_by_name=True)
 

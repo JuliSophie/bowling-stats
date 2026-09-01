@@ -34,6 +34,8 @@ export type FrameData = {
   cumulative: string;
   // Per-ball fallen pin numbers (1..10), index 0 = first ball. Present for live-tracked games.
   fallenPins?: number[][];
+  // Per-delivery speed in km/h, aligned with throw1/throw2/throw3.
+  ballSpeedKmh?: (number | null)[];
   split?: {
     isSplit: boolean;
     converted: boolean;
@@ -150,6 +152,7 @@ export type TrackingFrame = {
   isSpare: boolean;
   // Pins (1..10) that fell on each ball of this frame, in ball order.
   fallenPins?: number[][];
+  ballSpeedKmh?: (number | null)[];
 };
 
 export type TrackingPlayerCard = {
@@ -181,6 +184,7 @@ export type TrackingScoreboard = {
   players: TrackingPlayerCard[];
   throwCount: number;
   throws?: TrackingLoggedThrow[];
+  isFinished: boolean;
 };
 
 export type TrackingSession = {

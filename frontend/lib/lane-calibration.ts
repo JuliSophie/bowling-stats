@@ -53,11 +53,27 @@ export type LaneScreenshotMessage = LaneEnvelope<
 export type LaneControlMessage =
   | LaneScreenshotMessage
   | LaneEnvelope<'lane.quad.applied', { screenshotId: string }>
+  | LaneEnvelope<'companion.status', CompanionStatus>
+  | LaneEnvelope<'companion.command.applied', { command: CompanionCommand } & Partial<CompanionStatus>>
+  | LaneEnvelope<'companion.command.rejected', { command: CompanionCommand; message: string }>
   | LaneEnvelope<'lane.error', { message: string }>;
+
+export type CompanionStatus = {
+  batteryPercent: number | null;
+  charging: boolean;
+  dimmed: boolean;
+  zoom: number;
+  laneLocked: boolean;
+  pinsMarked: boolean;
+  ready: boolean;
+};
+
+export type CompanionCommand = 'calibrate' | 'accept-lane' | 'mark-pins' | 'clear-track' | 'set-zoom' | 'status';
 
 export type LaneBrowserMessage =
   | LaneEnvelope<'lane.screenshot.request', Record<string, never>>
-  | LaneEnvelope<'lane.quad.apply', { screenshotId: string; corners: LaneCorners }>;
+  | LaneEnvelope<'lane.quad.apply', { screenshotId: string; corners: LaneCorners }>
+  | LaneEnvelope<'companion.command', { command: CompanionCommand; zoom?: number }>;
 
 export function isLaneControlMessage(value: unknown): value is LaneControlMessage {
   if (!value || typeof value !== 'object') return false;
@@ -66,7 +82,8 @@ export function isLaneControlMessage(value: unknown): value is LaneControlMessag
     message.protocolVersion === LANE_PROTOCOL_VERSION &&
     typeof message.sessionId === 'string' &&
     typeof message.requestId === 'string' &&
-    (message.type === 'lane.screenshot' || message.type === 'lane.quad.applied' || message.type === 'lane.error') &&
+    (message.type === 'lane.screenshot' || message.type === 'lane.quad.applied' || message.type === 'lane.error'
+      || message.type === 'companion.status' || message.type === 'companion.command.applied' || message.type === 'companion.command.rejected') &&
     Boolean(message.payload && typeof message.payload === 'object')
     && (message.type !== 'lane.screenshot' || isLaneScreenshotPayload(message.payload))
   );

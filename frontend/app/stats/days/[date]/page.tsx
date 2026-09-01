@@ -75,6 +75,15 @@ type WinningPointEntry = {
   gameLabel: string;
 };
 
+function chronologicalGames(games: GameRead[]) {
+  return games.slice().sort((a, b) => {
+    const dateOrder = a.played_at.localeCompare(b.played_at);
+    if (dateOrder) return dateOrder;
+    const timeOrder = (a.played_at_time ?? '').localeCompare(b.played_at_time ?? '');
+    return timeOrder || a.id - b.id;
+  });
+}
+
 function computeDayPlayerStats(games: GameRead[]): DayPlayerStats[] {
   const map = new Map<string, { pins: number; games: number; wins: number; scores: number[]; openFrames: number; totalFrames: number }>();
   
@@ -119,7 +128,7 @@ type DayPlayerAnalysis = {
 };
 
 function computeDayPlayerAnalysis(dayGames: GameRead[]): DayPlayerAnalysis[] {
-  const sorted = dayGames.slice().sort((a, b) => a.id - b.id);
+  const sorted = chronologicalGames(dayGames);
   const map = new Map<string, { totalScore: number; games: number; strikes: number; spares: number; openFrames: number; totalFrames: number; bestFrame: { score: number; game: number; frame: number } | null; firstThrows: number[]; frameScores: number[] }>();
 
   sorted.forEach((game, gameIndex) => {
@@ -259,7 +268,7 @@ function toChartKey(name: string) {
 }
 
 function buildCumulativeDayChart(games: GameRead[], mode: CumulativeChartMode) {
-  const sortedGames = games.slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const sortedGames = chronologicalGames(games);
   const playerColorIndex = new Map<string, number>();
   const playerKeys = new Map<string, string>();
   const runningTotals = new Map<string, number>();
@@ -356,7 +365,7 @@ function buildScoreDifferenceDayChart(games: GameRead[], mode: CumulativeChartMo
 // games — not tied to a single game. So a strong start in one game and a strong
 // finish in another both surface on the "best" line.
 function buildDayGameHistoryChart(games: GameRead[]) {
-  const sortedGames = games.slice().sort((a, b) => a.id - b.id);
+  const sortedGames = chronologicalGames(games);
   const playerColorIndex = new Map<string, number>();
   // player -> per-frame collected cumulative values
   const frameValues = new Map<string, number[][]>();
@@ -416,7 +425,7 @@ function buildDayGameHistoryChart(games: GameRead[]) {
 }
 
 function buildSessionScoreChart(games: GameRead[]) {
-  const sortedGames = games.slice().sort((a, b) => a.played_at.localeCompare(b.played_at) || a.id - b.id);
+  const sortedGames = chronologicalGames(games);
   const playerColorIndex = new Map<string, number>();
 
   const data: Record<string, string | number>[] = sortedGames.map((game, index) => {
@@ -464,7 +473,7 @@ export default function DayDetailPage() {
     );
   }
 
-  const dayGames = games.filter((g) => g.played_at === date);
+  const dayGames = chronologicalGames(games.filter((g) => g.played_at === date));
 
   if (dayGames.length === 0) {
     return (

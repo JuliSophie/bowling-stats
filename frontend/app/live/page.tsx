@@ -19,10 +19,11 @@ import {
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
-import { isLaneControlMessage, type LaneControlMessage } from '@/lib/lane-calibration';
+import { isLaneControlMessage, laneRequest, type CompanionCommand, type CompanionStatus, type LaneControlMessage } from '@/lib/lane-calibration';
 
 const DEFAULT_SESSION_ID = 'demo-session';
 const DEFAULT_GAME_LOCATION = 'Squash House';
+const FINAL_THROW_REVIEW_DELAY_MS = 5_000;
 const MAX_VISIBLE_EVENTS = 30;
 const LANE_LENGTH_M = 18.29;
 const BOARD_COUNT = 39;
@@ -202,7 +203,7 @@ function PinPatternDeck({
   const selected = new Set(value);
   const already = new Set(alreadyDown);
   const toggle = (pin: number) => {
-    if (!onChange || disabled) return;
+    if (!onChange || disabled || already.has(pin)) return;
     const next = new Set(selected);
     if (next.has(pin)) next.delete(pin);
     else next.add(pin);
@@ -225,7 +226,7 @@ function PinPatternDeck({
               key={pin.pin}
               type="button"
               onClick={() => toggle(pin.pin)}
-              disabled={disabled}
+              disabled={disabled || already.has(pin.pin)}
               className={className}
               style={{ left: `${x}%`, top: `${y}%` }}
               aria-pressed={selected.has(pin.pin)}
@@ -327,15 +328,28 @@ function LaneView({
     const dDist = distanceOf(end) - distanceOf(ref);
     const slope = dDist > 1e-6 ? (end.board - ref.board) / dDist : 0;
     const ballAt = (depth: number) => end.board + slope * depth;
-    for (let row = 3; row >= 0; row--) {
-      const depth = (3 - row) * PIN_ROW_SPACING_M;
-      const nearest = PIN_LAYOUT.filter((p) => p.row === row)
-        .map((p) => Math.abs(ballAt(depth) - (20 + p.offset * PIN_BOARD_SPACING)))
-        .reduce((min, d) => Math.min(min, d), Number.POSITIVE_INFINITY);
-      if (nearest <= HIT_RADIUS_BOARDS) {
-        return { board: ballAt(depth), distanceM: LANE_LENGTH_M + depth };
+    const down = new Set(alreadyDownPins.length ? alreadyDownPins : lastThrow?.alreadyDownPins ?? []);
+    const radiusM = HIT_RADIUS_BOARDS * BOARD_WIDTH_M;
+    const directionX = slope * BOARD_WIDTH_M;
+    const directionLengthSq = directionX * directionX + 1;
+    let firstCollision: { board: number; distanceM: number; travel: number } | null = null;
+    for (const pin of PIN_LAYOUT) {
+      if (down.has(pin.pin)) continue;
+      const pinDepth = (3 - pin.row) * PIN_ROW_SPACING_M;
+      const pinX = (20 + pin.offset * PIN_BOARD_SPACING - end.board) * BOARD_WIDTH_M;
+      const projection = (pinX * directionX + pinDepth) / directionLengthSq;
+      if (projection < 0) continue;
+      const closestX = projection * directionX;
+      const closestDepth = projection;
+      const missSq = (closestX - pinX) ** 2 + (closestDepth - pinDepth) ** 2;
+      if (missSq > radiusM ** 2) continue;
+      const offset = Math.sqrt((radiusM ** 2 - missSq) / directionLengthSq);
+      const travel = Math.max(0, projection - offset);
+      if (!firstCollision || travel < firstCollision.travel) {
+        firstCollision = { board: ballAt(travel), distanceM: LANE_LENGTH_M + travel, travel };
       }
     }
+    if (firstCollision) return { board: firstCollision.board, distanceM: firstCollision.distanceM };
     // Reaches nothing (edge/gutter ball): fall back to the rack's outer envelope.
     const depth = Math.min(RACK_BACK_DEPTH_M, (Math.abs(ballAt(0) - 20) / RACK_HALF_SPREAD_BOARDS) * RACK_BACK_DEPTH_M);
     return { board: ballAt(depth), distanceM: LANE_LENGTH_M + depth };
@@ -362,7 +376,7 @@ function LaneView({
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
   const togglePin = (pin: number) => {
-    if (!onPinPatternChange || pinPatternDisabled) return;
+    if (!onPinPatternChange || pinPatternDisabled || alreadyDownSet.has(pin)) return;
     const selected = new Set(pinPattern ?? []);
     if (selected.has(pin)) selected.delete(pin);
     else selected.add(pin);
@@ -387,7 +401,7 @@ function LaneView({
 
       {/* Pin deck beyond the playable lane — same wood as the lane; the header line marks it.
         Pin 1 stands right at that line (lane coordinate 18.29 m = head pin). */}
-      <div className={horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'}>
+      <div className={`${horizontal ? 'absolute inset-y-0 right-0 w-[13%]' : 'absolute inset-x-0 top-0 h-[13%]'} z-20`}>
         {PIN_LAYOUT.map((pin, index) => {
           // Cross-axis from the pin's true BOARD, so the drawn line points at the pin it hit.
           const cross = mapBoardPct(20 + pin.offset * PIN_BOARD_SPACING);
@@ -411,7 +425,7 @@ function LaneView({
                 key={pin.pin}
                 type="button"
                 onClick={() => togglePin(pin.pin)}
-                disabled={pinPatternDisabled}
+                disabled={pinPatternDisabled || state === 'already-down'}
                 className="absolute grid h-10 w-10 -translate-x-1/2 -translate-y-1/2 place-items-center p-0 sm:h-12 sm:w-12"
                 style={{ left: `${x}%`, top: `${y}%` }}
                 aria-pressed={newDownSet?.has(pin.pin) ?? false}
@@ -462,7 +476,7 @@ function LaneView({
         </div>
       )}
 
-      <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <svg className="pointer-events-none absolute inset-0 z-10 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
         {/* board guide lines */}
         {boardGuides.map((b) => {
           const a = pos(b, 0);
@@ -507,8 +521,8 @@ function LaneView({
         return (
           <span
             key={m.key}
-            className="absolute h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-lg"
-            style={{ left: `${q.left}%`, top: `${q.top}%`, background: m.color }}
+            className="absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-lg"
+            style={{ left: `${q.left}%`, top: `${q.top}%`, borderColor: m.color, background: m.key === 'impact' ? 'transparent' : m.color }}
             title={m.label}
           />
         );
@@ -563,6 +577,9 @@ export default function LivePage() {
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [laneControlMessage, setLaneControlMessage] = useState<LaneControlMessage | null>(null);
+  const [companionStatus, setCompanionStatus] = useState<CompanionStatus | null>(null);
+  const [companionCommandMessage, setCompanionCommandMessage] = useState<string | null>(null);
+  const [winnerOpen, setWinnerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -657,6 +674,12 @@ export default function LivePage() {
         socket.onmessage = (message) => {
           const parsed: unknown = JSON.parse(message.data);
           if (isLaneControlMessage(parsed)) {
+            if (parsed.type === 'companion.status') setCompanionStatus(parsed.payload);
+            if (parsed.type === 'companion.command.applied') {
+              setCompanionCommandMessage(`${parsed.payload.command}: ausgeführt`);
+              if (typeof parsed.payload.zoom === 'number') setCompanionStatus((current) => current ? { ...current, zoom: parsed.payload.zoom! } : current);
+            }
+            if (parsed.type === 'companion.command.rejected') setCompanionCommandMessage(`${parsed.payload.command}: ${parsed.payload.message}`);
             setLaneControlMessage(parsed);
             return;
           }
@@ -717,6 +740,34 @@ export default function LivePage() {
     return true;
   };
 
+  const sendCompanionCommand = (command: CompanionCommand, zoom?: number) => {
+    if (!session) return;
+    const request = laneRequest(session.sessionId, 'companion.command', { command, ...(zoom === undefined ? {} : { zoom }) });
+    setCompanionCommandMessage('Befehl wird gesendet…');
+    if (!sendLaneMessage(JSON.stringify(request))) setCompanionCommandMessage('Live-Verbindung ist nicht bereit.');
+  };
+
+  useEffect(() => {
+    if (!scoreboard?.isFinished) {
+      setWinnerOpen(false);
+      return;
+    }
+    if (expandedThrowIndex !== null) return;
+    // Keep the live view unobstructed for a moment after the deciding delivery so its detected
+    // pins can be checked before the winner dialog appears.
+    const timer = window.setTimeout(() => setWinnerOpen(true), FINAL_THROW_REVIEW_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [expandedThrowIndex, scoreboard?.isFinished]);
+
+  const reviewLatestThrow = () => {
+    if (!latestLoggedThrow) return;
+    setWinnerOpen(false);
+    setExpandedThrowIndex(latestLoggedThrow.index);
+    window.setTimeout(() => {
+      document.getElementById(`live-throw-${latestLoggedThrow.index}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 0);
+  };
+
   const startNewGame = async () => {
     if (!session) return;
     if (scoreboard?.throwCount && !window.confirm('Neues Spiel starten? Der aktuelle Score wird zurückgesetzt.')) return;
@@ -760,6 +811,7 @@ export default function LivePage() {
               // Per-ball fallen pins come from the scoreboard (the backend keeps them aligned to the
               // log, so they stay correct after manual corrections), for player pin stats.
               fallenPins,
+              ballSpeedKmh: frame.ballSpeedKmh ?? [],
               ...(split ? { split } : {}),
             };
           }),
@@ -768,7 +820,16 @@ export default function LivePage() {
         setError('Noch keine Würfe zum Speichern.');
         return;
       }
-      await createGame({ played_at: today, location, mode: '10-Pin', scores });
+      const now = new Date();
+      await createGame({ played_at: today, played_at_time: now.toTimeString().slice(0, 8), location, mode: '10-Pin', scores });
+      if (scoreboard.isFinished) {
+        const updated = await resetTrackingSession(session.sessionId);
+        setSession(updated);
+        setEvents([]);
+        setExpandedThrowIndex(null);
+        setWinnerOpen(false);
+        sendCompanionCommand('clear-track');
+      }
       setSaveMsg(`Spiel gespeichert: ${location}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spiel konnte nicht gespeichert werden.');
@@ -874,7 +935,7 @@ export default function LivePage() {
         {[...loggedThrows].reverse().map((throwItem) => {
           const expanded = expandedThrowIndex === throwItem.index;
           return (
-            <div key={throwItem.index} className="text-xs">
+            <div key={throwItem.index} id={`live-throw-${throwItem.index}`} className="text-xs">
               <button
                 type="button"
                 onClick={() => setExpandedThrowIndex(expanded ? null : throwItem.index)}
@@ -1001,7 +1062,54 @@ export default function LivePage() {
           companionConnected={Boolean(session?.companionConnected)}
           message={laneControlMessage}
           send={sendLaneMessage}
-        />
+        >
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-lane-200 pt-3">
+            <div>
+              <p className="text-sm font-bold text-lane-600">
+                Akku {companionStatus?.batteryPercent ?? '–'}%{companionStatus?.charging ? ' · lädt' : ''} · Zoom {Math.round((companionStatus?.zoom ?? 0) * 100)}% · {companionStatus?.ready ? 'bereit' : 'nicht bereit'}{companionStatus?.dimmed ? ' · gedimmt' : ''}
+              </p>
+              {companionCommandMessage && <p className="mt-1 text-xs font-bold text-lane-500">{companionCommandMessage}</p>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {(['calibrate', 'accept-lane', 'mark-pins', 'clear-track'] as const).map((command) => (
+                <button key={command} type="button" disabled={!session?.companionConnected} onClick={() => sendCompanionCommand(command)} className="rounded-full border subtle-surface px-3 py-2 text-xs font-black text-lane-700 disabled:opacity-40">
+                  {{ calibrate: 'Kalibrieren', 'accept-lane': 'Bahn übernehmen', 'mark-pins': 'Pins markieren', 'clear-track': 'Track löschen' }[command]}
+                </button>
+              ))}
+              <label className="flex items-center gap-2 text-xs font-black text-lane-600">
+                Zoom
+                <input type="range" min="0" max="100" value={Math.round((companionStatus?.zoom ?? 0) * 100)} disabled={!session?.companionConnected} onChange={(event) => setCompanionStatus((current) => ({ batteryPercent: null, charging: false, dimmed: false, laneLocked: false, pinsMarked: false, ready: false, ...current, zoom: Number(event.target.value) / 100 }))} onPointerUp={(event) => sendCompanionCommand('set-zoom', Number(event.currentTarget.value) / 100)} />
+              </label>
+            </div>
+          </div>
+        </LaneCalibrationPanel>
+
+        {winnerOpen && scoreboard?.isFinished && (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-lane-950/60 p-4" role="dialog" aria-modal="true" aria-labelledby="winner-title">
+            <div className="w-full max-w-sm rounded-2xl border border-amber-300 bg-white p-5 text-center shadow-2xl">
+              <p className="eyebrow">Spiel beendet</p>
+              <h2 id="winner-title" className="mt-2 text-2xl font-black text-lane-900">
+                {(() => { const best = Math.max(...scoreboard.players.map((player) => player.total)); const names = scoreboard.players.filter((player) => player.total === best).map((player) => player.name); return names.length > 1 ? `Unentschieden: ${names.join(' & ')}` : `🏆 ${names[0]}`; })()}
+              </h2>
+              <p className="mt-1 text-sm font-bold text-lane-600">{Math.max(...scoreboard.players.map((player) => player.total))} Punkte</p>
+              <p className="mt-3 text-xs font-bold text-lane-500">Bitte den letzten Wurf prüfen, bevor das Spiel gespeichert wird.</p>
+              <button type="button" onClick={reviewLatestThrow} disabled={saving || correcting || !latestLoggedThrow} className="mt-4 w-full rounded-full border border-lane-300 px-4 py-3 text-sm font-black text-lane-700 disabled:opacity-40">
+                Letzten Wurf bearbeiten
+              </button>
+              <button type="button" onClick={saveGame} disabled={saving} className="primary-action mt-4 w-full">{saving ? 'Speichert…' : 'Speichern & nächstes Spiel'}</button>
+            </div>
+          </div>
+        )}
+
+        {!winnerOpen && scoreboard?.isFinished && (
+          <button
+            type="button"
+            onClick={() => setWinnerOpen(true)}
+            className="fixed bottom-5 right-5 z-40 rounded-full bg-amber-400 px-5 py-3 text-sm font-black text-lane-950 shadow-xl"
+          >
+            Ergebnis öffnen & speichern
+          </button>
+        )}
 
         {/* Narrow / mobile: lane (curve) on the left, live data on the right. */}
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">

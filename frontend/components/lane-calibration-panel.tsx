@@ -23,12 +23,14 @@ export default function LaneCalibrationPanel({
   companionConnected,
   message,
   send,
+  children,
 }: {
   sessionId: string;
   connected: boolean;
   companionConnected: boolean;
   message: LaneControlMessage | null;
   send: (message: string) => boolean;
+  children?: React.ReactNode;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -74,6 +76,7 @@ export default function LaneCalibrationPanel({
 
   useEffect(() => {
     if (!message) return;
+    if (message.type === 'companion.status' || message.type === 'companion.command.applied' || message.type === 'companion.command.rejected') return;
     if (message.requestId !== pendingRequestRef.current) return;
     if (message.type === 'lane.error') {
       finishRequest();
@@ -319,8 +322,8 @@ export default function LaneCalibrationPanel({
     <section className="soft-card p-4 sm:p-5" aria-labelledby="lane-calibration-title">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="eyebrow">Remote-Kalibrierung</p>
-          <h2 id="lane-calibration-title" className="mt-1 text-lg font-black text-lane-900">Kamerabild und Bahnecken</h2>
+          <p className="eyebrow">Companion</p>
+          <h2 id="lane-calibration-title" className="mt-1 text-lg font-black text-lane-900">Steuerung &amp; Kalibrierung</h2>
           <p className="mt-1 text-sm font-bold text-lane-600">{error ?? status}</p>
         </div>
         <button
@@ -336,6 +339,7 @@ export default function LaneCalibrationPanel({
           Kalibrierung öffnen
         </button>
       </div>
+      {children}
       {modal}
     </section>
   );

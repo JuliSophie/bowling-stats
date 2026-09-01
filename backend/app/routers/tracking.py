@@ -38,6 +38,7 @@ MAX_CALIBRATION_IMAGE_PIXELS = 4_000_000
 SESSION_TTL = timedelta(hours=10)
 CALIBRATION_REQUEST_TTL = timedelta(seconds=30)
 MAX_CALIBRATION_REQUESTS = 50
+COMPANION_COMMANDS = {"calibrate", "accept-lane", "mark-pins", "clear-track", "set-zoom", "status"}
 
 
 @dataclass
@@ -79,6 +80,7 @@ class LiveSession:
     def reset(self) -> None:
         """Start a fresh game: wipe the throw log while keeping the roster and pairing."""
         self.throw_log.clear()
+        self.events.clear()
         self.seen_client_event_ids.clear()
         self.touch()
 
@@ -95,14 +97,17 @@ class LiveSession:
         assignment of throws to (player, frame). Deriving it from the assignments keeps the pin data
         aligned even after manual corrections shuffle the log."""
         grouped: dict[tuple[int, int], list[list[int]]] = {}
+        speeds: dict[tuple[int, int], list[float | None]] = {}
         for index, assignment in enumerate(board.assignments):
             if index >= len(throw_log):
                 break
             fallen = throw_log[index].get("fallenPins") or []
             grouped.setdefault((assignment.player_index, assignment.frame - 1), []).append(fallen)
+            speeds.setdefault((assignment.player_index, assignment.frame - 1), []).append(throw_log[index].get("ballSpeedKmh"))
         for player_index, player in enumerate(board.players):
             for frame_index, frame in enumerate(player["frames"]):
                 frame["fallenPins"] = grouped.get((player_index, frame_index), [])
+                frame["ballSpeedKmh"] = speeds.get((player_index, frame_index), [])
 
     def _logged_throws(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Expose the current replay log with the same player/frame assignment used for scoring."""
@@ -211,10 +216,11 @@ class LiveSession:
 
         already_down = self._already_down_pins_for_next_throw(board_before, normalized_log_before)
         actual = sorted(set(observed) - already_down)
-        ignored = sorted(set(observed) & already_down)
         metrics["fallenPins"] = actual
         metrics["pinsKnockedDown"] = len(actual)
-        metrics["alreadyDownPins"] = ignored
+        # Expose the complete pre-delivery rack state. The UI uses this to render and lock every
+        # pin that was already down, not merely the subset redundantly observed by the companion.
+        metrics["alreadyDownPins"] = sorted(already_down)
         return metrics
 
     def _normalized_throw_log(self) -> list[dict[str, Any]]:
@@ -225,15 +231,15 @@ class LiveSession:
         normalized: list[dict[str, Any]] = []
         for raw in self.throw_log:
             entry = dict(raw)
-            if entry.get("manual") or entry.get("manualCorrection") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
-                entry["alreadyDownPins"] = []
-                normalized.append(entry)
-                continue
             board_before = compute_scoreboard(
                 [throw.get("pinsKnockedDown") for throw in normalized],
                 self.player_count,
                 self.player_names,
             )
+            if entry.get("manual") or entry.get("manualCorrection") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
+                entry["alreadyDownPins"] = sorted(self._already_down_pins_for_next_throw(board_before, normalized))
+                normalized.append(entry)
+                continue
             normalized.append(self._normalize_observed_throw(entry, board_before, normalized))
         return normalized
 
@@ -253,6 +259,7 @@ class LiveSession:
                 "players": board.players,
                 "throwCount": len(self.throw_log),
                 "throws": self._logged_throws(board, normalized_log),
+                "isFinished": board.is_finished,
             }
         )
         return TrackingSessionRead(
@@ -668,6 +675,18 @@ def _validate_browser_lane_message(message: dict[str, Any]) -> None:
             raise ValueError("screenshotId fehlt.")
         _validate_corners(payload.get("corners"))
         return
+    if message_type == "companion.command":
+        command = payload.get("command")
+        if command not in COMPANION_COMMANDS:
+            raise ValueError("Unbekannter Companion-Befehl.")
+        allowed_keys = {"command", "zoom"} if command == "set-zoom" else {"command"}
+        if set(payload) - allowed_keys:
+            raise ValueError("Companion-Befehl enthält unerlaubte Felder.")
+        if command == "set-zoom":
+            zoom = payload.get("zoom")
+            if not isinstance(zoom, (int, float)) or isinstance(zoom, bool) or not 0 <= zoom <= 1:
+                raise ValueError("Zoom muss zwischen 0 und 1 liegen.")
+        return
     raise ValueError("Diese Nachrichtenrichtung ist für Browser nicht erlaubt.")
 
 
@@ -707,6 +726,25 @@ def _validate_companion_lane_message(message: dict[str, Any]) -> None:
     if message_type == "lane.error":
         if not isinstance(payload.get("message"), str) or not payload["message"]:
             raise ValueError("Fehlermeldung fehlt.")
+        return
+    if message_type == "companion.status":
+        required = {"batteryPercent", "charging", "dimmed", "zoom", "laneLocked", "pinsMarked", "ready"}
+        if set(payload) != required:
+            raise ValueError("Companion-Status ist unvollständig.")
+        battery = payload.get("batteryPercent")
+        if battery is not None and (not isinstance(battery, int) or isinstance(battery, bool) or not 0 <= battery <= 100):
+            raise ValueError("Akkustand ist ungültig.")
+        zoom = payload.get("zoom")
+        if not isinstance(zoom, (int, float)) or isinstance(zoom, bool) or not 0 <= zoom <= 1:
+            raise ValueError("Zoom ist ungültig.")
+        if any(not isinstance(payload.get(key), bool) for key in ("charging", "dimmed", "laneLocked", "pinsMarked", "ready")):
+            raise ValueError("Companion-Status ist ungültig.")
+        return
+    if message_type in {"companion.command.applied", "companion.command.rejected"}:
+        if payload.get("command") not in COMPANION_COMMANDS:
+            raise ValueError("Companion-Antwort enthält einen unbekannten Befehl.")
+        if message_type == "companion.command.rejected" and (not isinstance(payload.get("message"), str) or not payload["message"]):
+            raise ValueError("Ablehnungsgrund fehlt.")
         return
     raise ValueError("Diese Nachrichtenrichtung ist für Companion nicht erlaubt.")
 
@@ -846,9 +884,12 @@ async def companion_tracking_websocket(websocket: WebSocket, session_id: str) ->
                 request_id = message["requestId"]
                 _validate_companion_lane_message(message)
                 await _cleanup_calibration_requests(session)
+                if message["type"] == "companion.status":
+                    await _relay_ephemeral(session.live_clients, message)
+                    continue
                 request = session.calibration_requests.get(request_id)
                 target = request.requester if request is not None and request.companion is websocket else None
-                if message["type"] in {"lane.screenshot", "lane.error"}:
+                if message["type"] in {"lane.screenshot", "lane.error", "companion.command.applied", "companion.command.rejected"}:
                     if target is not None:
                         session.calibration_requests.pop(request_id, None)
                 if target is not None:
