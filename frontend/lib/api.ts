@@ -235,6 +235,15 @@ export async function createTrackingSession(playerNames: string[] = [], sessionI
 }
 
 
+export async function joinTrackingSession(pairingToken: string): Promise<TrackingSession> {
+  return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/join`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pairingToken }),
+  });
+}
+
+
 export async function fetchTrackingSession(sessionId: string): Promise<TrackingSession> {
   return requestJson<TrackingSession>(`${API_BASE}/tracking/sessions/${encodeURIComponent(sessionId)}`);
 }

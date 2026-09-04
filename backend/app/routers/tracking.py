@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from app.live_scoring import ScoreboardResult, compute_scoreboard
 from app.schemas import (
@@ -17,8 +17,10 @@ from app.schemas import (
     ThrowCorrection,
     ThrowObservation,
     TrackingPlayersUpdate,
+    TrackingCompanionSessionRead,
     TrackingScoreboard,
     TrackingSessionCreate,
+    TrackingSessionJoin,
     TrackingSessionRead,
 )
 
@@ -52,6 +54,7 @@ class LiveSession:
     def __init__(self, session_id: str, pairing_token: str, payload: TrackingSessionCreate) -> None:
         self.session_id = session_id
         self.pairing_token = pairing_token
+        self.companion_token = secrets.token_urlsafe(32)
         self.created_at = datetime.now(timezone.utc)
         self.last_active_at = self.created_at
         names = [name.strip() for name in payload.player_names if name.strip()]
@@ -278,6 +281,16 @@ class LiveSession:
             location=self.location,
         )
 
+    def companion_snapshot(self) -> TrackingCompanionSessionRead:
+        return TrackingCompanionSessionRead(
+            **self.snapshot().model_dump(by_alias=True),
+            companionToken=self.companion_token,
+        )
+
+    def rotate_companion_token(self) -> None:
+        self.companion_token = secrets.token_urlsafe(32)
+        self.touch()
+
 
 sessions: dict[str, LiveSession] = {}
 sessions_lock = asyncio.Lock()
@@ -285,6 +298,21 @@ sessions_lock = asyncio.Lock()
 
 def _new_pairing_token() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _remove_expired_sessions_locked() -> None:
+    now = datetime.now(timezone.utc)
+    for session_id, session in list(sessions.items()):
+        if session.is_expired(now):
+            del sessions[session_id]
+
+
+def _unique_pairing_token_locked() -> str:
+    active_tokens = {session.pairing_token for session in sessions.values()}
+    while True:
+        token = _new_pairing_token()
+        if token not in active_tokens:
+            return token
 
 
 def _new_event(event_type: str, payload: dict[str, Any]) -> LiveEvent:
@@ -297,13 +325,9 @@ def _new_event(event_type: str, payload: dict[str, Any]) -> LiveEvent:
 
 
 async def _get_session(session_id: str) -> LiveSession:
-    session = sessions.get(session_id)
-    if session is not None and session.is_expired():
-        async with sessions_lock:
-            # Re-check under the lock; another request may have refreshed or replaced it.
-            if sessions.get(session_id) is session and session.is_expired():
-                del sessions[session_id]
-        session = None
+    async with sessions_lock:
+        _remove_expired_sessions_locked()
+        session = sessions.get(session_id)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Live-Session nicht gefunden.")
     return session
@@ -311,14 +335,55 @@ async def _get_session(session_id: str) -> LiveSession:
 
 async def _ensure_session(session_id: str, payload: TrackingSessionCreate | None = None) -> LiveSession:
     async with sessions_lock:
+        _remove_expired_sessions_locked()
         session = sessions.get(session_id)
-        if session is not None and not session.is_expired():
+        if session is not None:
             return session
 
-        # No session, or the previous one lapsed after the inactivity window — start fresh.
-        session = LiveSession(session_id, _new_pairing_token(), payload or TrackingSessionCreate())
+        session = LiveSession(session_id, _unique_pairing_token_locked(), payload or TrackingSessionCreate())
         sessions[session_id] = session
         return session
+
+
+async def _create_session(payload: TrackingSessionCreate) -> LiveSession:
+    async with sessions_lock:
+        _remove_expired_sessions_locked()
+        if payload.session_id is not None:
+            if payload.session_id in sessions:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Live-Session-ID ist bereits vergeben.")
+            session_id = payload.session_id
+        else:
+            session_id = secrets.token_urlsafe(8)
+            while session_id in sessions:
+                session_id = secrets.token_urlsafe(8)
+
+        session = LiveSession(session_id, _unique_pairing_token_locked(), payload)
+        sessions[session_id] = session
+        return session
+
+
+async def _resolve_pairing_token(pairing_token: str) -> LiveSession:
+    async with sessions_lock:
+        _remove_expired_sessions_locked()
+        session = next((candidate for candidate in sessions.values() if candidate.pairing_token == pairing_token), None)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pairing-Code nicht gefunden.")
+    return session
+
+
+def _require_companion_token(session: LiveSession, companion_token: str | None) -> None:
+    if companion_token is None or not secrets.compare_digest(companion_token, session.companion_token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Companion-Berechtigung ist ungültig oder abgelaufen.")
+
+
+async def _replace_companion_lease(session: LiveSession) -> None:
+    session.rotate_companion_token()
+    for older_companion in list(session.companion_clients):
+        session.companion_clients.discard(older_companion)
+        try:
+            await older_companion.close(4001, "Companion lease replaced")
+        except (WebSocketDisconnect, RuntimeError):
+            pass
 
 
 async def _append_and_broadcast(session: LiveSession, event: LiveEvent) -> None:
@@ -458,19 +523,41 @@ async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> 
     return event
 
 
-@router.post("/tracking/sessions", response_model=TrackingSessionRead, status_code=status.HTTP_201_CREATED)
-async def create_tracking_session(payload: TrackingSessionCreate) -> TrackingSessionRead:
-    session_id = payload.session_id or secrets.token_urlsafe(8)
-    session = await _ensure_session(session_id, payload)
+@router.post("/tracking/sessions", response_model=TrackingCompanionSessionRead, status_code=status.HTTP_201_CREATED)
+async def create_tracking_session(payload: TrackingSessionCreate) -> TrackingCompanionSessionRead:
+    session = await _create_session(payload)
     event = _new_event("session_created", {"session": session.snapshot().model_dump(mode="json", by_alias=True)})
     await _append_and_broadcast(session, event)
+    return session.companion_snapshot()
+
+
+@router.post("/tracking/sessions/join", response_model=TrackingSessionRead)
+async def join_tracking_session(payload: TrackingSessionJoin) -> TrackingSessionRead:
+    session = await _resolve_pairing_token(payload.pairing_token)
     return session.snapshot()
+
+
+@router.post("/tracking/sessions/takeover", response_model=TrackingCompanionSessionRead)
+async def takeover_tracking_session(payload: TrackingSessionJoin) -> TrackingCompanionSessionRead:
+    session = await _resolve_pairing_token(payload.pairing_token)
+    await _replace_companion_lease(session)
+    return session.companion_snapshot()
 
 
 @router.get("/tracking/sessions/{session_id}", response_model=TrackingSessionRead)
 async def get_tracking_session(session_id: str) -> TrackingSessionRead:
     session = await _get_session(session_id)
     return session.snapshot()
+
+
+@router.get("/tracking/sessions/{session_id}/companion", response_model=TrackingCompanionSessionRead)
+async def validate_companion_session(
+    session_id: str,
+    x_companion_token: str | None = Header(default=None),
+) -> TrackingCompanionSessionRead:
+    session = await _get_session(session_id)
+    _require_companion_token(session, x_companion_token)
+    return session.companion_snapshot()
 
 
 @router.post("/tracking/sessions/{session_id}/join-companion")
@@ -510,8 +597,13 @@ async def reset_tracking_session(session_id: str) -> TrackingSessionRead:
 
 
 @router.post("/tracking/sessions/{session_id}/throws", response_model=LiveEvent, status_code=status.HTTP_202_ACCEPTED)
-async def ingest_throw(session_id: str, observation: ThrowObservation) -> LiveEvent:
+async def ingest_throw(
+    session_id: str,
+    observation: ThrowObservation,
+    x_companion_token: str | None = Header(default=None),
+) -> LiveEvent:
     session = await _get_session(session_id)
+    _require_companion_token(session, x_companion_token)
     return await _ingest_throw(session, observation)
 
 
@@ -595,7 +687,11 @@ async def list_events(session_id: str) -> list[LiveEvent]:
 @router.websocket("/tracking/sessions/{session_id}/ws")
 async def tracking_websocket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
-    session = await _ensure_session(session_id)
+    try:
+        session = await _get_session(session_id)
+    except HTTPException:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Live session not found")
+        return
     session.touch()
     session.live_clients.add(websocket)
     try:
@@ -861,14 +957,22 @@ async def _handle_browser_calibration_message(session: LiveSession, websocket: W
 @router.websocket("/tracking/sessions/{session_id}/companion-ws")
 async def companion_tracking_websocket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
-    session = await _ensure_session(session_id)
+    try:
+        session = await _get_session(session_id)
+    except HTTPException:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Live session not found")
+        return
+    companion_token = websocket.headers.get("x-companion-token")
+    if companion_token is None or not secrets.compare_digest(companion_token, session.companion_token):
+        await websocket.close(code=4003, reason="Companion lease invalid")
+        return
     session.touch()
     was_disconnected = not session.companion_clients
     session.companion_replacement_in_progress = bool(session.companion_clients)
     for older_companion in list(session.companion_clients):
         session.companion_clients.discard(older_companion)
         try:
-            await older_companion.close(1000, "Replaced by newer companion")
+            await older_companion.close(4001, "Companion lease replaced")
         except (WebSocketDisconnect, RuntimeError):
             pass
     session.companion_clients.add(websocket)

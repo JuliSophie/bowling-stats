@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 import Navigation from '@/components/navigation';
 import LaneCalibrationPanel from '@/components/lane-calibration-panel';
@@ -10,18 +10,18 @@ import {
   type ThrowCorrectionAction,
   correctTrackingThrow,
   createGame,
-  createTrackingSession,
   fetchGames,
   fetchTrackingEvents,
   fetchTrackingSession,
   getTrackingWebSocketUrl,
+  joinTrackingSession,
   resetTrackingSession,
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
 import { isLaneControlMessage, laneRequest, type CompanionCommand, type CompanionStatus, type LaneControlMessage } from '@/lib/lane-calibration';
 
-const DEFAULT_SESSION_ID = 'demo-session';
+const TRACKING_SESSION_STORAGE_KEY = 'bowling-live-session-id';
 const DEFAULT_GAME_LOCATION = 'Squash House';
 const FINAL_THROW_REVIEW_DELAY_MS = 5_000;
 const MAX_VISIBLE_EVENTS = 30;
@@ -580,7 +580,11 @@ function PinStepper({ value, onChange, disabled }: { value: number; onChange: (v
 export default function LivePage() {
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
-  const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('closed');
+  const [restoringSession, setRestoringSession] = useState(true);
+  const [pairingToken, setPairingToken] = useState('');
+  const [joinBusy, setJoinBusy] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [laneControlMessage, setLaneControlMessage] = useState<LaneControlMessage | null>(null);
   const [companionStatus, setCompanionStatus] = useState<CompanionStatus | null>(null);
   const [companionCommandMessage, setCompanionCommandMessage] = useState<string | null>(null);
@@ -596,6 +600,70 @@ export default function LivePage() {
   const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const savedSessionId = window.sessionStorage.getItem(TRACKING_SESSION_STORAGE_KEY);
+    if (!savedSessionId) {
+      setRestoringSession(false);
+      return;
+    }
+
+    fetchTrackingSession(savedSessionId)
+      .then((savedSession) => {
+        if (!cancelled) setSession(savedSession);
+      })
+      .catch(() => {
+        window.sessionStorage.removeItem(TRACKING_SESSION_STORAGE_KEY);
+      })
+      .finally(() => {
+        if (!cancelled) setRestoringSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const joinSession = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(pairingToken)) {
+      setJoinError('Bitte genau sechs Ziffern eingeben.');
+      return;
+    }
+
+    setJoinBusy(true);
+    setJoinError(null);
+    try {
+      const joinedSession = await joinTrackingSession(pairingToken);
+      window.sessionStorage.setItem(TRACKING_SESSION_STORAGE_KEY, joinedSession.sessionId);
+      setEvents([]);
+      setError(null);
+      setSession(joinedSession);
+    } catch (err) {
+      setJoinError(err instanceof Error ? err.message : 'Session wurde nicht gefunden.');
+    } finally {
+      setJoinBusy(false);
+    }
+  };
+
+  const leaveSession = () => {
+    socketRef.current?.close();
+    socketRef.current = null;
+    window.sessionStorage.removeItem(TRACKING_SESSION_STORAGE_KEY);
+    setSession(null);
+    setEvents([]);
+    setConnectionState('closed');
+    setLaneControlMessage(null);
+    setCompanionStatus(null);
+    setCompanionCommandMessage(null);
+    setPairingToken('');
+    setJoinError(null);
+    setError(null);
+    setSaveMsg(null);
+    setWinnerOpen(false);
+    setExpandedThrowIndex(null);
+  };
 
   const getAudioContext = () => {
     if (typeof window === 'undefined') return null;
@@ -627,8 +695,11 @@ export default function LivePage() {
   };
 
   useEffect(() => {
+    if (!session) return;
+
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const sessionId = session.sessionId;
 
     const unlockAudio = () => {
       const audio = getAudioContext();
@@ -665,14 +736,11 @@ export default function LivePage() {
       try {
         setError(null);
         setConnectionState('connecting');
-        const existingSession = await fetchTrackingSession(DEFAULT_SESSION_ID).catch(() => createTrackingSession([], DEFAULT_SESSION_ID));
-        if (cancelled) return;
-        setSession(existingSession);
-
-        const history = await fetchTrackingEvents(existingSession.sessionId).catch(() => []);
+        const history = await fetchTrackingEvents(sessionId).catch(() => []);
         if (!cancelled) setEvents(history.slice(-MAX_VISIBLE_EVENTS));
 
-        const socket = new WebSocket(getTrackingWebSocketUrl(existingSession.sessionId));
+        if (cancelled) return;
+        const socket = new WebSocket(getTrackingWebSocketUrl(sessionId));
         socketRef.current = socket;
 
         socket.onopen = () => setConnectionState('open');
@@ -716,8 +784,9 @@ export default function LivePage() {
       window.removeEventListener('keydown', unlockAudio);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socketRef.current?.close();
+      socketRef.current = null;
     };
-  }, []);
+  }, [session?.sessionId]);
 
   const throwEvents = useMemo(
     () => events.filter((event) => event.type === 'throw_analyzed' && isThrowAnalysis(event.payload)),
@@ -1063,6 +1132,57 @@ export default function LivePage() {
     </section>
   );
 
+  if (restoringSession) {
+    return (
+      <>
+        <Navigation />
+        <main className="app-main">
+          <section className="soft-card p-6 text-center text-sm font-bold text-lane-600">Live-Session wird geladen…</section>
+        </main>
+      </>
+    );
+  }
+
+  if (!session) {
+    return (
+      <>
+        <Navigation />
+        <main className="app-main">
+          <section className="soft-card mx-auto w-full max-w-md p-6 sm:p-8">
+            <p className="eyebrow">Live-Bowling</p>
+            <h1 className="mt-2 text-2xl font-black text-lane-900">Session beitreten</h1>
+            <p className="mt-2 text-sm font-bold text-lane-600">Gib den sechsstelligen Code aus der Companion-App ein.</p>
+            <form onSubmit={joinSession} className="mt-6 space-y-4">
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-[0.14em] text-lane-600">Session-Code</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={6}
+                  pattern="[0-9]{6}"
+                  value={pairingToken}
+                  onChange={(event) => {
+                    setPairingToken(event.target.value.replace(/\D/g, '').slice(0, 6));
+                    setJoinError(null);
+                  }}
+                  className="mt-2 w-full rounded-xl border border-lane-300 bg-white px-4 py-3 text-center text-3xl font-black tracking-[0.35em] text-lane-900 outline-none transition focus:border-coral focus:ring-2 focus:ring-coral/20"
+                  aria-describedby={joinError ? 'join-error' : undefined}
+                  placeholder="000000"
+                />
+              </label>
+              {joinError && <p id="join-error" className="app-card app-card--warn p-3 text-sm font-bold">{joinError}</p>}
+              <button type="submit" disabled={joinBusy || pairingToken.length !== 6} className="primary-action w-full disabled:opacity-40">
+                {joinBusy ? 'Verbindet…' : 'Beitreten'}
+              </button>
+            </form>
+          </section>
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
       <Navigation />
@@ -1080,6 +1200,13 @@ export default function LivePage() {
 
           {/* Operator controls: start a fresh game, or set how many bowlers are on the lane. */}
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={leaveSession}
+              className="rounded-full border subtle-surface px-3 py-1.5 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5"
+            >
+              Session wechseln
+            </button>
             <button
               type="button"
               onClick={saveGame}
@@ -1125,7 +1252,7 @@ export default function LivePage() {
         {saveMsg && <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{saveMsg}</section>}
 
         <LaneCalibrationPanel
-          sessionId={session?.sessionId ?? DEFAULT_SESSION_ID}
+          sessionId={session.sessionId}
           connected={connectionState === 'open'}
           companionConnected={Boolean(session?.companionConnected)}
           message={laneControlMessage}

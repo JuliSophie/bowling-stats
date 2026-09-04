@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 
 class ManualCorner(BaseModel):
@@ -155,6 +155,22 @@ class TrackingSessionCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class TrackingSessionJoin(BaseModel):
+    pairing_token: str = Field(alias="pairingToken")
+
+    @field_validator("pairing_token", mode="before")
+    @classmethod
+    def normalize_pairing_token(cls, value: Any) -> str:
+        if not isinstance(value, str):
+            raise ValueError("pairingToken muss aus genau sechs ASCII-Ziffern bestehen.")
+        token = value.strip()
+        if len(token) != 6 or any(character < "0" or character > "9" for character in token):
+            raise ValueError("pairingToken muss aus genau sechs ASCII-Ziffern bestehen.")
+        return token
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class TrackingPlayersUpdate(BaseModel):
     """Operator-controlled roster: how many players are on the lane (and optional names)."""
 
@@ -249,6 +265,14 @@ class TrackingSessionRead(BaseModel):
     live_client_count: int = Field(default=0, alias="liveClientCount", ge=0)
     scoreboard: TrackingScoreboard | None = None
     location: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TrackingCompanionSessionRead(TrackingSessionRead):
+    """Session details returned only to the companion that owns the current lease."""
+
+    companion_token: str = Field(alias="companionToken")
 
     model_config = ConfigDict(populate_by_name=True)
 
