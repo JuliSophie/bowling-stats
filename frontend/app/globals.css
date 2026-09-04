@@ -33,6 +33,10 @@
   --lane-foul: rgba(180, 35, 24, 0.65);
   --lane-pin: #fbf3e4;
   --split-pin-color: #ffffff;
+  /* Pins knocked down by the CURRENT ball. Deliberately not themed: both pin displays sit on
+     --lane-deck, which is near-black in light and dark alike, so one green works for both. */
+  --pin-new-down: #34d399;
+  --pin-new-down-fill: rgba(52, 211, 153, 0.25);
   --current-player-bg: rgba(254, 243, 199, 0.50);
 }
 

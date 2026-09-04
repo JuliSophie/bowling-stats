@@ -80,10 +80,15 @@ function pinDeckPosition(pin: (typeof PIN_LAYOUT)[number], horizontal: boolean) 
   };
 }
 
+// Three distinct looks, separated by hue AND fill so they hold up without colour vision:
+// standing = solid pin in the pin colour, knocked down by THIS ball = green ring over a
+// translucent green tint, knocked down by an earlier ball = faded dashed ghost behind it.
+// Still hollow rather than solid green, so "solid = the pin is physically there" survives.
 function pinClass(state: PinState, interactive = false) {
   const base = interactive ? 'transition hover:scale-110 focus:outline-none focus:ring-2 focus:ring-coral/60' : '';
-  if (state === 'new-down' || state === 'already-down') return `${base} border-2 border-[var(--split-pin-color)] bg-transparent text-transparent opacity-95 shadow`;
-  return `${base} border-2 border-[var(--split-pin-color)] bg-[var(--split-pin-color)] text-lane-950 shadow`;
+  if (state === 'new-down') return `${base} border-2 border-solid border-[var(--pin-new-down)] bg-[var(--pin-new-down-fill)] text-transparent shadow`;
+  if (state === 'already-down') return `${base} border-2 border-dashed border-[var(--split-pin-color)] bg-transparent text-transparent opacity-30`;
+  return `${base} border-2 border-solid border-[var(--split-pin-color)] bg-[var(--split-pin-color)] text-lane-950 shadow`;
 }
 
 function isThrowAnalysis(payload: LiveEvent['payload']): payload is LiveEvent['payload'] & ThrowAnalysis {
@@ -853,9 +858,72 @@ export default function LivePage() {
     }
   };
 
-  const editThrowPattern = (throwIndex: number, pattern: number[]) => {
-    applyCorrection('edit_at_pattern', pattern.length, throwIndex, pattern);
+  // --- Pin-pattern editing ---------------------------------------------------------------
+  // This is a rapid-tap UI used on bowling-alley wifi, so a tap must NEVER be derived from the
+  // last server-confirmed pattern. Doing that loses every tap made while a request is in flight
+  // (each one recomputes from a stale base and overwrites its predecessor), and a slow response
+  // can land after a newer one and resurrect an old pattern — both read to the user as "the pin
+  // I just pressed jumped back". Taps therefore go into local state that renders immediately,
+  // and a single writer drains them: one request at a time, always sending the NEWEST pattern.
+  // A burst of taps collapses into at most two round trips, and stale responses are discarded.
+  type PendingPattern = { throwIndex: number; pins: number[] };
+  const [pendingPattern, setPendingPattern] = useState<PendingPattern | null>(null);
+  const pendingPatternRef = useRef<PendingPattern | null>(null);
+  const flushingPatternRef = useRef(false);
+
+  // Ref and state move together: the ref is what the async writer reads (always current, no
+  // stale closure), the state is what React renders.
+  const stagePattern = (next: PendingPattern | null) => {
+    pendingPatternRef.current = next;
+    setPendingPattern(next);
   };
+
+  const flushPinPattern = async (sessionId: string) => {
+    if (flushingPatternRef.current) return; // a drain loop is already running; it will pick this up
+    flushingPatternRef.current = true;
+    setCorrecting(true);
+    try {
+      while (pendingPatternRef.current) {
+        const target = pendingPatternRef.current;
+        try {
+          const updated = await correctTrackingThrow(
+            sessionId,
+            'edit_at_pattern',
+            target.pins.length,
+            target.throwIndex,
+            target.pins,
+          );
+          // Identity check: any tap during the flight replaced the object, so this response is
+          // already stale. Drop it — applying it is exactly the overwrite we're fixing — and
+          // loop again with what the user actually wants now.
+          if (pendingPatternRef.current !== target) continue;
+          stagePattern(null);
+          setSession(updated);
+        } catch (err) {
+          // Abandon the whole burst and drop the optimistic overlay, so the deck snaps back to
+          // server truth instead of showing pins that were never saved.
+          stagePattern(null);
+          setError(err instanceof Error ? err.message : 'Korrektur konnte nicht angewendet werden.');
+          break;
+        }
+      }
+    } finally {
+      flushingPatternRef.current = false;
+      setCorrecting(false);
+    }
+  };
+
+  const editThrowPattern = (throwIndex: number, pattern: number[]) => {
+    if (!session) return;
+    setError(null);
+    setSaveMsg(null);
+    stagePattern({ throwIndex, pins: pattern });
+    void flushPinPattern(session.sessionId);
+  };
+
+  /** What the deck should show for a throw: the user's un-saved taps win over server state. */
+  const patternFor = (throwIndex: number, serverPins: number[]) =>
+    pendingPattern && pendingPattern.throwIndex === throwIndex ? pendingPattern.pins : serverPins;
 
   const deleteLoggedThrow = (throwIndex: number) => {
     const throwNumber = throwIndex + 1;
@@ -963,16 +1031,16 @@ export default function LivePage() {
               {expanded && (
                 <div className="grid gap-4 border-t px-3 py-4 sm:grid-cols-[auto_1fr_auto] sm:items-center" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
                   <PinPatternDeck
-                    value={throwItem.fallenPins ?? []}
+                    value={patternFor(throwItem.index, throwItem.fallenPins ?? [])}
                     alreadyDown={throwItem.alreadyDownPins ?? []}
                     onChange={(pattern) => editThrowPattern(throwItem.index, pattern)}
-                    disabled={correcting || !session}
+                    disabled={!session}
                   />
                   <div className="space-y-2">
                     <p className="text-sm font-black text-lane-900">Pin-Muster bearbeiten</p>
                     <PinLegend />
                     <p className="text-xs font-bold text-lane-500">
-                      Rot zählt für diesen Wurf. Weiß steht noch. Nur Rahmen bedeutet: bereits unten.
+                      Grün zählt für diesen Wurf. Weiß steht noch. Gestrichelt bedeutet: bereits unten.
                     </p>
                   </div>
                   <button
@@ -1115,10 +1183,10 @@ export default function LivePage() {
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">
           <LaneView
             lastThrow={lastThrow}
-            pinPattern={latestLoggedThrow?.fallenPins ?? []}
+            pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
             onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
-            pinPatternDisabled={correcting || !latestLoggedThrow}
+            pinPatternDisabled={!latestLoggedThrow}
           />
 
           <div className="flex flex-col gap-3">
@@ -1138,61 +1206,11 @@ export default function LivePage() {
           <LaneView
             lastThrow={lastThrow}
             orientation="horizontal"
-            pinPattern={latestLoggedThrow?.fallenPins ?? []}
+            pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
             onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
-            pinPatternDisabled={correcting || !latestLoggedThrow}
+            pinPatternDisabled={!latestLoggedThrow}
           />
-        </section>
-
-        {/* Manual throw-log fix-ups for when the camera missed or mis-scored a throw. */}
-        <section className="soft-card p-4 sm:p-6">
-          <div className="flex items-center justify-between">
-            <p className="eyebrow">Wurf-Korrektur</p>
-            <span className="text-xs font-bold text-lane-500">
-              Letzter Wurf: {lastThrow ? `${lastThrow.player} · Frame ${lastThrow.frame} · Wurf ${lastThrow.throw}` : '—'}
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs font-bold text-lane-600">Fehlenden Wurf einfügen</span>
-              <div className="flex items-center gap-2">
-                <PinStepper value={insertPins} onChange={setInsertPins} disabled={correcting} />
-                <button
-                  type="button"
-                  onClick={() => applyCorrection('insert_at_end', insertPins)}
-                  disabled={correcting || !session}
-                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
-                  title="Wurf jetzt nachtragen (nächster Spieler ist dran)"
-                >
-                  Anhängen
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyCorrection('insert_before_last', insertPins)}
-                  disabled={correcting || !scoreboard?.throwCount}
-                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
-                  title="Vor dem letzten Wurf einfügen (rückt den letzten Wurf zum richtigen Spieler)"
-                >
-                  Davor
-                </button>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => { if (window.confirm('Letzten Wurf löschen?')) applyCorrection('delete_last'); }}
-              disabled={correcting || !scoreboard?.throwCount}
-              className="rounded-full border border-transparent bg-coral px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-950 transition hover:-translate-y-0.5 disabled:opacity-40"
-            >
-              Letzten Wurf löschen
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-lane-500">
-            Pin-Muster des letzten Wurfs direkt oben auf der Bahn antippen, um es zu korrigieren.{' '}
-            Eigener Wurf nicht erkannt? „Anhängen“ trägt ihn nach. Fiel erst durch den nächsten Wurf auf, dass die Zuordnung
-            verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
-            „Letzten Wurf löschen“.
-          </p>
         </section>
 
         {/* Live score table, rebuilt from the throw log */}
@@ -1282,6 +1300,56 @@ export default function LivePage() {
               </tbody>
             </table>
           </div>
+        </section>
+
+        {/* Manual throw-log fix-ups for when the camera missed or mis-scored a throw. */}
+        <section className="soft-card p-4 sm:p-6">
+          <div className="flex items-center justify-between">
+            <p className="eyebrow">Wurf-Korrektur</p>
+            <span className="text-xs font-bold text-lane-500">
+              Letzter Wurf: {lastThrow ? `${lastThrow.player} · Frame ${lastThrow.frame} · Wurf ${lastThrow.throw}` : '—'}
+            </span>
+          </div>
+          <div className="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-bold text-lane-600">Fehlenden Wurf einfügen</span>
+              <div className="flex items-center gap-2">
+                <PinStepper value={insertPins} onChange={setInsertPins} disabled={correcting} />
+                <button
+                  type="button"
+                  onClick={() => applyCorrection('insert_at_end', insertPins)}
+                  disabled={correcting || !session}
+                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
+                  title="Wurf jetzt nachtragen (nächster Spieler ist dran)"
+                >
+                  Anhängen
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyCorrection('insert_before_last', insertPins)}
+                  disabled={correcting || !scoreboard?.throwCount}
+                  className="rounded-full border subtle-surface px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-700 transition hover:-translate-y-0.5 disabled:opacity-40"
+                  title="Vor dem letzten Wurf einfügen (rückt den letzten Wurf zum richtigen Spieler)"
+                >
+                  Davor
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => { if (window.confirm('Letzten Wurf löschen?')) applyCorrection('delete_last'); }}
+              disabled={correcting || !scoreboard?.throwCount}
+              className="rounded-full border border-transparent bg-coral px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-lane-950 transition hover:-translate-y-0.5 disabled:opacity-40"
+            >
+              Letzten Wurf löschen
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-lane-500">
+            Pin-Muster des letzten Wurfs direkt oben auf der Bahn antippen, um es zu korrigieren.{' '}
+            Eigener Wurf nicht erkannt? „Anhängen“ trägt ihn nach. Fiel erst durch den nächsten Wurf auf, dass die Zuordnung
+            verrutscht ist? „Davor“ schiebt den letzten Wurf zum richtigen Spieler. Bewegung fälschlich als Wurf erkannt?
+            „Letzten Wurf löschen“.
+          </p>
         </section>
 
         {historySection}
