@@ -72,7 +72,9 @@ export default function Navigation() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b px-4 py-3 shadow-[0_10px_40px_rgba(0,0,0,0.14)] backdrop-blur-2xl sm:px-6 lg:px-8" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)', color: '#fff4e6' }}>
+      {/* No backdrop-blur: this bar is sticky over scrolling content, so its backdrop changes on
+        every frame and the blur could never be cached. --nav-bg is opaque instead. */}
+      <header className="sticky top-0 z-40 border-b px-4 py-3 shadow-[0_2px_10px_rgba(0,0,0,0.18)] sm:px-6 lg:px-8" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)', color: '#fff4e6' }}>
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
           <Link href="/" className="flex min-w-0 items-center gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-coral text-xl text-lane-950 shadow-[0_12px_28px_rgba(255,140,105,0.26)]">🎳</span>
@@ -116,7 +118,9 @@ export default function Navigation() {
         </div>
       </header>
 
-      <nav className="fixed inset-x-3 bottom-3 z-50 rounded-[1.75rem] border p-2 text-white shadow-[0_18px_60px_rgba(0,0,0,0.36)] backdrop-blur-2xl md:hidden" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)' }}>
+      {/* Same reasoning as the header, and this one is the worst case: permanently fixed over the
+        scroll area on mobile, i.e. exactly the device class that can least afford a per-frame blur. */}
+      <nav className="fixed inset-x-3 bottom-3 z-50 rounded-[1.75rem] border p-2 text-white shadow-[0_4px_16px_rgba(0,0,0,0.32)] md:hidden" style={{ background: 'var(--nav-bg)', borderColor: 'var(--nav-border)' }}>
         <div className="grid grid-cols-4 gap-1">
           {NAV_ITEMS.map((item) => (
             <Link

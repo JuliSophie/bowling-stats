@@ -18,7 +18,10 @@
     linear-gradient(135deg, #f2e2c9 0%, #d7b98f 48%, #8b552d 100%);
   --grid-line: rgba(70, 35, 13, 0.055);
   --top-glow: rgba(255, 255, 255, 0.16);
-  --nav-bg: rgba(20, 11, 4, 0.82);
+  /* Opaque on purpose: the nav bars are pinned over scrolling content, so a translucent
+     background needed backdrop-filter to look right, and that blur had to be recomputed every
+     single frame while scrolling. An opaque colour needs no blur at all. */
+  --nav-bg: #352a1e;
   --nav-border: rgba(255, 255, 255, 0.14);
 
   /* Live-view lane: muted maple tan (less saturated than the old amber). */
@@ -55,7 +58,7 @@
     linear-gradient(135deg, #080402 0%, #170d06 48%, #2b1508 100%);
   --grid-line: rgba(255, 255, 255, 0.045);
   --top-glow: rgba(255, 221, 174, 0.08);
-  --nav-bg: rgba(8, 4, 2, 0.84);
+  --nav-bg: #0b0603;
   --nav-border: rgba(255, 226, 190, 0.12);
 
   /* Live-view lane: dark stained wood with a bright ball line. */
@@ -89,7 +92,7 @@
       linear-gradient(135deg, #080402 0%, #170d06 48%, #2b1508 100%);
     --grid-line: rgba(255, 255, 255, 0.045);
     --top-glow: rgba(255, 221, 174, 0.08);
-    --nav-bg: rgba(8, 4, 2, 0.84);
+    --nav-bg: #0b0603;
     --nav-border: rgba(255, 226, 190, 0.12);
 
     --lane-wood-top: #2f2415;
@@ -121,12 +124,19 @@ body {
   min-height: 100vh;
   color: var(--foreground);
   font-family: "Avenir Next", "Segoe UI Variable", "Trebuchet MS", sans-serif;
+  /* These scroll WITH the page. They used to be `background-attachment: fixed`, which pins them
+     to the viewport — that forces a full-viewport repaint on every scroll frame AND stops the
+     browser from caching any backdrop-filter that scrolls over them, since the pixels behind a
+     moving element then change constantly. Together that was the main cause of scroll jank on
+     low-end phones. Scrolling normally just slides an already-painted layer, which is nearly free.
+     The glow gets an explicit size so it stays a header glow instead of stretching to fit the
+     whole document now that it is no longer viewport-sized. */
   background-image:
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     linear-gradient(var(--grid-line) 1px, transparent 1px),
     radial-gradient(circle at 50% -10%, var(--top-glow), transparent 32%);
-  background-attachment: fixed;
-  background-size: 42px 42px, 42px 42px, auto;
+  background-repeat: repeat, repeat, no-repeat;
+  background-size: 42px 42px, 42px 42px, 100% 70vh;
 }
 
 a {

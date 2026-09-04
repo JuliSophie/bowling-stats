@@ -52,12 +52,17 @@ export default function GamesListPage() {
         </div>
 
         <div className="grid gap-4">
-          {gamesByDay.map((dayGroup) => (
+          {/* Only the newest day starts expanded. gamesByDay is sorted newest-first, so that is
+            index 0. With ~40 games, opening every day built a card per game up front — each one
+            running calculateGameExcitement over all ten frames — which is a lot of DOM to paint
+            and composite on a slow phone for rows nobody has asked to see yet. */}
+          {gamesByDay.map((dayGroup, index) => (
             <GameDayPreviewCard
               key={dayGroup.date}
               date={dayGroup.date}
               games={dayGroup.games}
               allGames={games}
+              defaultOpen={index === 0}
               expandedGameId={expandedGameId}
               onExpandedGameChange={setExpandedGameId}
             />
