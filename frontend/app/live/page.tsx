@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import Navigation from '@/components/navigation';
 import LaneCalibrationPanel from '@/components/lane-calibration-panel';
@@ -19,12 +19,31 @@ import {
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
+import { classifyThrow, isLiveThrow, throwCellKey, type ThrowEffectKind, type ThrowResult } from '@/lib/live-effects';
 import { isLaneControlMessage, laneRequest, type CompanionCommand, type CompanionStatus, type LaneControlMessage } from '@/lib/lane-calibration';
 
 const TRACKING_SESSION_STORAGE_KEY = 'bowling-live-session-id';
 const DEFAULT_GAME_LOCATION = 'Squash House';
 const FINAL_THROW_REVIEW_DELAY_MS = 5_000;
+const THROW_EFFECT_ENTER_MS = 1000;
+const THROW_EFFECT_EXIT_MS = 600;
+const THROW_EFFECT_BREATH_OVERLAP_MS = 200;
+const THROW_EFFECT_DURATION: Record<ThrowEffectKind, number> = {
+  throw: 2000,
+  spare: 3000,
+  strike: 3000,
+  double: 4000,
+  turkey: 4000,
+};
+const THROW_EFFECT_CLASS: Record<ThrowEffectKind, string> = {
+  throw: 'live-effect-throw',
+  spare: 'live-effect-spare',
+  strike: 'live-effect-strike',
+  double: 'live-effect-double',
+  turkey: 'live-effect-turkey',
+};
 const MAX_VISIBLE_EVENTS = 30;
+const LIVE_AUDIO_SETTINGS_KEY = 'bowling-live-audio-settings';
 const LANE_LENGTH_M = 18.29;
 const BOARD_COUNT = 39;
 const LANE_WIDTH_IN = 41.5;
@@ -256,11 +275,12 @@ function PinPatternDeck({
 function ballGlyph(frame: TrackingPlayerCard['frames'][number], ballIndex: number): string {
   const pins = frame.throws[ballIndex];
   if (pins === undefined) return '';
-  if (pins >= 10) return 'X';
   if (ballIndex > 0) {
     const prev = frame.throws[ballIndex - 1] ?? 0;
-    if (prev < 10 && prev + pins >= 10) return '/';
+    const sameRack = ballIndex === 1 || frame.throws[0] === 10;
+    if (sameRack && prev < 10 && prev + pins >= 10) return '/';
   }
+  if (pins >= 10) return 'X';
   return pins === 0 ? '–' : String(pins);
 }
 
@@ -274,6 +294,7 @@ function LaneView({
   alreadyDownPins = [],
   onPinPatternChange,
   pinPatternDisabled,
+  throwEffect,
 }: {
   lastThrow: ThrowAnalysis | undefined;
   orientation?: 'vertical' | 'horizontal';
@@ -281,6 +302,7 @@ function LaneView({
   alreadyDownPins?: number[];
   onPinPatternChange?: (next: number[]) => void;
   pinPatternDisabled?: boolean;
+  throwEffect?: ReactNode;
 }) {
   const horizontal = orientation === 'horizontal';
   // Distance from the foul line to the pin header, as a percentage of the lane's long axis.
@@ -393,7 +415,11 @@ function LaneView({
     : 'relative h-[440px] w-full overflow-hidden rounded-[1.5rem] border-2 bg-gradient-to-b from-[var(--lane-wood-top)] via-[var(--lane-wood-mid)] to-[var(--lane-wood-bottom)] shadow-inner sm:h-[560px]';
 
   return (
-    <div className={containerClass} style={{ borderColor: 'var(--lane-edge)' }}>
+    <div className="live-lane-stage">
+      <div className="live-effect-overlay" role="status" aria-live="polite" aria-atomic="true">
+        {throwEffect}
+      </div>
+      <div className={containerClass} style={{ borderColor: 'var(--lane-edge)' }}>
       {/* Gutters: the wood spans only boards 1–39 between these strips. */}
       <div
         className={horizontal ? 'absolute inset-x-0 top-0' : 'absolute inset-y-0 left-0'}
@@ -546,6 +572,7 @@ function LaneView({
           Keine Kurvendaten für diesen Wurf.
         </p>
       )}
+      </div>
     </div>
   );
 }
@@ -598,8 +625,77 @@ export default function LivePage() {
   const [expandedThrowIndex, setExpandedThrowIndex] = useState<number | null>(null);
   const [playerNameDrafts, setPlayerNameDrafts] = useState<string[]>([]);
   const [editingNameIndex, setEditingNameIndex] = useState<number | null>(null);
+  const [audioVolume, setAudioVolume] = useState(0.85);
+  const [audioMuted, setAudioMuted] = useState(false);
+  const [audioSettingsLoaded, setAudioSettingsLoaded] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [audioNeedsGesture, setAudioNeedsGesture] = useState(true);
+  const [activeEffect, setActiveEffect] = useState<{ key: string; player: string; kind: ThrowEffectKind; pins: number | null } | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const audioVolumeRef = useRef(0.85);
+  const audioMutedRef = useRef(false);
+  const seenEventIdsRef = useRef(new Set<string>());
+  const effectQueueRef = useRef<{ event: ThrowAnalysis; kind: ThrowEffectKind }[]>([]);
+  const effectRunningRef = useRef(false);
+  const acceptedThrowsRef = useRef<ThrowResult[]>([]);
+  const effectTimerRef = useRef<number | null>(null);
+  const soundRef = useRef<OscillatorNode | null>(null);
+
+  useEffect(() => () => {
+    const audio = audioContextRef.current;
+    audioContextRef.current = null;
+    if (audio && audio.state !== 'closed') {
+      audio.onstatechange = null;
+      void audio.close().catch((err) => console.error('Live-Audio konnte nicht geschlossen werden.', err));
+    }
+  }, []);
+
+  const clearEffects = () => {
+    if (effectTimerRef.current !== null) window.clearTimeout(effectTimerRef.current);
+    effectTimerRef.current = null;
+    effectQueueRef.current = [];
+    effectRunningRef.current = false;
+    soundRef.current?.stop();
+    soundRef.current = null;
+    setActiveEffect(null);
+  };
+
+  const clearGameFeedback = () => {
+    clearEffects();
+    acceptedThrowsRef.current = [];
+    setEvents([]);
+    setExpandedThrowIndex(null);
+    setWinnerOpen(false);
+  };
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(LIVE_AUDIO_SETTINGS_KEY) ?? '{}') as { volume?: number; muted?: boolean };
+      if (saved && typeof saved.volume === 'number' && Number.isFinite(saved.volume)) setAudioVolume(Math.max(0, Math.min(1, saved.volume)));
+      if (saved && typeof saved.muted === 'boolean') setAudioMuted(saved.muted);
+    } catch (err) {
+      console.error('Live-Audio-Einstellungen konnten nicht geladen werden.', err);
+      setAudioError('Gespeicherte Toneinstellungen konnten nicht geladen werden.');
+    }
+    setAudioSettingsLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    audioVolumeRef.current = audioVolume;
+    audioMutedRef.current = audioMuted;
+    if (audioMuted || audioVolume === 0) {
+      soundRef.current?.stop();
+      soundRef.current = null;
+    }
+    if (!audioSettingsLoaded) return;
+    try {
+      window.localStorage.setItem(LIVE_AUDIO_SETTINGS_KEY, JSON.stringify({ volume: audioVolume, muted: audioMuted }));
+    } catch (err) {
+      console.error('Live-Audio-Einstellungen konnten nicht gespeichert werden.', err);
+      setAudioError('Toneinstellungen können in diesem Browser nicht gespeichert werden.');
+    }
+  }, [audioMuted, audioVolume, audioSettingsLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -634,10 +730,12 @@ export default function LivePage() {
 
     setJoinBusy(true);
     setJoinError(null);
+    if (!audioMutedRef.current && audioVolumeRef.current > 0) void unlockAudio();
     try {
       const joinedSession = await joinTrackingSession(pairingToken);
       window.sessionStorage.setItem(TRACKING_SESSION_STORAGE_KEY, joinedSession.sessionId);
-      setEvents([]);
+      clearGameFeedback();
+      seenEventIdsRef.current.clear();
       setError(null);
       setSession(joinedSession);
     } catch (err) {
@@ -652,7 +750,8 @@ export default function LivePage() {
     socketRef.current = null;
     window.sessionStorage.removeItem(TRACKING_SESSION_STORAGE_KEY);
     setSession(null);
-    setEvents([]);
+    clearGameFeedback();
+    seenEventIdsRef.current.clear();
     setConnectionState('closed');
     setLaneControlMessage(null);
     setCompanionStatus(null);
@@ -669,29 +768,110 @@ export default function LivePage() {
     if (typeof window === 'undefined') return null;
     if (!audioContextRef.current) {
       const AudioContextCtor = window.AudioContext ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) return null;
-      audioContextRef.current = new AudioContextCtor();
+      if (!AudioContextCtor) {
+        setAudioError('Dieser Browser unterstützt keine Audio-Wiedergabe.');
+        return null;
+      }
+      try {
+        const audio = new AudioContextCtor();
+        audioContextRef.current = audio;
+        audio.onstatechange = () => setAudioNeedsGesture(audio.state !== 'running');
+        setAudioNeedsGesture(audio.state !== 'running');
+      } catch {
+        setAudioError('Audio konnte in diesem Browser nicht aktiviert werden.');
+        return null;
+      }
     }
     return audioContextRef.current;
   };
 
-  const playThrowBing = () => {
+  const playThrowSound = (kind: ThrowEffectKind = 'throw') => {
+    if (audioMutedRef.current || audioVolumeRef.current === 0) return;
     const audio = getAudioContext();
-    if (!audio || audio.state !== 'running') return;
+    if (audio && audio.state === 'running') {
+      soundRef.current?.stop();
+      const now = audio.currentTime;
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.type = 'sine';
+      const notes = kind === 'throw'
+        ? [880, 1108.73]
+        : kind === 'spare'
+          ? [880, 1108.73, 1318.51]
+          : [880, 1108.73, 1318.51, 1760];
+      const peak = 0.7 * audioVolumeRef.current;
+      // A-major tones: change pitch between envelopes, not as a glissando.
+      notes.forEach((frequency, index) => {
+        const start = now + index * 0.15;
+        const last = index === notes.length - 1;
+        const notePeak = Math.max(0.0001, peak * (last ? 1 : 0.72));
+        oscillator.frequency.setValueAtTime(frequency, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(notePeak, start + 0.015);
+        if (last) gain.gain.setValueAtTime(notePeak, start + 0.16);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + (last ? 0.65 : 0.14));
+      });
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      soundRef.current = oscillator;
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+        if (soundRef.current === oscillator) soundRef.current = null;
+      };
+      oscillator.start(now);
+      oscillator.stop(now + (notes.length - 1) * 0.15 + 0.67);
+      setAudioError(null);
+      return;
+    }
+    if (audio) setAudioNeedsGesture(true);
+  };
 
-    const now = audio.currentTime;
-    const oscillator = audio.createOscillator();
-    const gain = audio.createGain();
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, now);
-    oscillator.frequency.exponentialRampToValueAtTime(1320, now + 0.08);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-    oscillator.connect(gain);
-    gain.connect(audio.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.24);
+  const unlockAudio = async () => {
+    const audio = getAudioContext();
+    if (!audio) return false;
+    try {
+      if (audio.state !== 'running') await audio.resume();
+      if (audio.state !== 'running') {
+        setAudioNeedsGesture(true);
+        return false;
+      }
+      setAudioNeedsGesture(false);
+      setAudioError(null);
+      return true;
+    } catch (err) {
+      console.error('Live-Audio konnte nicht aktiviert werden.', err);
+      setAudioError('Ton konnte nicht aktiviert werden.');
+      return false;
+    }
+  };
+
+  const runNextEffect = () => {
+    if (effectRunningRef.current) return;
+    const next = effectQueueRef.current.shift();
+    if (!next) return;
+    effectRunningRef.current = true;
+    const duration = THROW_EFFECT_DURATION[next.kind];
+    setActiveEffect({
+      key: throwCellKey(next.event.player, next.event.frame, next.event.throw),
+      player: next.event.player,
+      kind: next.kind,
+      pins: next.event.pinsKnockedDown ?? null,
+    });
+    effectTimerRef.current = window.setTimeout(() => {
+      effectTimerRef.current = null;
+      setActiveEffect(null);
+      effectRunningRef.current = false;
+      runNextEffect();
+    }, duration);
+  };
+
+  const enqueueThrowEffect = (event: ThrowAnalysis) => {
+    const kind = classifyThrow(event, acceptedThrowsRef.current);
+    playThrowSound(kind);
+    acceptedThrowsRef.current = [...acceptedThrowsRef.current, event];
+    effectQueueRef.current.push({ event, kind });
+    runNextEffect();
   };
 
   useEffect(() => {
@@ -700,28 +880,38 @@ export default function LivePage() {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const sessionId = session.sessionId;
+    acceptedThrowsRef.current = session.scoreboard?.throws ?? [];
 
-    const unlockAudio = () => {
-      const audio = getAudioContext();
-      if (audio?.state === 'suspended') {
-        audio.resume().catch(() => undefined);
-      }
-    };
-
-    window.addEventListener('pointerdown', unlockAudio, { once: true });
-    window.addEventListener('keydown', unlockAudio, { once: true });
+    const onAudioGesture = () => { if (!audioMutedRef.current) void unlockAudio(); };
+    window.addEventListener('pointerdown', onAudioGesture);
+    window.addEventListener('keydown', onAudioGesture);
 
     const applyEvent = (event: LiveEvent) => {
       if (event.type === 'session_snapshot') {
-        if (event.payload.session) setSession(event.payload.session);
+        clearEffects();
+        if (event.payload.session) {
+          setSession(event.payload.session);
+          acceptedThrowsRef.current = event.payload.session.scoreboard?.throws ?? [];
+        }
         if (Array.isArray(event.payload.events)) {
+          event.payload.events.forEach((item) => {
+            if (item && typeof item === 'object' && 'eventId' in item && typeof item.eventId === 'string') {
+              seenEventIdsRef.current.add(item.eventId);
+            }
+          });
           setEvents(event.payload.events.slice(-MAX_VISIBLE_EVENTS));
         }
         return;
       }
 
+      if (event.type === 'session_reset') {
+        clearGameFeedback();
+        return;
+      }
+      if (event.type === 'throw_corrected') clearEffects();
       if (event.payload.session) {
         setSession(event.payload.session);
+        acceptedThrowsRef.current = event.payload.session.scoreboard?.throws ?? [];
       }
       if (event.type === 'companion_connected') {
         setSession((current) => current ? { ...current, companionConnected: true } : current);
@@ -737,14 +927,15 @@ export default function LivePage() {
         setError(null);
         setConnectionState('connecting');
         const history = await fetchTrackingEvents(sessionId).catch(() => []);
-        if (!cancelled) setEvents(history.slice(-MAX_VISIBLE_EVENTS));
-
         if (cancelled) return;
+        history.forEach((item) => seenEventIdsRef.current.add(item.eventId));
+        setEvents(history.slice(-MAX_VISIBLE_EVENTS));
         const socket = new WebSocket(getTrackingWebSocketUrl(sessionId));
         socketRef.current = socket;
 
-        socket.onopen = () => setConnectionState('open');
+        socket.onopen = () => { if (!cancelled) setConnectionState('open'); };
         socket.onmessage = (message) => {
+          if (cancelled) return;
           const parsed: unknown = JSON.parse(message.data);
           if (isLaneControlMessage(parsed)) {
             if (parsed.type === 'companion.status') setCompanionStatus(parsed.payload);
@@ -757,11 +948,15 @@ export default function LivePage() {
             return;
           }
           const event = parsed as LiveEvent;
-          if (event.type === 'throw_analyzed') playThrowBing();
+          if (!event.eventId || seenEventIdsRef.current.has(event.eventId)) return;
+          seenEventIdsRef.current.add(event.eventId);
+          if (isLiveThrow(event)) enqueueThrowEffect(event.payload);
           applyEvent(event);
         };
-        socket.onerror = () => setError('Live-Verbindung konnte nicht stabil aufgebaut werden.');
+        socket.onerror = () => { if (!cancelled) setError('Live-Verbindung konnte nicht stabil aufgebaut werden.'); };
         socket.onclose = () => {
+          if (cancelled) return;
+          clearEffects();
           setConnectionState('closed');
           setLaneControlMessage(null);
           if (!cancelled) {
@@ -780,8 +975,10 @@ export default function LivePage() {
 
     return () => {
       cancelled = true;
-      window.removeEventListener('pointerdown', unlockAudio);
-      window.removeEventListener('keydown', unlockAudio);
+      clearGameFeedback();
+      seenEventIdsRef.current.clear();
+      window.removeEventListener('pointerdown', onAudioGesture);
+      window.removeEventListener('keydown', onAudioGesture);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socketRef.current?.close();
       socketRef.current = null;
@@ -826,12 +1023,12 @@ export default function LivePage() {
       setWinnerOpen(false);
       return;
     }
-    if (expandedThrowIndex !== null) return;
+    if (expandedThrowIndex !== null || activeEffect) return;
     // Keep the live view unobstructed for a moment after the deciding delivery so its detected
     // pins can be checked before the winner dialog appears.
     const timer = window.setTimeout(() => setWinnerOpen(true), FINAL_THROW_REVIEW_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [expandedThrowIndex, scoreboard?.isFinished]);
+  }, [activeEffect, expandedThrowIndex, scoreboard?.isFinished]);
 
   const reviewLatestThrow = () => {
     if (!latestLoggedThrow) return;
@@ -848,6 +1045,7 @@ export default function LivePage() {
     setRosterBusy(true);
     try {
       const updated = await resetTrackingSession(session.sessionId);
+      clearGameFeedback();
       setSession(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Neues Spiel konnte nicht gestartet werden.');
@@ -898,6 +1096,7 @@ export default function LivePage() {
       await createGame({ played_at: today, played_at_time: now.toTimeString().slice(0, 8), location, mode: '10-Pin', scores });
       if (scoreboard.isFinished) {
         const updated = await resetTrackingSession(session.sessionId);
+        clearGameFeedback();
         setSession(updated);
         setEvents([]);
         setExpandedThrowIndex(null);
@@ -1036,6 +1235,41 @@ export default function LivePage() {
       setRosterBusy(false);
     }
   };
+
+  const throwEffect = activeEffect ? (
+    <div
+      key={activeEffect.key}
+      className={`live-effect-banner ${THROW_EFFECT_CLASS[activeEffect.kind]}`}
+      style={{
+        animationDuration: `${THROW_EFFECT_ENTER_MS}ms, ${THROW_EFFECT_EXIT_MS}ms`,
+        animationDelay: `0ms, ${THROW_EFFECT_DURATION[activeEffect.kind] - THROW_EFFECT_EXIT_MS}ms`,
+      }}
+    >
+      <div
+        className="live-effect-breath"
+        style={{ animationDelay: `${Math.max(0, THROW_EFFECT_ENTER_MS - THROW_EFFECT_BREATH_OVERLAP_MS)}ms` }}
+      >
+        {activeEffect.kind !== 'throw' && (
+          <svg className="live-effect-crown" viewBox="0 0 120 84" aria-hidden="true">
+            {[{ x: 22, y: 24 }, { x: 60, y: 12 }, { x: 98, y: 24 }].map(({ x, y }) => (
+              <polygon
+                key={x}
+                className="live-effect-star"
+                transform={`translate(${x} ${y})`}
+                points="0,-9 2.6,-3.1 9,-2.8 4.2,1.5 5.6,8 0,4.6 -5.6,8 -4.2,1.5 -9,-2.8 -2.6,-3.1"
+              />
+            ))}
+            <path d="M12 40 33 54 60 28 87 54 108 40 99 71H21Z" />
+            <path d="M22 77H98V82H22Z" />
+          </svg>
+        )}
+        <span className="live-effect-result">
+          {activeEffect.kind === 'throw' ? activeEffect.pins ?? '–' : `${activeEffect.kind.toUpperCase()}!`}
+        </span>
+        <strong className="live-effect-player">{activeEffect.player}</strong>
+      </div>
+    </div>
+  ) : null;
 
   // Live-data blocks, shared between the narrow (side-by-side) and wide (stacked) layouts.
   const aktuellCard = (
@@ -1198,6 +1432,27 @@ export default function LivePage() {
             <span className="rounded-full border subtle-surface px-3 py-1.5 text-lane-700">{session?.liveClientCount ?? 1} Clients</span>
           </div>
 
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 rounded-full border subtle-surface px-3 py-1.5 text-xs font-bold text-lane-700">
+              <span aria-hidden="true">🔊</span><span className="sr-only">Lautstärke</span>
+              <input type="range" min="0" max="1" step="0.05" value={audioVolume}
+                onChange={(event) => { setAudioVolume(Number(event.target.value)); setAudioMuted(false); void unlockAudio(); }}
+                className="w-20 accent-coral" aria-label="Lautstärke" />
+            </label>
+            <button type="button" onClick={() => {
+              if (audioMuted) void unlockAudio();
+              setAudioMuted(!audioMuted);
+            }}
+              className="rounded-full border subtle-surface px-3 py-1.5 text-xs font-bold text-lane-700" aria-pressed={audioMuted}>
+              {audioMuted ? 'Ton an' : 'Ton aus'}
+            </button>
+            <button type="button" onClick={async () => { if (await unlockAudio()) playThrowSound(); }}
+              disabled={audioMuted || audioVolume === 0}
+              className="rounded-full border subtle-surface px-3 py-1.5 text-xs font-bold text-lane-700 disabled:opacity-40">
+              {audioNeedsGesture ? 'Ton aktivieren' : 'Ton testen'}
+            </button>
+          </div>
+
           {/* Operator controls: start a fresh game, or set how many bowlers are on the lane. */}
           <div className="flex items-center gap-3">
             <button
@@ -1247,6 +1502,7 @@ export default function LivePage() {
             </div>
           </div>
         </section>
+        {audioError && <p className="text-center text-xs font-bold text-coral">{audioError}</p>}
 
         {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
         {saveMsg && <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{saveMsg}</section>}
@@ -1257,24 +1513,59 @@ export default function LivePage() {
           companionConnected={Boolean(session?.companionConnected)}
           message={laneControlMessage}
           send={sendLaneMessage}
+          calibrationControls={
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-3">
+                {(['calibrate', 'accept-lane'] as const).map((command) => (
+                  <button
+                    key={command}
+                    type="button"
+                    disabled={connectionState !== 'open' || !session.companionConnected}
+                    onClick={() => sendCompanionCommand(command)}
+                    className="rounded-full border border-lane-700 px-3 py-2 text-xs font-black text-lane-200 disabled:opacity-40"
+                  >
+                    {{ calibrate: 'Kalibrieren', 'accept-lane': 'Bahn übernehmen' }[command]}
+                  </button>
+                ))}
+                <label className="flex flex-wrap items-center gap-2 text-xs font-black text-lane-200">
+                  Zoom {Math.round((companionStatus?.zoom ?? 0) * 100)}%
+                  <input
+                    type="range"
+                    aria-label="Zoom"
+                    min="0"
+                    max="100"
+                    value={Math.round((companionStatus?.zoom ?? 0) * 100)}
+                    disabled={connectionState !== 'open' || !session.companionConnected}
+                    onChange={(event) => setCompanionStatus((current) => ({
+                      batteryPercent: null, charging: false, dimmed: false, laneLocked: false,
+                      pinsMarked: false, ready: false, ...current, zoom: Number(event.target.value) / 100,
+                    }))}
+                    onPointerUp={(event) => sendCompanionCommand('set-zoom', Number(event.currentTarget.value) / 100)}
+                    onKeyUp={(event) => {
+                      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+                        sendCompanionCommand('set-zoom', Number(event.currentTarget.value) / 100);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              {companionCommandMessage && <p className="text-xs font-bold text-lane-300" aria-live="polite">{companionCommandMessage}</p>}
+            </div>
+          }
         >
           <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-lane-200 pt-3">
             <div>
               <p className="text-sm font-bold text-lane-600">
-                Akku {companionStatus?.batteryPercent ?? '–'}%{companionStatus?.charging ? ' · lädt' : ''} · Zoom {Math.round((companionStatus?.zoom ?? 0) * 100)}% · {companionStatus?.ready ? 'bereit' : 'nicht bereit'}{companionStatus?.dimmed ? ' · gedimmt' : ''}
+                Akku {companionStatus?.batteryPercent ?? '–'}%{companionStatus?.charging ? ' · lädt' : ''} · {companionStatus?.ready ? 'bereit' : 'nicht bereit'}{companionStatus?.dimmed ? ' · gedimmt' : ''}
               </p>
               {companionCommandMessage && <p className="mt-1 text-xs font-bold text-lane-500">{companionCommandMessage}</p>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {(['calibrate', 'accept-lane', 'mark-pins', 'clear-track'] as const).map((command) => (
+              {(['mark-pins', 'clear-track'] as const).map((command) => (
                 <button key={command} type="button" disabled={!session?.companionConnected} onClick={() => sendCompanionCommand(command)} className="rounded-full border subtle-surface px-3 py-2 text-xs font-black text-lane-700 disabled:opacity-40">
-                  {{ calibrate: 'Kalibrieren', 'accept-lane': 'Bahn übernehmen', 'mark-pins': 'Pins markieren', 'clear-track': 'Track löschen' }[command]}
+                  {{ 'mark-pins': 'Pins markieren', 'clear-track': 'Track löschen' }[command]}
                 </button>
               ))}
-              <label className="flex items-center gap-2 text-xs font-black text-lane-600">
-                Zoom
-                <input type="range" min="0" max="100" value={Math.round((companionStatus?.zoom ?? 0) * 100)} disabled={!session?.companionConnected} onChange={(event) => setCompanionStatus((current) => ({ batteryPercent: null, charging: false, dimmed: false, laneLocked: false, pinsMarked: false, ready: false, ...current, zoom: Number(event.target.value) / 100 }))} onPointerUp={(event) => sendCompanionCommand('set-zoom', Number(event.currentTarget.value) / 100)} />
-              </label>
             </div>
           </div>
         </LaneCalibrationPanel>
@@ -1310,6 +1601,7 @@ export default function LivePage() {
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">
           <LaneView
             lastThrow={lastThrow}
+            throwEffect={throwEffect}
             pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
             onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
@@ -1332,6 +1624,7 @@ export default function LivePage() {
           {lowConfidenceBadge}
           <LaneView
             lastThrow={lastThrow}
+            throwEffect={throwEffect}
             orientation="horizontal"
             pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
@@ -1360,7 +1653,10 @@ export default function LivePage() {
               <tbody>
                 {(scoreboard?.players ?? []).map((player) => (
                   <tr key={player.index} className={player.isCurrent ? 'live-current-player-row' : ''}>
-                    <td className="h-10 border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
+                    <td className="relative h-10 border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
+                      {activeEffect?.player === player.name && (
+                        <span key={activeEffect.key} className="live-thrower-highlight" aria-hidden="true" />
+                      )}
                       {player.isCurrent && <span className="mr-1 text-coral">▸</span>}
                       <input
                         type="text"
@@ -1403,14 +1699,14 @@ export default function LivePage() {
                       return (
                         <td key={fIdx} className={`h-10 border border-lane-200 px-0 py-0 align-top ${bgClass}`}>
                           <div className="relative flex h-5 border-b border-lane-100 text-[0.65rem] leading-5">
-                            <span className="relative h-full w-1/2 border-r border-lane-100 px-1 text-center">
+                            <span className={`relative h-full w-1/2 border-r border-lane-100 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 1) ? 'live-throw-cell' : ''}`}>
                               {frame ? ballGlyph(frame, 0) : ''}
                               {split && (
                                 <SplitPatternPopover standingPins={split.standingPins} converted={split.converted} />
                               )}
                             </span>
-                            <span className="h-full w-1/2 px-1 text-center">{frame ? ballGlyph(frame, 1) : ''}</span>
-                            {fIdx === 9 && <span className="h-full w-1/2 border-l border-lane-100 px-1 text-center">{frame ? ballGlyph(frame, 2) : ''}</span>}
+                            <span className={`h-full w-1/2 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 2) ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 1) : ''}</span>
+                            {fIdx === 9 && <span className={`h-full w-1/2 border-l border-lane-100 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 3) ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 2) : ''}</span>}
                           </div>
                           <div className="h-5 px-1 text-center text-lane-600 leading-5">{frame?.cumulative ?? ''}</div>
                         </td>

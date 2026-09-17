@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Bowling Live – Testspielplatz</title>
+  <style>
+    :root { font-family: system-ui,sans-serif; color:#172033; background:#f4f1eb; }
+    body { max-width:760px; margin:0 auto; padding:24px; } main { display:grid; gap:14px; }
+    section { background:white; border:1px solid #d8d2c8; border-radius:14px; padding:18px; box-shadow:0 2px 8px #0000000c; }
+    h1 { margin-top:0; } h2 { font-size:1rem; margin:0 0 10px; } label { display:block; margin:8px 0 4px; font-weight:700; }
+    input,button { font:inherit; border-radius:8px; padding:9px 11px; border:1px solid #aaa; }
+    input { width:100%; box-sizing:border-box; } button { cursor:pointer; background:#172033; color:white; border-color:#172033; }
+    button.secondary { background:white; color:#172033; } button:disabled { opacity:.45; cursor:not-allowed; }
+    .code { font-size:3rem; letter-spacing:.18em; font-weight:900; color:#b23a48; } .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .muted { color:#667085; font-size:.9rem; } .status { min-height:1.4em; } pre { white-space:pre-wrap; max-height:180px; overflow:auto; background:#f7f7f7; padding:10px; }
+    .pins button { min-width:42px; } .danger { background:#b23a48; border-color:#b23a48; }
+  </style>
+</head>
+<body>
+<main>
+  <section>
+    <h1>Live-Testspielplatz</h1>
+    <p class="muted">Echte Backend-Events für die Live-Seite – keine Mock-Animationen. Alle Daten bleiben in einer separaten lokalen SQLite-Datei.</p>
+    <label for="players">Spieler (ein Name pro Zeile)</label>
+    <textarea id="players" rows="3" style="width:100%;box-sizing:border-box">Testspieler</textarea>
+    <label for="location">Ort</label><input id="location" value="Testbahn">
+    <div class="row" style="margin-top:12px"><button id="create">Neue Session erstellen</button><button class="secondary" id="open" disabled>Live-Seite öffnen</button></div>
+    <div id="code" class="code" hidden></div>
+    <p class="muted">Den sechsstelligen Code bei Bedarf manuell in der Live-Seite koppeln. Dort einmal <b>Ton testen</b> anklicken (Browser-Geste).</p>
+  </section>
+  <section>
+    <h2>Wurf simulieren</h2>
+    <div class="row pins" id="counts"></div>
+    <div class="row" id="presets" style="margin-top:10px"></div>
+    <p class="muted">Presets mit mehreren Würfen sind absichtlich nur bei einem Spieler, neuem Frame und voller Bahn aktiv.</p>
+    <div class="row" style="margin-top:10px"><button id="reset" class="danger" disabled>Spiel zurücksetzen</button></div>
+    <p id="state" class="status muted">Noch keine Session.</p>
+  </section>
+  <section><h2>Protokoll</h2><pre id="log">Bereit.</pre></section>
+</main>
+<script type="module" src="/debug/assets/client.mjs"></script>
+</body>
+</html>

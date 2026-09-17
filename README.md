@@ -113,3 +113,4 @@ For more detail, see:
 
 - [backend/README.md](backend/README.md)
 - [frontend/README.md](frontend/README.md)
+- [docs/local-bowling-playground.md](docs/local-bowling-playground.md)

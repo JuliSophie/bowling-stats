@@ -24,6 +24,7 @@ export default function LaneCalibrationPanel({
   message,
   send,
   children,
+  calibrationControls,
 }: {
   sessionId: string;
   connected: boolean;
@@ -31,6 +32,7 @@ export default function LaneCalibrationPanel({
   message: LaneControlMessage | null;
   send: (message: string) => boolean;
   children?: React.ReactNode;
+  calibrationControls?: React.ReactNode;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -132,7 +134,7 @@ export default function LaneCalibrationPanel({
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
-    const focusable = () => modalRef.current?.querySelectorAll<HTMLElement>('button, [tabindex="0"]');
+    const focusable = () => modalRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]');
     const first = focusable()?.[0];
     first?.focus();
     const handleKey = (event: KeyboardEvent) => {
@@ -302,6 +304,11 @@ export default function LaneCalibrationPanel({
           <button type="button" onClick={closeModal} aria-label="Kalibrierung schließen" className="grid h-10 w-10 place-items-center rounded-full border border-lane-700 text-xl text-white focus:outline-none focus:ring-2 focus:ring-coral">×</button>
         </div>
         <div className="min-h-0 overflow-y-auto p-3 sm:p-5">
+          {calibrationControls && (
+            <div className="mb-4 rounded-xl border border-lane-700 p-3">
+              {calibrationControls}
+            </div>
+          )}
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
             <div className="min-w-0 overflow-hidden rounded-xl border border-lane-700 bg-black">
               {screenshot ? <canvas ref={canvasRef} tabIndex={0} className="mx-auto block h-auto max-h-[calc(100dvh-10rem)] w-auto max-w-full touch-none" style={{ aspectRatio: `${screenshot.payload.image.width} / ${screenshot.payload.image.height}` }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={stopDragging} onPointerCancel={stopDragging} aria-label="Kamerabild. Bahnecken mit Maus oder Touch ziehen." /> : <div className="grid min-h-48 place-items-center px-6 text-center text-sm font-bold text-lane-300">{companionConnected ? 'Kamerabild anfordern, um die Bahn einzustellen.' : 'Companion ist nicht verbunden.'}</div>}

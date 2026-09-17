@@ -67,6 +67,73 @@ In a reverse-proxy setup, `/api` should be forwarded to the backend.
 - game charts and social/group stats
 - player rename action on the detail page
 
+### Companion-Kalibrierung
+
+Zoomanzeige und Zoomregler sowie „Kalibrieren“ und „Bahn übernehmen“ befinden sich
+ausschließlich im Overlay „Kalibrierung öffnen“. Der Zoomregler unterstützt Maus,
+Touch und Tastatur. Befehlsrückmeldungen werden auch direkt im Overlay angezeigt.
+Akku/Bereitschaft, „Pins markieren“ und „Track löschen“ bleiben im normalen
+Companion-Bereich. Ohne Live-/Companion-Verbindung sind die Setup-Steuerungen deaktiviert.
+
+### Live-Effekte und Ton
+
+Neue, live eintreffende Würfe werden nur einmal hervorgehoben: Der werfende Spieler erhält
+einen kurzen Licht-Sweep und die Score-Zelle poppt auf. Spares und Strikes zeigen zusätzlich
+eine sequenzierte SPARE-/STRIKE-, DOUBLE- oder TURKEY-Einblendung. Historische Daten,
+Reconnect-Snapshots, Duplikate und Korrekturen lösen keine Effekte aus. Die Animationen
+laufen einzeln in einer kleinen Warteschlange und respektieren `prefers-reduced-motion`.
+Die Ergebnisanzeige aktualisiert sich dabei sofort. Ein schwebendes Overlay direkt über
+der Bahn erscheint und verblasst, ohne Platz im Layout zu reservieren oder Klicks auf
+die Bahn abzufangen. Das gilt für die mobile und die Desktop-Ansicht.
+Die Einblendung hat keine Hintergrundfläche: Große Schrift mit Kontur und Schatten
+bleibt über der Bahn lesbar. Spare trägt eine silberne Krone mit drei Sternen,
+Strike eine goldene; Double und Turkey werden stufenweise größer.
+Normale Würfe zeigen die jeweilige Pinzahl (auch 0) ohne Krone.
+Die Einblendungen dauern 5 Sekunden (Pinzahl), 7 Sekunden (Spare), 8 Sekunden (Strike),
+9 Sekunden (Double) und 10 Sekunden (Turkey). Schrift und Kronen sind besonders groß.
+Die Einblendung zoomt aus einem Punkt auf und schrumpft am Ende zum selben Punkt
+zurück. Dazwischen „atmen“ Schrift und Krone sanft
+(7 % Größenänderung in 1,8 Sekunden pro Richtung), ohne ihre Position zu verändern.
+Abgestimmte Bézier-Kurven beschleunigen und bremsen die Bewegungen weich ab.
+Die Atmung beginnt bereits 0,2 Sekunden vor dem Ende des Aufzoomens, damit der
+Übergang ohne Stillstand ineinanderfließt.
+Auf schmalen Geräten darf das Overlay über die schmale Bahn hinausreichen, bleibt aber
+innerhalb des Bildschirms. Die Ergebnisdialog-Anzeige wartet laufende Wurfeffekte ab.
+Spielneustart und Sessionwechsel verwerfen laufende und wartende
+Effekte. Strike-Serien berücksichtigen auch die Historie und korrigierte Ergebnisse.
+
+Zum Anpassen: In `app/live/page.tsx` steuern `THROW_EFFECT_ENTER_MS` und
+`THROW_EFFECT_EXIT_MS` Ein- und Ausblenden, `THROW_EFFECT_DURATION` die Gesamtdauer
+je Wurftyp (alle Werte in Millisekunden; Gesamtdauer größer als Ein- plus Ausblenden
+wählen). `THROW_EFFECT_BREATH_OVERLAP_MS` legt die Überlappung des Aufzoomens mit
+der Atmung fest. In `app/globals.css` steuert `animation-timing-function` bei
+`.live-effect-banner` die Zoom-Kurven, `.live-effect-breath` das Atemtempo und
+`@keyframes live-effect-breathe` dessen Stärke (`scale(1.07)` entspricht +7 %).
+Die Klassen `.live-effect-banner`, `.live-effect-throw`, `.live-effect-double`
+und `.live-effect-turkey` enthalten die Schriftgrößen.
+
+Jeder neue Live-Wurf löst sofort einen dezenten, aufsteigenden Klang aus,
+unabhängig von wartenden Animationen. Normale Würfe spielen zwei weiche Sinustöne
+(A5 und C#6, eine große Terz). Spare ergänzt E6 zu drei Tönen; Strike, Double und
+Turkey ergänzen zusätzlich A6 zu vier Tönen. Der letzte Ton bleibt jeweils kurz
+stehen und klingt länger weich aus. Gesamtdauer: 0,82 / 0,97 / 1,12 Sekunden.
+Getrennte Lautstärke-Hüllkurven ersetzen den gleitenden „Bloop“.
+„Ton testen“ spielt den Zweiklang.
+Historie, Duplikate und der spätere Start einer wartenden Animation erzeugen keinen weiteren Ton.
+Der Browser benötigt dafür einmalig eine Benutzeraktion: Beim Koppeln wird Audio bereits
+aktiviert. Nach automatischer Session-Wiederherstellung oder einer Audio-Unterbrechung
+steht bei Bedarf „Ton aktivieren“ bereit; danach heißt der Button „Ton testen“.
+Die normale Autoplay-Sperre erzeugt keinen wiederkehrenden Warntext.
+Lautstärke und Stummschaltung lassen sich im Live-Statusbereich ändern und werden lokal
+im Browser gespeichert. Nicht unterstützte Audio-Wiedergabe und echte Aktivierungsfehler
+werden weiterhin sichtbar angezeigt.
+Der Standardpegel beträgt 85 % bei einer maximalen Signalamplitude von 0,7
+(vorher 0,18). Es spielt immer nur ein Ton gleichzeitig. Bei 0 % oder Stummschaltung
+bleiben auch Testtöne stumm.
+
+Die Wurfklassifikation lässt sich mit Node.js 22.6+ prüfen:
+`node --experimental-strip-types --test lib/live-effects.test.mjs`.
+
 ## Homescreen install
 
 The frontend includes:
