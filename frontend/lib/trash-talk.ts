@@ -1,4 +1,5 @@
 import * as T from './trash-talk-texts';
+import { selectTrashTalkV3, type TrashTalkFactContext } from './trash-talk-v3';
 import {
   buildDayScoreContext,
   buildLossScoreContext,
@@ -27,6 +28,7 @@ export type DayUnderdogTrash = {
 
 export type DayPlayerTrashStats = {
   name: string;
+  totalPins: number;
   wins: number;
   avgScore: number;
   openFrameRate: number;
@@ -52,43 +54,12 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-// One salt per browser session. Stored in sessionStorage so the same texts
-// survive navigation and reloads within the tab, but reshuffle in a new session.
-// During SSR there is no window; benchmarks only render client-side (after data
-// loads behind a loading gate), so the SSR fallback never reaches the DOM.
-const SESSION_SALT_KEY = 'bowling-trash-seed';
-let cachedSalt: string | null = null;
-
-function sessionSalt(): string {
-  if (cachedSalt !== null) return cachedSalt;
-  if (typeof window === 'undefined') return 'ssr';
-  try {
-    let salt = window.sessionStorage.getItem(SESSION_SALT_KEY);
-    if (!salt) {
-      salt = Math.random().toString(36).slice(2);
-      window.sessionStorage.setItem(SESSION_SALT_KEY, salt);
-    }
-    cachedSalt = salt;
-  } catch {
-    cachedSalt = 'fallback';
-  }
-  return cachedSalt;
-}
-
-function currentPath(): string {
-  if (typeof window === 'undefined') return '';
-  return window.location.pathname;
-}
-
-// Seeded pick: same (session, page, seed) -> same text. The seed is an element
-// identity built from the current URL path plus a content/category key (e.g.
-// `sc:150` on `/stats/games/12`). So a given card stays put across navigation
-// this session, the same card on a different page picks independently, and two
-// different cards that merely share a number don't collide. Omit the seed to
-// fall back to per-render random.
-function pick<T>(items: readonly T[], seed?: string): T {
-  if (seed === undefined) return items[Math.floor(Math.random() * items.length)] ?? items[0];
-  return items[hashString(`${sessionSalt()}|${currentPath()}|${seed}`) % items.length] ?? items[0];
+// Content is selected from the semantic card identity only.  In particular,
+// browser session, pathname and random values must never affect a saying:
+// the same card therefore renders identically on every route and device.
+function pick(items: readonly string[], seed?: string): string {
+  if (items.length === 0) return '';
+  return items[(seed === undefined ? 0 : hashString(seed)) % items.length] ?? items[0];
 }
 
 function formatCompactPercent(value: number) {
@@ -112,8 +83,9 @@ export type PlayerScoreKind = 'average' | 'peak' | 'winningPeak' | 'cheapWin' | 
 export function scoreBenchmark(score: number, seedKey?: string): StatBenchmark {
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `sc:${seedKey ? seedKey + ':' : ''}${score}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
-  const v2Detail = selectTrashTalkV2(buildScoreContext(score, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
+  const v2Seed = s;
+  const v3Detail = selectTrashTalkV3({ scope: 'score', score, playerName: seedKey });
+  const v2Detail = v3Detail?.text ?? selectTrashTalkV2(buildScoreContext(score, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (score >= 200) return { percent, label: 'Außerirdisch', detail: v2Detail ?? pick(T.score.legendary, s), tone: 'good' };
   if (score >= 170) return { percent, label: 'Sehr stark', detail: v2Detail ?? pick(T.score.veryStrong, s), tone: 'good' };
   if (score >= 145) return { percent, label: 'Stark', detail: v2Detail ?? pick(T.score.strong, s), tone: 'good' };
@@ -123,7 +95,7 @@ export function scoreBenchmark(score: number, seedKey?: string): StatBenchmark {
 }
 
 // --- Player-relative score: compares a score to that player's own average ---
-export function playerScoreBenchmark(score: number, playerAverage: number, kind: PlayerScoreKind = 'peak', seedKey?: string): StatBenchmark {
+export function playerScoreBenchmark(score: number, playerAverage: number, kind: PlayerScoreKind = 'peak', seedKey?: string, factContext?: TrashTalkFactContext): StatBenchmark {
   if (!Number.isFinite(playerAverage) || playerAverage <= 0) return scoreBenchmark(score, seedKey);
 
   const roundedAverage = roundOne(playerAverage);
@@ -132,8 +104,10 @@ export function playerScoreBenchmark(score: number, playerAverage: number, kind:
     ? scoreBenchmark(score).percent
     : clampPercent(50 + (delta / 50) * 45);
   const s = `psc:${seedKey ? seedKey + ':' : ''}${kind}:${score}:${roundedAverage}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
-  const v2Detail = selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { won: kind === 'winningPeak' || kind === 'cheapWin' || kind === 'winningAverage' }), {
+  const v2Seed = s;
+  const won = kind === 'winningPeak' || kind === 'cheapWin' || kind === 'winningAverage';
+  const v3Detail = selectTrashTalkV3(factContext ?? { scope: 'player-score', score, average: roundedAverage, playerName: seedKey, won });
+  const v2Detail = v3Detail?.text ?? selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { won }), {
     seed: v2Seed,
     preferFragments: true,
     maxIntensity: 4,
@@ -170,7 +144,7 @@ export function playerScoreBenchmark(score: number, playerAverage: number, kind:
   return { percent, label: 'Peak-Alarm', detail: v2Detail ?? pick(T.playerRelativeScore.absurd(score, roundedAverage, formatSignedPins(delta)), s), tone: 'good' };
 }
 
-export function playerLossScoreBenchmark(score: number, playerAverage: number, seedKey?: string): StatBenchmark {
+export function playerLossScoreBenchmark(score: number, playerAverage: number, seedKey?: string, factContext?: TrashTalkFactContext): StatBenchmark {
   if (!Number.isFinite(playerAverage) || playerAverage <= 0) return lossScoreBenchmark(score, seedKey);
 
   const roundedAverage = roundOne(playerAverage);
@@ -178,8 +152,9 @@ export function playerLossScoreBenchmark(score: number, playerAverage: number, s
   const ratio = score / roundedAverage;
   const percent = clampPercent(50 + (delta / 50) * 45);
   const s = `plsc:${seedKey ? seedKey + ':' : ''}${score}:${roundedAverage}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
-  const v2Detail = selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { lost: true }), {
+  const v2Seed = s;
+  const v3Detail = selectTrashTalkV3(factContext ?? { scope: 'player-score', score, average: roundedAverage, playerName: seedKey, lost: true });
+  const v2Detail = v3Detail?.text ?? selectTrashTalkV2(buildPlayerScoreContext(score, roundedAverage, seedKey, { lost: true }), {
     seed: v2Seed,
     preferFragments: true,
     maxIntensity: 4,
@@ -220,7 +195,7 @@ export function medianConsistencyBenchmark(avgScore: number, medianScore: number
   const absDiff = Math.abs(diff);
   const percent = clampPercent(100 - (absDiff / 10) * 100);
   const s = `mcons:${diff}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildStatContext('medianConsistency', diff, s, absDiff), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
 
   if (absDiff < 1) return { percent, label: 'Roboter', detail: v2Detail ?? pick(T.medianConsistency.nearIdentical, s), tone: 'good' };
@@ -235,7 +210,7 @@ export function medianConsistencyBenchmark(avgScore: number, medianScore: number
 export function openFrameBenchmark(rate: number): StatBenchmark {
   const percent = clampPercent(100 - rate * 1.7);
   const s = `ofr:${rate}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildOpenFrameContext(rate, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (rate <= 20) return { percent, label: 'Sehr sauber', detail: v2Detail ?? pick(T.openFrame.veryClean, s), tone: 'good' };
   if (rate <= 35) return { percent, label: 'Gut kontrolliert', detail: v2Detail ?? pick(T.openFrame.controlled, s), tone: 'okay' };
@@ -247,7 +222,7 @@ export function openFrameBenchmark(rate: number): StatBenchmark {
 export function rateBenchmark(rate: number, kind: 'strikeFollow' | 'comeback' | 'win'): StatBenchmark {
   const percent = clampPercent(rate);
   const s = `rate:${kind}:${rate}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildRateContext(rate, kind, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'win') {
     if (rate >= 65) return { percent, label: 'Dominant', detail: v2Detail ?? pick(T.winRate.dominant, s), tone: 'good' };
@@ -271,7 +246,7 @@ export function rateBenchmark(rate: number, kind: 'strikeFollow' | 'comeback' | 
 // --- Delta benchmark: finish strength (10th frame) / fatigue (game-over-game) ---
 export function deltaBenchmark(value: number, kind: 'finish' | 'fatigue'): StatBenchmark {
   const s = `delta:${kind}:${value}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildStatContext(kind, value, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'finish') {
     const percent = clampPercent(((value + 12) / 24) * 100);
@@ -295,7 +270,7 @@ export function countPerGameBenchmark(total: number, gamesPlayed: number, kind: 
   const percent = clampPercent((perGame / maxUseful) * 100);
   const s = `cpg:${kind}:${perGame.toFixed(2)}`;
   const statKind = kind === 'strike' ? 'strikeCount' : 'spareCount';
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildStatContext(statKind, perGame, s, total), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (kind === 'strike') {
     if (perGame >= 3) return { percent, label: `${perGame.toFixed(1)}/Spiel · stark`, detail: v2Detail ?? pick(T.strikesPerGame.strong, s), tone: 'good' };
@@ -312,7 +287,7 @@ export function countPerGameBenchmark(total: number, gamesPlayed: number, kind: 
 export function firstThrowBenchmark(value: number): StatBenchmark {
   const percent = clampPercent((value / 9) * 100);
   const s = `ftb:${value}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildStatContext('firstThrow', value, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (value >= 8) return { percent, label: 'Sehr guter erster Ball', detail: v2Detail ?? pick(T.firstThrow.veryGood, s), tone: 'good' };
   if (value >= 7) return { percent, label: 'Guter erster Ball', detail: v2Detail ?? pick(T.firstThrow.good, s), tone: 'okay' };
@@ -324,7 +299,7 @@ export function firstThrowBenchmark(value: number): StatBenchmark {
 export function streakBenchmark(streak: number): StatBenchmark {
   const percent = clampPercent((streak / 5) * 100);
   const s = `stk:${streak}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildStatContext('streak', streak, s), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (streak >= 4) return { percent, label: 'Sehr selten', detail: v2Detail ?? pick(T.streak.veryRare, s), tone: 'good' };
   if (streak === 3) return { percent, label: 'Turkey-Level', detail: v2Detail ?? pick(T.streak.turkey, s), tone: 'good' };
@@ -391,7 +366,7 @@ export function strikeFollowInfo(strikeFollowRate: number, bestStrikeStreak: num
 export function lossScoreBenchmark(score: number, seedKey?: string): StatBenchmark {
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `lsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildLossScoreContext(score, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (score >= 200) return { percent, label: 'Bitterer Verlust', detail: v2Detail ?? pick(T.lossScore.legendary, s), tone: 'warn' };
   if (score >= 170) return { percent, label: 'Stark, aber chancenlos', detail: v2Detail ?? pick(T.lossScore.veryStrong, s), tone: 'neutral' };
@@ -406,7 +381,7 @@ export function dayScoreBenchmark(score: number | null, seedKey?: string): StatB
   if (score === null) return undefined;
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `dsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildDayScoreContext(score, false, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (score >= 200) return { percent, label: 'Unfassbar', detail: v2Detail ?? pick(T.dayScore.legendary, s), tone: 'good' };
   if (score >= 170) return { percent, label: 'Brett', detail: v2Detail ?? pick(T.dayScore.strong, s), tone: 'good' };
@@ -421,7 +396,7 @@ export function dayLossScoreBenchmark(score: number | null, seedKey?: string): S
   if (score === null) return undefined;
   const percent = clampPercent(((score - 60) / 160) * 100);
   const s = `dlsc:${seedKey ? seedKey + ':' : ''}${score}`;
-  const v2Seed = `${sessionSalt()}|${currentPath()}|${s}`;
+  const v2Seed = s;
   const v2Detail = selectTrashTalkV2(buildDayScoreContext(score, true, seedKey), { seed: v2Seed, preferFragments: true, maxIntensity: 4 });
   if (score >= 200) return { percent, label: 'Tragödie', detail: v2Detail ?? pick(T.dayLossScore.legendary, s), tone: 'warn' };
   if (score >= 170) return { percent, label: 'Bitter', detail: v2Detail ?? pick(T.dayLossScore.strong, s), tone: 'neutral' };
@@ -495,32 +470,17 @@ export function playerDayContext(
   allPlayers: DayPlayerTrashStats[],
   rank: number,
   globalAverage?: number,
+  factContext?: TrashTalkFactContext | null,
 ) {
-  const leader = allPlayers[0];
-  const avgDelta = globalAverage ? Math.round((player.avgScore - globalAverage) * 10) / 10 : 0;
-  const gapToLeader = leader ? Math.round((leader.avgScore - player.avgScore) * 10) / 10 : 0;
-  const isLast = rank === allPlayers.length - 1 && allPlayers.length > 1;
-  const secondPlace = allPlayers[1];
-  const gapFirstToSecond = secondPlace ? Math.round((leader.avgScore - secondPlace.avgScore) * 10) / 10 : 0;
-  const s = `pdc:${player.name}:${rank}`;
-
-  if (rank === 0 && player.wins > 0) {
-    if (gapFirstToSecond >= 30) return pick(T.playerDay.leaderBigGap(gapFirstToSecond), s);
-    if (gapFirstToSecond >= 15) return pick(T.playerDay.leaderComfortable(gapFirstToSecond), s);
-    if (gapFirstToSecond <= 5) return pick(T.playerDay.leaderCloseWin(gapFirstToSecond), s);
-    return pick(T.playerDay.leaderDefault, s);
-  }
-
-  if (isLast && allPlayers.length >= 3 && gapToLeader >= 30) return pick(T.playerDay.lastBigGap(gapToLeader, rank), s);
-  if (isLast && gapToLeader >= 15) return pick(T.playerDay.lastNoticeableGap(gapToLeader, rank), s);
-  if (rank > 0 && gapToLeader <= 5) return pick(T.playerDay.closeToLeader(gapToLeader, rank), s);
-  if (rank > 0 && gapToLeader <= 15) return pick(T.playerDay.strikingDistance(gapToLeader, rank), s);
-
-  if (globalAverage && avgDelta >= 15) return pick(T.playerDay.aboveAvg(avgDelta), s);
-  if (globalAverage && avgDelta <= -15) return pick(T.playerDay.belowAvg(avgDelta), s);
-  if (player.openFrameRate >= 50) return pick(T.playerDay.manyOpen, s);
-  if (player.openFrameRate <= 25) return pick(T.playerDay.fewOpen, s);
-  return pick(T.playerDay.neutral, s);
+  const contextual = factContext ? selectTrashTalkV3(factContext) : null;
+  if (contextual) return contextual.text;
+  const others = allPlayers.filter((item) => item.name !== player.name);
+  if (!others.length) return `${player.name}: ${player.totalPins} Punkte in der Tagessumme.`;
+  const totalGap = player.totalPins - Math.max(...others.map((item) => item.totalPins));
+  const standing = `Platz ${rank + 1} nach Siegen und Punkten.`;
+  if (totalGap < 0) return `${standing} In der Tagessumme ${Math.abs(totalGap)} Punkte hinter der Punktespitze.`;
+  if (totalGap > 0) return `${standing} In der Tagessumme ${totalGap} Punkte vor der höchsten anderen Summe.`;
+  return `${standing} Die höchste Tagessumme wird geteilt.`;
 }
 
 // --- Game excitement trash talk ---
@@ -528,7 +488,7 @@ export function excitementTrash(tensionIndex: number): string {
   const s = `exc:${tensionIndex.toFixed(2)}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('excitement', { tensionIndex }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   if (v2) return v2;
   if (tensionIndex >= 3) return pick(T.excitement.insane, s);
@@ -542,7 +502,7 @@ export function comebackTrash(pins: number): string {
   const s = `cbt:${pins}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('comeback', { margin: pins }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   if (v2) return v2;
   if (pins >= 30) return pick(T.gameComeback.epic(pins), s);
@@ -554,7 +514,7 @@ export function bigLeadTrash(margin: number, playerName: string): string {
   const s = `blt:${margin}:${playerName}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('bigLead', { margin, playerName }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   if (v2) return v2;
   if (margin >= 40) return pick(T.bigLead.dominant(margin, playerName), s);
@@ -566,7 +526,7 @@ export function closestMomentTrash(margin: number, frame: number): string {
   const s = `cmt:${margin}:${frame}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('closestMoment', { margin, frame }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   if (v2) return v2;
   if (margin <= 3) return pick(T.closestMoment.nailBiter(margin, frame), s);
@@ -578,7 +538,7 @@ export function lateDramaTrash(leaderAfterFrame9: string, winner: string): strin
   const s = `ldt:${leaderAfterFrame9}:${winner}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('lateDrama', { leaderName: leaderAfterFrame9, winnerName: winner }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   if (v2) return v2;
   return pick(T.lateDrama.leaderLost(leaderAfterFrame9, winner), s);
@@ -589,21 +549,21 @@ export function decidingFrameTrash(frame: number | null | undefined): string | u
   const s = `dft:${frame}`;
   const v2 = selectTrashTalkV2(
     buildMatchReportContext('decidingFrame', { frame }, s),
-    { seed: `${sessionSalt()}|${currentPath()}|${s}`, preferFragments: true, maxIntensity: 4 },
+    { seed: s, preferFragments: true,  maxIntensity: 4 },
   );
   return v2 ?? undefined;
 }
 
 // --- Day recap: sassy multi-sentence summary of the whole evening ---
 export type DayRecapInput = {
-  /** Content seed (e.g. the date) so different days read differently; combined
-   *  with the per-session salt so the wording is stable within a session. */
+  /** Stable shared content seed, normally the bowling date. */
   seed: string;
   gameCount: number;
   playerCount: number;
   winnerName: string;
-  /** Average-score gap from the winner to the runner-up (clamped to >= 0). */
+  /** Signed total-pin gap to the highest OTHER total, not the wins-ranked runner-up. */
   gapToSecond: number;
+  sharedStanding?: boolean;
   /** Best single game of the day, for a positive shout-out. */
   topScorer?: { name: string; score: number } | null;
   /** Player who most overperformed their own average. */
@@ -624,11 +584,11 @@ export function buildDayRecap(input: DayRecapInput): string {
 
   sentences.push(pick(T.dayRecap.intro(gameCount, playerCount), `recap:${seed}|intro`));
 
-  const gap = Math.max(0, Math.round(gapToSecond));
-  if (gap >= 30) sentences.push(pick(T.dayRecap.champDominant(winnerName, gap), `recap:${seed}|champ`));
-  else if (gap >= 15) sentences.push(pick(T.dayRecap.champComfortable(winnerName, gap), `recap:${seed}|champ`));
-  else if (gap <= 5) sentences.push(pick(T.dayRecap.champClose(winnerName, gap), `recap:${seed}|champ`));
-  else sentences.push(pick(T.dayRecap.champDefault(winnerName), `recap:${seed}|champ`));
+  const gap = Math.round(gapToSecond);
+  const standing = input.sharedStanding ? `${winnerName} teilt die Spitze nach Siegen und Punkten.` : `${winnerName} steht nach Siegen und Punkten vorn.`;
+  if (gap < 0) sentences.push(`${standing} Zur höchsten Tagessumme fehlen trotzdem ${Math.abs(gap)} Punkte.`);
+  else if (gap === 0) sentences.push(`${standing} Bei der Tagessumme besteht Gleichstand.`);
+  else sentences.push(`${standing} In der Tagessumme sind es ${gap} Punkte Vorsprung auf die höchste andere Summe.`);
 
   // One positive highlight: a genuine underdog story beats a plain top score.
   if (underdog && underdog.upliftPercent >= 8 && underdog.name !== winnerName) {

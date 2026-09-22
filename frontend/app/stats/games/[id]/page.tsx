@@ -9,6 +9,7 @@ import { calculateGameExcitement, formatTensionIndex } from '@/lib/excitement';
 import { buildGameReport } from '@/lib/game-report';
 import { scoreBenchmark, playerScoreBenchmark, excitementTrash, comebackTrash, bigLeadTrash, closestMomentTrash, lateDramaTrash, decidingFrameTrash } from '@/lib/trash-talk';
 import { derivePlayerSummaries } from '@/lib/player-stats';
+import { buildGameContext, indexGameFacts, selectTrashTalkV3 } from '@/lib/trash-talk-v3';
 import { formatPlayedAtTime, formatDateDE } from '@/lib/frame-utils';
 import Card from '@/components/ui/card';
 import SectionCard from '@/components/ui/section-card';
@@ -28,7 +29,7 @@ const EXCITEMENT_LEVELS = [
 export default function GameDetailPage() {
   const pathname = usePathname();
   const gameId = Number(decodeURIComponent(pathname.split('/').pop() ?? ''));
-  const { games, loading } = useGames();
+  const { games, loading, error: gamesError, stale: gamesStale, catalogError, catalogStale } = useGames();
 
   if (loading) {
     return (
@@ -41,6 +42,10 @@ export default function GameDetailPage() {
     );
   }
 
+  if (gamesError && !gamesStale) {
+    return <><Navigation /><main className="app-main max-w-5xl"><div className="rounded-[1.3rem] border border-coral/40 bg-coral/10 p-6 text-sm text-coral">Spiele konnten nicht geladen werden: {gamesError}</div></main></>;
+  }
+
   const game = games.find((g) => g.id === gameId);
 
   if (!game) {
@@ -48,6 +53,8 @@ export default function GameDetailPage() {
       <>
         <Navigation />
         <main className="app-main max-w-5xl">
+          {gamesStale && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Spielstand nicht aktuell: {gamesError}. Das Spiel fehlt im zuletzt geladenen Stand; der aktuelle Stand konnte nicht geprüft werden.</p>}
+          {(catalogError || catalogStale) && <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Katalog nicht aktuell{catalogError ? `: ${catalogError}` : ' – letzter gültiger Stand wird verwendet.'}</p>}
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Spiel nicht gefunden.</p>
             <BackButton className="mt-4 inline-block back-button" />
@@ -60,6 +67,7 @@ export default function GameDetailPage() {
   const excitement = calculateGameExcitement(game);
   const report = buildGameReport(game);
   const playerSummaries = derivePlayerSummaries(games);
+  const gameFacts = indexGameFacts(games);
   const maxScore = Math.max(...game.scores.map((s) => s.total_score));
   const playedTime = formatPlayedAtTime(game.played_at_time);
 
@@ -86,6 +94,8 @@ export default function GameDetailPage() {
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
+        {gamesStale && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Spielstand nicht aktuell: {gamesError}. Letzter geladener Stand wird angezeigt.</p>}
+        {(catalogError || catalogStale) && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Sprüche-Katalog nicht aktuell{catalogError ? `: ${catalogError}` : '.'}</p>}
         <div className="flex items-center justify-between gap-2">
           <BackButton className="flex items-center gap-1.5 self-start back-button" />
           <div className="flex items-center gap-2">
@@ -113,8 +123,9 @@ export default function GameDetailPage() {
             {game.scores.map((score) => {
               const isWinner = score.total_score === maxScore;
               const summary = playerSummaries.find((p) => p.name === score.player_name);
+              const factContext = buildGameContext(gameFacts, game.id, score.player_name);
               const benchmark = summary
-                ? playerScoreBenchmark(score.total_score, summary.avgScore, isWinner ? 'winningPeak' : 'peak', score.player_name)
+                ? playerScoreBenchmark(score.total_score, summary.avgScore, isWinner ? 'winningPeak' : 'peak', score.player_name, factContext ?? undefined)
                 : scoreBenchmark(score.total_score, score.player_name);
               return (
                 <Link key={score.player_name} href={`/stats/players/${encodeURIComponent(score.player_name)}`} className={`block rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md ${isWinner ? 'winner-card' : 'border-lane-200 bg-lane-50'}`}>

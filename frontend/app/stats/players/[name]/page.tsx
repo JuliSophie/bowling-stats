@@ -31,6 +31,7 @@ import {
   type StatBenchmark,
 } from '@/lib/trash-talk';
 import type { GameRead, FrameData } from '@/types';
+import { buildGameContext, indexGameFacts } from '@/lib/trash-talk-v3';
 import { isStrikeFrame, isSpareFrame, median, parseCumulative, getFirstThrowPins, getFramePoints, formatNullableScore, getPlayerGames } from '@/lib/frame-utils';
 import { type PlayerSummary, type PinMode, derivePlayerSummaries, buildPlayerTrendData, derivePinFrequencies } from '@/lib/player-stats';
 import PinFrequencyHeatmap from '@/components/pin-frequency-deck';
@@ -524,7 +525,7 @@ export default function PlayerDetailPage() {
   const router = useRouter();
   const pathname = usePathname();
   const playerName = decodeURIComponent(pathname.split('/').pop() ?? '');
-  const { games, loading, mutate } = useGames();
+  const { games, loading, mutate, error: gamesError, stale: gamesStale, catalogError, catalogStale } = useGames();
   const [editingName, setEditingName] = useState(playerName);
   const [isEditing, setIsEditing] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -574,6 +575,9 @@ export default function PlayerDetailPage() {
       </>
     );
   }
+  if (gamesError && !gamesStale) {
+    return <><Navigation /><main className="app-main max-w-5xl"><div className="rounded-[1.3rem] border border-coral/40 bg-coral/10 p-6 text-sm text-coral">Spiele konnten nicht geladen werden: {gamesError}</div></main></>;
+  }
 
   const playerGames = getPlayerGames(games, playerName).slice().sort((a, b) => b.played_at.localeCompare(a.played_at) || b.id - a.id);
   const summary = derivePlayerSummaries(games).find((p) => p.name === playerName);
@@ -591,13 +595,17 @@ export default function PlayerDetailPage() {
         ? `Spare-Quote je Pin: wie oft ein nach dem 1. Wurf stehender Pin im 2. Wurf noch fällt (aus ${pinFrequencies.secondThrowFrames} Frames mit 2. Wurf).`
         : `Trefferquote je Pin über den ganzen Frame, aus ${pinFrequencies.framesWithData} Frames.`;
   const gamesPlayed = summary?.gamesPlayed ?? playerGames.length;
+  const gameFacts = indexGameFacts(games);
   const maxScoreGame = summary ? playerGames.find((game) => game.scores.some((score) => score.player_name === playerName && score.total_score === summary.maxScore)) : null;
   const gameHref = (gameId: number | null | undefined) => gameId == null ? undefined : `/stats/games/${gameId}`;
+  const gameContextFor = (gameId: number | null) => gameId == null ? undefined : buildGameContext(gameFacts, gameId, playerName) ?? undefined;
 
   return (
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
+        {gamesStale && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Spielstand nicht aktuell: {gamesError}. Letzter geladener Stand wird angezeigt.</p>}
+        {(catalogError || catalogStale) && <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Katalog nicht aktuell{catalogError ? `: ${catalogError}` : ' – letzter gültiger Stand wird verwendet.'}</p>}
         <BackButton className="flex items-center gap-1.5 self-start back-button" />
 
         <SectionCard>
@@ -660,7 +668,7 @@ export default function PlayerDetailPage() {
               <StatCard label="Siege" value={summary.wins} sub="gewonnene Spiele" info="Zählt Spiele, in denen du den höchsten Score hattest. Bei Gleichstand zählt es ebenfalls als Sieg." benchmark={rateBenchmark(summary.gamesPlayed > 0 ? (summary.wins / summary.gamesPlayed) * 100 : 0, 'win')} />
               <StatCard label="Durchschnitt" value={summary.avgScore} info={playerScoreInfo(summary.avgScore, summary.avgScore, 'average')} benchmark={playerScoreBenchmark(summary.avgScore, summary.avgScore, 'average')} />
               <StatCard label="Median" value={summary.medianScore} sub={`${signedDelta(Math.round((summary.medianScore - summary.avgScore) * 10) / 10)} zu Ø`} info={medianAverageInfo(summary.avgScore, summary.medianScore)} benchmark={medianConsistencyBenchmark(summary.avgScore, summary.medianScore)} />
-              <StatCard label="Bestleistung" value={summary.maxScore} href={gameHref(maxScoreGame?.id)} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak')} />
+              <StatCard label="Bestleistung" value={summary.maxScore} href={gameHref(maxScoreGame?.id)} info={playerScoreInfo(summary.maxScore, summary.avgScore, 'peak')} benchmark={playerScoreBenchmark(summary.maxScore, summary.avgScore, 'peak', playerName, gameContextFor(maxScoreGame?.id ?? null))} />
               <StatCard label="Offene Frames" value={`${summary.openFrameRate}%`} info="Anteil Frames ohne Strike oder Spare. Niedriger ist besser; offene Frames sind die freundliche Punkte-Spende an alle anderen." benchmark={openFrameBenchmark(summary.openFrameRate)} />
             </CardGrid>
           )}
@@ -765,7 +773,7 @@ export default function PlayerDetailPage() {
               value={formatNullableScore(advanced.bestWinningPoints)}
               description="Höchste Punktzahl bei einem Sieg"
               info={advanced.bestWinningPoints === null || !summary ? 'Dein höchster Score in einem Spiel, das du gewonnen hast. Zeigt, wie hoch dein Sieger-Peak war.' : playerScoreInfo(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
-              benchmark={advanced.bestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.bestWinningPoints, summary.avgScore, 'winningPeak')}
+              benchmark={advanced.bestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.bestWinningPoints, summary.avgScore, 'winningPeak', playerName, gameContextFor(advanced.bestWinningPointsGameId))}
               href={gameHref(advanced.bestWinningPointsGameId)}
             />
             <InsightCard
@@ -773,7 +781,7 @@ export default function PlayerDetailPage() {
               value={formatNullableScore(advanced.lowestWinningPoints)}
               description="Niedrigste Punktzahl, die noch gewonnen hat"
               info={advanced.lowestWinningPoints === null || !summary ? 'Der niedrigste Score, der in deinem Feld noch gereicht hat. Das sagt mehr über den Spielkontext als über Peak-Leistung.' : playerScoreInfo(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
-              benchmark={advanced.lowestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin')}
+              benchmark={advanced.lowestWinningPoints === null || !summary ? undefined : playerScoreBenchmark(advanced.lowestWinningPoints, summary.avgScore, 'cheapWin', playerName, gameContextFor(advanced.lowestWinningPointsGameId))}
               href={gameHref(advanced.lowestWinningPointsGameId)}
             />
             <InsightCard
@@ -788,7 +796,7 @@ export default function PlayerDetailPage() {
               value={formatNullableScore(advanced.highestLosingPoints)}
               description="Beste Punktzahl ohne Sieg"
               info={highestLossInfo(advanced.highestLosingPoints, advanced.averageWinningPoints)}
-              benchmark={advanced.highestLosingPoints === null || !summary ? undefined : playerLossScoreBenchmark(advanced.highestLosingPoints, summary.avgScore)}
+              benchmark={advanced.highestLosingPoints === null || !summary ? undefined : playerLossScoreBenchmark(advanced.highestLosingPoints, summary.avgScore, playerName, gameContextFor(advanced.highestLosingPointsGameId))}
               href={gameHref(advanced.highestLosingPointsGameId)}
             />
         </StatSection>

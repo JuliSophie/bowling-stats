@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Game, Player, Score
 from app.schemas import GameCreate, GameRead, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, StoredScore
+from app.services.trash_talk_evidence import score_evidence
 
 
 router = APIRouter(tags=["games"])
@@ -47,7 +48,8 @@ def list_games(db: Session = Depends(get_db)) -> list[GameRead]:
             location=game.location,
             mode=game.mode,
             user_id=game.user_id,
-            scores=[StoredScore(player_name=s[0], total_score=s[1], frames=s[2] or []) for s in scores],
+            scores=[StoredScore(player_name=s[0], total_score=s[1], frames=s[2] or [],
+                                trash_talk_evidence=score_evidence(s[2], s[1])) for s in scores],
         ))
     return result
 
@@ -109,6 +111,7 @@ def create_game(payload: GameCreate, db: Session = Depends(get_db)) -> GameRead:
                 player_name=player.name,
                 total_score=confirmed_score.total_score,
                 frames=confirmed_score.frames,
+                trash_talk_evidence=score_evidence(confirmed_score.frames, confirmed_score.total_score),
             )
         )
 

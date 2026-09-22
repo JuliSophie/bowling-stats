@@ -421,6 +421,18 @@ select {
     container-type: inline-size;
   }
 
+  .live-commentary-bubble {
+    @apply pointer-events-none absolute bottom-3 left-3 max-w-[min(22rem,calc(100%-1.5rem))] rounded-2xl border px-3 py-2 text-left text-xs font-bold leading-snug shadow-lg;
+    border-color: rgba(255, 211, 90, .65);
+    background: rgba(24, 31, 46, .92);
+    color: #fff8e7;
+  }
+
+  .live-commentary-player {
+    @apply mr-1 font-black;
+    color: #ffd35a;
+  }
+
   .live-effect-banner {
     @apply relative flex w-max flex-col items-center justify-center gap-1 text-center font-black;
     max-width: calc(100% - .5rem);

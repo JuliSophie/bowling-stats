@@ -6,6 +6,7 @@ import GameDayPreviewCard from '@/components/game-day-preview-card';
 import { useGames } from '@/lib/use-games';
 import { useStickyState } from '@/lib/use-sticky-state';
 import type { GameRead } from '@/types';
+import Link from 'next/link';
 
 type GamesByDay = {
   date: string;
@@ -49,6 +50,7 @@ export default function GamesListPage() {
           <BackButton className="back-button" />
           <h1 className="text-2xl font-bold text-lane-900">Alle Spiele</h1>
           <span className="text-sm text-lane-600">({games.length})</span>
+          <Link href="/stats/trash-talk" className="ml-auto text-sm font-bold text-coral hover:underline">Sprüche & Katalog</Link>
         </div>
 
         <div className="grid gap-4">

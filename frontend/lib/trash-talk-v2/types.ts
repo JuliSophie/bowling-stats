@@ -85,7 +85,11 @@ export type TrashTalkMessage = {
   tags?: string[];
   weight?: number;
   cooldownGroup?: string;
+  templates?: string[];
+  templateIds?: string[];
 };
+
+export type TrashTalkMessageMetadata = Omit<TrashTalkMessage, 'template'> & { poolId: string };
 
 export type TrashTalkFragmentSet = {
   id: string;
@@ -99,6 +103,12 @@ export type TrashTalkFragmentSet = {
   conditions?: TrashTalkConditions;
   weight?: number;
   cooldownGroup?: string;
+};
+
+export type TrashTalkFragmentMetadata = Omit<TrashTalkFragmentSet, 'openers' | 'cores' | 'suffixes'> & {
+  openersPoolId: string;
+  coresPoolId: string;
+  suffixesPoolId: string;
 };
 
 export type TrashTalkSelectOptions = {

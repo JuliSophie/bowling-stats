@@ -33,7 +33,7 @@ export type FrameData = {
   throw3: string;
   cumulative: string;
   // Per-ball fallen pin numbers (1..10), index 0 = first ball. Present for live-tracked games.
-  fallenPins?: number[][];
+  fallenPins?: (number[] | null)[];
   // Per-delivery speed in km/h, aligned with throw1/throw2/throw3.
   ballSpeedKmh?: (number | null)[];
   split?: {
@@ -105,6 +105,27 @@ export type StoredScore = {
   player_name: string;
   total_score: number;
   frames: FrameData[];
+  trash_talk_evidence?: TrashTalkEvidence;
+};
+
+export type TrashTalkEvidence = {
+  valid: boolean;
+  reason?: string;
+  counterfactuals: Array<{
+    frame: number;
+    original_score: number;
+    hypothetical_score: number;
+    gain: number;
+    pins_added: number;
+    single_pin_attempt: boolean;
+    pin?: number;
+  }>;
+  strike_count: number;
+  spare_count: number;
+  open_count: number;
+  clean: boolean;
+  frame_points?: number[];
+  leaves?: Array<{ frame: number; standing_pins: number[]; converted: boolean }>;
 };
 
 export type GameRead = {
@@ -151,7 +172,7 @@ export type TrackingFrame = {
   isStrike: boolean;
   isSpare: boolean;
   // Pins (1..10) that fell on each ball of this frame, in ball order.
-  fallenPins?: number[][];
+  fallenPins?: (number[] | null)[];
   ballSpeedKmh?: (number | null)[];
 };
 
@@ -164,14 +185,18 @@ export type TrackingPlayerCard = {
 };
 
 export type TrackingLoggedThrow = {
+  throwId?: string;
+  revision?: number;
   index: number;
   player: string;
   frame: number;
   throw: number;
   pinsKnockedDown?: number | null;
-  fallenPins?: number[];
-  observedFallenPins?: number[];
-  alreadyDownPins?: number[];
+  fallenPins?: number[] | null;
+  observedFallenPins?: number[] | null;
+  alreadyDownPins?: number[] | null;
+  playerIndex?: number | null;
+  commentaryContext?: LiveCommentaryContext | null;
   capturedAt?: string | null;
   manual: boolean;
   manualCorrection?: boolean;
@@ -180,14 +205,37 @@ export type TrackingLoggedThrow = {
 };
 
 export type TrackingScoreboard = {
+  revision?: number;
   playerCount: number;
   players: TrackingPlayerCard[];
   throwCount: number;
   throws?: TrackingLoggedThrow[];
   isFinished: boolean;
+  commentaryContext?: LiveCommentaryContext | null;
+};
+
+export type LiveCommentaryContext = {
+  version: 1;
+  revision: number;
+  valid?: boolean;
+  previousClearance: { throwId?: string; kind: 'strike' | 'spare' } | null;
+  weakPerformance: { kind: 'first-throw' | 'open-frame'; pins?: number; framePins?: number } | null;
+  framePins?: number | null;
+  before?: LiveStandingContext | null;
+  current?: LiveStandingContext | null;
+};
+
+export type LiveStandingContext = {
+  metric: 'earned-points-lower-bound-v1';
+  points: number;
+  highestOtherPoints: number | null;
+  gapToHighestOther: number | null;
+  position: 'unique-leader' | 'tied-leader' | 'behind' | null;
+  unequalProgress: boolean;
 };
 
 export type TrackingSession = {
+  revision?: number;
   sessionId: string;
   pairingToken: string;
   createdAt: string;
@@ -224,6 +272,7 @@ export type ThrowCurve = {
 };
 
 export type ThrowAnalysis = {
+  throwId?: string;
   sessionId: string;
   clientEventId?: string | null;
   capturedAt: string;
@@ -251,9 +300,12 @@ export type ThrowAnalysis = {
   // Smoothed reconstruction for redraw: polyline + key shape points.
   path?: BallPathPoint[];
   curve?: ThrowCurve | null;
+  playerIndex?: number | null;
+  commentaryContext?: LiveCommentaryContext | null;
 };
 
 export type LiveEvent = {
+  revision?: number;
   eventId: string;
   type: string;
   payload: {

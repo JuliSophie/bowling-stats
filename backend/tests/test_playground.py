@@ -20,6 +20,7 @@ HOST = {"host": "127.0.0.1:8317"}
 def test_lifespan_cors_and_isolated_database():
     with TestClient(app) as client:
         assert client.get("/health", headers=HOST).json()["playground"] == "bowling-stats-local"
+        assert client.get("/api/trash-talk/catalog", headers=HOST).json()["catalog"]["version"] == "3.1.0"
         cors = client.options(
             "/api/tracking/sessions",
             headers={**HOST, "Origin": "http://127.0.0.1:4317", "Access-Control-Request-Method": "POST"},

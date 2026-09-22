@@ -1,4 +1,5 @@
 import type { CornerGuessResult, ExtractionResult, GameCreate, GameRead, LineSegment, LiveEvent, ManualCorner, PlayerRenameRequest, PlayerRenameResponse, RecentPlayerNamesResponse, RectifiedPreview, StatsResponse, TableBuildResult, TrackingSession } from '@/types';
+import type { TrashTalkFragmentMetadata, TrashTalkMessageMetadata } from './trash-talk-v2/types';
 
 
 const RAW_API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? 'https://bowling-api.sophiealexandra.de/api';
@@ -123,6 +124,67 @@ export async function logout(): Promise<void> {
 
 export async function fetchSession(): Promise<SessionStatus> {
   return requestJson<SessionStatus>(`${API_BASE}/auth/session`);
+}
+
+export type TrashTalkCatalog = {
+  version: string;
+  language: string;
+  release: string;
+  scenarios: Array<{
+    id: string;
+    priority: number;
+    enabled: boolean;
+    templates: string[];
+    templateIds: string[];
+    bindings: string[];
+    kind?: string;
+    legacyMetadata?: Record<string, unknown>;
+    templateSelectionIds?: string[];
+    legacyParameters?: string[];
+  }>;
+  legacyV2?: {
+    messages: TrashTalkMessageMetadata[];
+    fragments: TrashTalkFragmentMetadata[];
+  };
+};
+
+export type TrashTalkBatch = {
+  id: string;
+  created_at: string;
+  source?: string;
+  status: string;
+  error?: string | null;
+  model?: string | null;
+  usage?: Record<string, unknown> | null;
+  cost?: Record<string, unknown> | null;
+  candidates: Array<{
+    id: string;
+    scenario_id: string;
+    text: string;
+    enabled: boolean;
+    errors: string[];
+  }>;
+  [key: string]: unknown;
+};
+
+export async function fetchTrashTalkCatalog(): Promise<{ status: string; catalog: TrashTalkCatalog; validation: { errors: string[] } }> {
+  return requestJson(`${API_BASE}/trash-talk/catalog`);
+}
+
+export async function fetchTrashTalkCoverage(): Promise<{
+  version: string;
+  scenarios: Array<{ id: string; enabled: boolean; variants: number }>;
+  warnings: string[];
+}> {
+  return requestJson(`${API_BASE}/trash-talk/coverage`);
+}
+
+export async function fetchTrashTalkBatches(limit = 50, offset = 0): Promise<{ batches: TrashTalkBatch[] }> {
+  return requestJson(`${API_BASE}/trash-talk/batches?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`);
+}
+
+export async function fetchTrashTalkBatch(batchId: string): Promise<TrashTalkBatch> {
+  return requestJson(`${API_BASE}/trash-talk/batches/${encodeURIComponent(batchId)}`);
 }
 
 

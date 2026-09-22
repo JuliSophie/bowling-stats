@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 
 import { fetchGames } from '@/lib/api';
+import { getTrashTalkCatalogState, refreshTrashTalkCatalog, subscribeTrashTalkCatalog } from '@/lib/use-trash-talk-catalog';
 import type { GameRead } from '@/types';
 
 // Shared, session-lived cache for the games list.
@@ -18,25 +19,38 @@ const REVALIDATE_AFTER_MS = 10_000;
 let cache: GameRead[] | null = null;
 let lastFetched = 0;
 let inflight: Promise<GameRead[]> | null = null;
-const subscribers = new Set<(games: GameRead[]) => void>();
+const subscribers = new Set<() => void>();
+let gamesError: string | null = null;
+let gamesLoading = false;
 
-function notify(games: GameRead[]) {
-  for (const subscriber of subscribers) subscriber(games);
+function notify() {
+  for (const subscriber of subscribers) subscriber();
 }
 
 function load(force = false): Promise<GameRead[]> {
   if (inflight) return inflight;
   if (cache && !force) return Promise.resolve(cache);
 
+  gamesLoading = cache === null;
+  notify();
+  void refreshTrashTalkCatalog();
   inflight = fetchGames()
     .then((games) => {
       cache = games;
+      gamesError = null;
       lastFetched = Date.now();
-      notify(games);
+      notify();
       return games;
+    })
+    .catch((reason: unknown) => {
+      gamesError = reason instanceof Error ? reason.message : 'Spiele konnten nicht geladen werden.';
+      notify();
+      return cache ?? [];
     })
     .finally(() => {
       inflight = null;
+      gamesLoading = false;
+      notify();
     });
 
   return inflight;
@@ -45,43 +59,41 @@ function load(force = false): Promise<GameRead[]> {
 /** Replace the cached games and notify every mounted consumer (e.g. after a rename). */
 export function mutateGames(next: GameRead[]) {
   cache = next;
+  gamesError = null;
   lastFetched = Date.now();
-  notify(next);
+  notify();
 }
 
 /** Drop the cache so the next consumer refetches from scratch (e.g. after saving a new game). */
 export function invalidateGames() {
   cache = null;
+  gamesError = null;
   lastFetched = 0;
 }
 
 export function useGames() {
-  const [games, setGames] = useState<GameRead[]>(() => cache ?? []);
-  const [loading, setLoading] = useState(cache === null);
+  const [, rerender] = useState(0);
 
   useEffect(() => {
-    const onUpdate = (next: GameRead[]) => setGames(next);
+    const onUpdate = () => rerender((value) => value + 1);
     subscribers.add(onUpdate);
+    const unsubscribeCatalog = subscribeTrashTalkCatalog(onUpdate);
 
     if (cache === null) {
-      // First ever visit this session: show the loading state, then fill in.
-      setLoading(true);
-      load()
-        .then(setGames)
-        .catch(() => setGames([]))
-        .finally(() => setLoading(false));
-    } else {
-      // We already have data — render it instantly and quietly revalidate if stale.
-      setGames(cache);
-      if (Date.now() - lastFetched > REVALIDATE_AFTER_MS) {
-        load(true).catch(() => {});
-      }
+      void load();
+    } else if (Date.now() - lastFetched > REVALIDATE_AFTER_MS) {
+      void load(true);
     }
+    void refreshTrashTalkCatalog();
 
     return () => {
       subscribers.delete(onUpdate);
+      unsubscribeCatalog();
     };
   }, []);
 
-  return { games, loading, mutate: mutateGames };
+  const catalog = getTrashTalkCatalogState();
+  return { games: cache ?? [], loading: gamesLoading || (cache === null && gamesError === null),
+    error: gamesError, stale: cache !== null && gamesError !== null,
+    catalogError: catalog.error, catalogStale: catalog.stale, mutate: mutateGames };
 }

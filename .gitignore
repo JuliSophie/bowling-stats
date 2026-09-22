@@ -11,6 +11,8 @@ frontend/tsconfig.tsbuildinfo
 
 # Local environment files
 backend/.env
+backend/app/data/trash-talk/generated.json.lock
+backend/app/data/trash-talk/generated.json.*.tmp
 frontend/.env.local
 
 # OS / editor

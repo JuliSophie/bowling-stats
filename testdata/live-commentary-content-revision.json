@@ -1,0 +1,80 @@
+{
+  "revision": "live-context-2026-09-20",
+  "originalCoreHash": "26f2faf11250ccf193806b601e22686801ab7bf1f1b75075ac9e8ddb7907114e",
+  "originalCoreIds": [
+    "score.absolute.legendary",
+    "score.relative.disaster",
+    "result.win.cheap",
+    "result.loss.heroic",
+    "style.open_frames.very_clean",
+    "history.personal_best.unique",
+    "history.personal_best.tied",
+    "history.personal_best.superseded",
+    "history.roster_best",
+    "day.best",
+    "day.best.below_personal_best",
+    "result.personal_best.last",
+    "history.rival_gap",
+    "form.above",
+    "form.below",
+    "form.consistent",
+    "form.improving",
+    "form.declining",
+    "milestone.first_200",
+    "style.strikes_open",
+    "style.more_strikes_lost",
+    "style.weak_finish",
+    "day.best.weak_finish",
+    "counterfactual.win",
+    "counterfactual.tie",
+    "counterfactual.improve",
+    "result.tie",
+    "day.total.lead",
+    "day.total.trail",
+    "live.strike",
+    "live.spare",
+    "live.open",
+    "live.throw",
+    "live.leave.single",
+    "live.miss.single",
+    "live.bonus",
+    "live.split.converted"
+  ],
+  "originalReplacedPools": [
+    {
+      "id": "live.throw",
+      "priority": 10,
+      "enabled": true,
+      "bindings": ["player", "pins"],
+      "generationBrief": "Synthetic live event: first throw with known knocked-down count, but no established pin positions.",
+      "templates": [
+        "{pins} Pins. Die nächste Antwort kommt mit dem zweiten Wurf.",
+        "{pins} gefallen. Der Rest wartet noch.",
+        "Erster Wurf: {pins}. Die Aufräumarbeiten stehen an.",
+        "{pins} Pins auf der Habenseite.",
+        "{pins} sind weg. Da ist noch etwas zu tun."
+      ]
+    }
+  ],
+  "addedScenarioIds": [
+    "live.postclearance.one",
+    "live.postclearance.zero",
+    "live.weak.first.leader",
+    "live.weak.open.leader",
+    "live.postclearance.one.leader",
+    "live.postclearance.zero.leader",
+    "live.postclearance.one.lead_lost",
+    "live.postclearance.zero.lead_lost"
+  ],
+  "reviewedCurrentHashes": {
+    "live.throw": "cd774b95255652e901b1283640a75968697afbd8927b8f70effaaac4858d4a83",
+    "live.postclearance.one": "0fec40d753c2bbfc61bf8d97bb24053bf1e8620ae5c340f5d824861e44f3a9e4",
+    "live.postclearance.zero": "0910ad1db40edd514776d6ab3c4f83f42ffbe55ae6772f377bd1b1cb49b370b5",
+    "live.weak.first.leader": "f0dc63dcbd5d45015b71bc51965ae9d00e70056799a10c8b2c44ac44f0ba1e25",
+    "live.weak.open.leader": "8fda7143ad44b3d14aea963d8b5ed8df885c4f29eb4a480f40aa51f6877ce8e6",
+    "live.postclearance.one.leader": "0442d625cf4dbf9615953991ee5ccaf92419fee433d0eae4880ef083e3de9b49",
+    "live.postclearance.zero.leader": "eb1a3c3fab28d70dbedcf8180a8771ca00b721c60e0c636b46f1e72fa006bd13",
+    "live.postclearance.one.lead_lost": "33287b52d88cba7309fbcfd3461f5d01f798126bc1342b3825afc277f5df67ee",
+    "live.postclearance.zero.lead_lost": "d33b08393f408b122220ddcf3cfb0cb208565910d0517eb05385277fe136eaae"
+  }
+}

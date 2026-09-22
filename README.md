@@ -98,6 +98,54 @@ Renaming a player to an already-existing normalized full name merges the two pla
 - game storage: `/games`
 - player rename/merge: `/players/rename`
 - statistics: `/stats`
+- read-only saying catalog and coverage: `/stats/trash-talk` (API: `/api/trash-talk/catalog`, `/api/trash-talk/coverage`)
+
+## Deterministic sayings and local maintenance
+
+Sayings are selected from the enabled German catalog using semantic context and
+stable template identities. Browser sessions, routes and random values do not
+choose the variant. Missing evidence suppresses unsupported claims. Consistency
+requires the same data and compatible app/catalog release; clients refresh on
+normal navigation rather than polling. The catalog endpoint is read-only for
+the browser; score rendering and corrections do not call an AI service.
+
+Validate or inspect the shipped catalog locally (from `backend`, with the
+repository environment active):
+
+```bash
+python -m app.trash_talk_cli validate
+python -m app.trash_talk_cli coverage
+```
+
+The one-time legacy-content migration is deliberately separate from runtime
+startup. Run it from the repository root with the captured baseline supplied
+explicitly, first without `--write`:
+
+```powershell
+node scripts/migrate-legacy-trash-talk.mjs --baseline C:\path\to\legacy-catalog-baseline
+node scripts/migrate-legacy-trash-talk.mjs --baseline C:\path\to\legacy-catalog-baseline --write
+```
+
+The tool accepts the old `3.0.0` input format and emits protocol `3.1.0`.
+It refuses partial or conflicting migration state before opening either output
+file; check-only runs are byte-preserving and safe to repeat.
+
+Generation/import are local operator operations. Valid imported/generated
+templates automatically become active; invalid candidates remain in batch
+history with errors. `python -m app.trash_talk_cli disable <template-or-scenario-id>`
+disables content in the local JSON history without deleting history or changing
+source files. The browser can inspect batches but cannot generate, activate or
+disable anything. Structural validation cannot establish that arbitrary prose
+is true or funny; inspect generated wording in the history page.
+
+OpenAI generation is an explicit local command with a dry-run default, model,
+current operator-supplied token prices and a shared cumulative USD budget.
+No keys or actual player/game data are sent by the browser. Put the key once in
+the ignored `backend/.env`; generated-file changes are reviewed with `git diff`
+and committed/deployed manually. See the backend README for commands and
+cost/failure semantics. Existing Trash-Talk history in an old database is not
+automatically migrated, and old expenses are not counted without an explicit
+transfer procedure. There is currently no export command. TTS is not implemented.
 
 ## Deployment notes
 

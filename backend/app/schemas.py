@@ -54,6 +54,10 @@ class FrameData(BaseModel):
     throw2: str = ""
     throw3: str = ""
     cumulative: str = ""
+    fallen_pins: list[list[int] | None] | None = Field(default=None, alias="fallenPins")
+    ball_speed_kmh: list[float | None] | None = Field(default=None, alias="ballSpeedKmh")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class PlayerData(BaseModel):
@@ -102,10 +106,39 @@ class PlayerRenameResponse(BaseModel):
     merged: bool = False
 
 
+class SpareCounterfactual(BaseModel):
+    frame: int
+    original_score: int
+    hypothetical_score: int
+    gain: int
+    pins_added: int
+    single_pin_attempt: bool
+    pin: int | None = None
+
+
+class PinLeaveEvidence(BaseModel):
+    frame: int
+    standing_pins: list[int]
+    converted: bool
+
+
+class TrashTalkEvidence(BaseModel):
+    valid: bool
+    reason: str | None = None
+    counterfactuals: list[SpareCounterfactual] = Field(default_factory=list)
+    strike_count: int = 0
+    spare_count: int = 0
+    open_count: int = 0
+    clean: bool = False
+    frame_points: list[int] = Field(default_factory=list)
+    leaves: list[PinLeaveEvidence] = Field(default_factory=list)
+
+
 class StoredScore(BaseModel):
     player_name: str
     total_score: int
     frames: list[int | dict[str, Any]] = Field(default_factory=list)
+    trash_talk_evidence: TrashTalkEvidence | None = None
 
 
 class GameRead(BaseModel):
@@ -190,7 +223,25 @@ class ThrowCorrection(BaseModel):
     throw_index: int | None = Field(
         default=None, validation_alias=AliasChoices("throwIndex", "throw_index"), ge=0
     )
-    fallen_pins: list[int] = Field(default_factory=list, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
+    fallen_pins: list[int] | None = Field(default=None, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
+
+    @field_validator("fallen_pins", mode="before")
+    @classmethod
+    def strict_pattern(cls, value: Any) -> list[int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list) or any(type(pin) is not int or not 1 <= pin <= 10 for pin in value):
+            raise ValueError("fallenPins muss eine eindeutige Liste von Pins 1 bis 10 sein.")
+        if len(set(value)) != len(value):
+            raise ValueError("fallenPins darf keine doppelten Pins enthalten.")
+        return value
+
+    @field_validator("pins_knocked_down", mode="before")
+    @classmethod
+    def strict_count(cls, value: Any) -> int | None:
+        if value is None or (type(value) is int and 0 <= value <= 10):
+            return value
+        raise ValueError("pinsKnockedDown muss eine ganze Zahl von 0 bis 10 oder null sein.")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -203,7 +254,7 @@ class TrackingFrame(BaseModel):
     is_strike: bool = Field(default=False, alias="isStrike")
     is_spare: bool = Field(default=False, alias="isSpare")
     # Pins (1..10) that fell on each ball of this frame, in ball order. Empty when not tracked.
-    fallen_pins: list[list[int]] = Field(default_factory=list, alias="fallenPins")
+    fallen_pins: list[list[int] | None] = Field(default_factory=list, alias="fallenPins")
     ball_speed_kmh: list[float | None] = Field(default_factory=list, alias="ballSpeedKmh")
 
     model_config = ConfigDict(populate_by_name=True)
@@ -223,18 +274,21 @@ class TrackingLoggedThrow(BaseModel):
     """One entry in the replayable throw log, enriched with current score-table assignment."""
 
     index: int
+    throw_id: str = Field(alias="throwId")
     player: str
     frame: int = Field(ge=1, le=10)
     throw: int = Field(ge=1, le=3)
     pins_knocked_down: int | None = Field(default=None, alias="pinsKnockedDown")
-    fallen_pins: list[int] = Field(default_factory=list, alias="fallenPins")
-    observed_fallen_pins: list[int] = Field(default_factory=list, alias="observedFallenPins")
-    already_down_pins: list[int] = Field(default_factory=list, alias="alreadyDownPins")
+    fallen_pins: list[int] | None = Field(default=None, alias="fallenPins")
+    observed_fallen_pins: list[int] | None = Field(default=None, alias="observedFallenPins")
+    already_down_pins: list[int] | None = Field(default=None, alias="alreadyDownPins")
     captured_at: str | None = Field(default=None, alias="capturedAt")
     manual: bool = False
     manual_correction: bool = Field(default=False, alias="manualCorrection")
     low_confidence: bool = Field(default=False, alias="lowConfidence")
     ball_speed_kmh: float | None = Field(default=None, alias="ballSpeedKmh")
+    player_index: int | None = Field(default=None, alias="playerIndex")
+    commentary_context: dict[str, Any] | None = Field(default=None, alias="commentaryContext")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -247,6 +301,8 @@ class TrackingScoreboard(BaseModel):
     throw_count: int = Field(default=0, alias="throwCount")
     throws: list[TrackingLoggedThrow] = Field(default_factory=list)
     is_finished: bool = Field(default=False, alias="isFinished")
+    revision: int = 0
+    commentary_context: dict[str, Any] | None = Field(default=None, alias="commentaryContext")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -265,6 +321,7 @@ class TrackingSessionRead(BaseModel):
     live_client_count: int = Field(default=0, alias="liveClientCount", ge=0)
     scoreboard: TrackingScoreboard | None = None
     location: str | None = None
+    revision: int = 0
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -324,7 +381,7 @@ class ThrowObservation(BaseModel):
     throw: int | None = Field(default=None, ge=1, le=3)
     pins_knocked_down: int | None = Field(default=None, validation_alias=AliasChoices("pinsKnockedDown", "pins_knocked_down"), ge=0, le=10)
     # Pin numbers (1..10) the overhead display showed as fallen on THIS delivery, from the companion.
-    fallen_pins: list[int] = Field(default_factory=list, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
+    fallen_pins: list[int] | None = Field(default=None, validation_alias=AliasChoices("fallenPins", "fallen_pins"))
     ball_speed_kmh: float | None = Field(default=None, validation_alias=AliasChoices("ballSpeedKmh", "ball_speed_kmh"), ge=0)
     launch_board: float | None = Field(default=None, validation_alias=AliasChoices("launchBoard", "launch_board"))
     breakpoint_board: float | None = Field(default=None, validation_alias=AliasChoices("breakpointBoard", "breakpoint_board"))
@@ -345,11 +402,30 @@ class ThrowObservation(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("fallen_pins", mode="before")
+    @classmethod
+    def strict_fallen_pins(cls, value: Any) -> list[int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list) or any(type(pin) is not int or not 1 <= pin <= 10 for pin in value):
+            raise ValueError("fallenPins muss eine eindeutige Liste von Pins 1 bis 10 sein.")
+        if len(set(value)) != len(value):
+            raise ValueError("fallenPins darf keine doppelten Pins enthalten.")
+        return value
+
+    @field_validator("pins_knocked_down", mode="before")
+    @classmethod
+    def strict_count(cls, value: Any) -> int | None:
+        if value is None or (type(value) is int and 0 <= value <= 10):
+            return value
+        raise ValueError("pinsKnockedDown muss eine ganze Zahl von 0 bis 10 oder null sein.")
+
 
 class LiveEvent(BaseModel):
     event_id: str = Field(alias="eventId")
     type: str
     payload: dict[str, Any]
     created_at: datetime = Field(alias="createdAt")
+    revision: int = 0
 
     model_config = ConfigDict(populate_by_name=True)

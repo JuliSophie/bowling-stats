@@ -1,6 +1,6 @@
 from datetime import date, datetime, time, timezone
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, JSON, String, Time
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -41,3 +41,33 @@ class Score(Base):
 
     game: Mapped[Game] = relationship(back_populates="scores")
     player: Mapped[Player] = relationship(back_populates="scores")
+
+
+class TrashTalkBatch(Base):
+    __tablename__ = "trash_talk_batches"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    source: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    usage: Mapped[dict] = mapped_column(JSON, default=dict)
+    cost: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TrashTalkCandidate(Base):
+    __tablename__ = "trash_talk_candidates"
+
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(ForeignKey("trash_talk_batches.id"), index=True)
+    scenario_id: Mapped[str] = mapped_column(String(120), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class TrashTalkDisabledTemplate(Base):
+    __tablename__ = "trash_talk_disabled_templates"
+
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)

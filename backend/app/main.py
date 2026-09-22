@@ -16,6 +16,7 @@ from app.routers.lane_samples import router as lane_samples_router
 from app.routers.stats import router as stats_router
 from app.routers.tracking import router as tracking_router
 from app.routers.upload import router as upload_router
+from app.routers.trash_talk import router as trash_talk_router
 
 
 logger = logging.getLogger(__name__)
@@ -90,3 +91,4 @@ app.include_router(upload_router, prefix="/api", dependencies=protected)
 app.include_router(lane_samples_router, prefix="/api", dependencies=protected)
 app.include_router(games_router, prefix="/api", dependencies=protected)
 app.include_router(stats_router, prefix="/api", dependencies=protected)
+app.include_router(trash_talk_router, prefix="/api", dependencies=protected)

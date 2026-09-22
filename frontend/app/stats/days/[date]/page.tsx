@@ -40,6 +40,7 @@ import StatSection from '@/components/ui/stat-section';
 import CardGrid from '@/components/ui/card-grid';
 import ChartFrame from '@/components/ui/chart-frame';
 import ChartToggle from '@/components/ui/chart-toggle';
+import { buildDayContext, indexGameFacts } from '@/lib/trash-talk-v3';
 
 type DayPlayerStats = {
   name: string;
@@ -455,7 +456,7 @@ function buildSessionScoreChart(games: GameRead[]) {
 export default function DayDetailPage() {
   const pathname = usePathname();
   const date = decodeURIComponent(pathname.split('/').pop() ?? '');
-  const { games, loading } = useGames();
+  const { games, loading, error: gamesError, stale: gamesStale, catalogError, catalogStale } = useGames();
   const [hiddenDayPlayers, setHiddenDayPlayers] = useStickyState<Set<string>>(`day:${date}:hidden`, new Set());
   const [cumulativeChartMode, setCumulativeChartMode] = useStickyState<CumulativeChartMode>(`day:${date}:cumMode`, 'frames');
   const [differenceChartMode, setDifferenceChartMode] = useStickyState<CumulativeChartMode>(`day:${date}:diffMode`, 'frames');
@@ -472,6 +473,9 @@ export default function DayDetailPage() {
       </>
     );
   }
+  if (gamesError && !gamesStale) {
+    return <><Navigation /><main className="app-main max-w-5xl"><div className="rounded-[1.3rem] border border-coral/40 bg-coral/10 p-6 text-sm text-coral">Spiele konnten nicht geladen werden: {gamesError}</div></main></>;
+  }
 
   const dayGames = chronologicalGames(games.filter((g) => g.played_at === date));
 
@@ -480,6 +484,8 @@ export default function DayDetailPage() {
       <>
         <Navigation />
         <main className="app-main max-w-5xl">
+          {gamesStale && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Spielstand nicht aktuell: {gamesError}. Für diesen Tag fehlen Spiele im zuletzt geladenen Stand; der aktuelle Stand konnte nicht geprüft werden.</p>}
+          {(catalogError || catalogStale) && <p className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Katalog nicht aktuell{catalogError ? `: ${catalogError}` : ' – letzter gültiger Stand wird verwendet.'}</p>}
           <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start back-button" />
           <div className="rounded-[1.3rem] border border-lane-200 bg-white/80 p-6 text-center">
             <p className="text-sm text-lane-600">Keine Spiele für diesen Tag gefunden.</p>
@@ -498,6 +504,7 @@ export default function DayDetailPage() {
   const globalAverages = buildGlobalAverageMap(games);
   const underdog = computeDayUnderdog(dayPlayers, globalAverages);
   const dayPlayerAnalysis = computeDayPlayerAnalysis(dayGames);
+  const gameFacts = indexGameFacts(games);
   const dayWinningPointStats = computeWinningPointStats(dayGames);
   const bestWinningPoints = dayWinningPointStats.bestWinning?.points ?? null;
   const lowestWinningPoints = dayWinningPointStats.lowestWinning?.points ?? null;
@@ -512,7 +519,8 @@ export default function DayDetailPage() {
         gameCount: dayGames.length,
         playerCount: dayPlayers.length,
         winnerName: dayWinner.name,
-        gapToSecond: dayRunnerUp ? dayWinner.avgScore - dayRunnerUp.avgScore : 0,
+        gapToSecond: dayPlayers.length > 1 ? dayWinner.totalPins - Math.max(...dayPlayers.slice(1).map((player) => player.totalPins)) : 0,
+        sharedStanding: !!dayRunnerUp && dayRunnerUp.wins === dayWinner.wins && dayRunnerUp.totalPins === dayWinner.totalPins,
         topScorer: dayWinningPointStats.bestWinning
           ? { name: dayWinningPointStats.bestWinning.playerName, score: dayWinningPointStats.bestWinning.points }
           : null,
@@ -549,6 +557,8 @@ export default function DayDetailPage() {
     <>
       <Navigation />
       <main className="app-main max-w-5xl">
+        {gamesStale && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Spielstand nicht aktuell: {gamesError}. Letzter geladener Stand wird angezeigt.</p>}
+        {(catalogError || catalogStale) && <p role="status" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Sprüche-Katalog nicht aktuell{catalogError ? `: ${catalogError}` : '.'}</p>}
         <BackButton fallbackHref="/stats/games" className="flex items-center gap-1.5 self-start back-button" />
 
         <SectionCard>
@@ -581,7 +591,13 @@ export default function DayDetailPage() {
                     {i === 0 && <span className="text-sm">👑</span>}
                   </div>
                   <p className="text-xs text-lane-600 mt-1">{player.gamesCount} Spiel{player.gamesCount !== 1 ? 'e' : ''} · Median {player.medianScore} · {player.openFrameRate}% offen</p>
-                  <p className="mt-1 text-xs font-semibold text-lane-500">{playerDayContext(player, dayPlayers, i, globalAverages.get(player.name))}</p>
+                  <p className="mt-1 text-xs font-semibold text-lane-500">{playerDayContext(
+                    player,
+                    dayPlayers,
+                    i,
+                    globalAverages.get(player.name),
+                    buildDayContext(gameFacts, date, player.name),
+                  )}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-bold text-lane-900">{player.totalPins} Pins</p>

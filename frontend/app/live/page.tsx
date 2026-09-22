@@ -20,6 +20,8 @@ import {
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
 import { classifyThrow, isLiveThrow, throwCellKey, type ThrowEffectKind, type ThrowResult } from '@/lib/live-effects';
+import { acceptsLiveEvent, reconcileLiveCommentary, selectLiveCommentary, shouldAnimateLiveThrow, type LiveCommentary } from '@/lib/live-commentary';
+import { useTrashTalkCatalog } from '@/lib/use-trash-talk-catalog';
 import { isLaneControlMessage, laneRequest, type CompanionCommand, type CompanionStatus, type LaneControlMessage } from '@/lib/lane-calibration';
 
 const TRACKING_SESSION_STORAGE_KEY = 'bowling-live-session-id';
@@ -126,7 +128,7 @@ function formatLocalDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function splitMetadata(fallenPins: number[][] | undefined) {
+function splitMetadata(fallenPins: (number[] | null)[] | undefined) {
   const firstBallFallen = new Set(fallenPins?.[0] ?? []);
   if (!firstBallFallen.has(1)) return null;
 
@@ -295,6 +297,7 @@ function LaneView({
   onPinPatternChange,
   pinPatternDisabled,
   throwEffect,
+  liveBubble,
 }: {
   lastThrow: ThrowAnalysis | undefined;
   orientation?: 'vertical' | 'horizontal';
@@ -303,6 +306,7 @@ function LaneView({
   onPinPatternChange?: (next: number[]) => void;
   pinPatternDisabled?: boolean;
   throwEffect?: ReactNode;
+  liveBubble?: LiveCommentary | null;
 }) {
   const horizontal = orientation === 'horizontal';
   // Distance from the foul line to the pin header, as a percentage of the lane's long axis.
@@ -418,6 +422,11 @@ function LaneView({
     <div className="live-lane-stage">
       <div className="live-effect-overlay" role="status" aria-live="polite" aria-atomic="true">
         {throwEffect}
+        {liveBubble && <div className="live-commentary-bubble">
+          <span className="live-commentary-player">{liveBubble.player}</span>{liveBubble.text}
+          {(liveBubble.scenario.endsWith('.leader') || liveBubble.scenario.endsWith('.lead_lost')) &&
+            <span className="mt-1 block text-xs opacity-70">Vorläufiger Stand: bereits erzielte Punkte inklusive bekannter Boni. Offene Boni und unterschiedlicher Spielfortschritt können die Reihenfolge noch ändern.</span>}
+        </div>}
       </div>
       <div className={containerClass} style={{ borderColor: 'var(--lane-edge)' }}>
       {/* Gutters: the wood spans only boards 1–39 between these strips. */}
@@ -605,6 +614,7 @@ function PinStepper({ value, onChange, disabled }: { value: number; onChange: (v
 }
 
 export default function LivePage() {
+  const { catalog: commentaryCatalog, error: commentaryCatalogError, stale: commentaryCatalogStale } = useTrashTalkCatalog();
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('closed');
@@ -631,16 +641,24 @@ export default function LivePage() {
   const [audioError, setAudioError] = useState<string | null>(null);
   const [audioNeedsGesture, setAudioNeedsGesture] = useState(true);
   const [activeEffect, setActiveEffect] = useState<{ key: string; player: string; kind: ThrowEffectKind; pins: number | null } | null>(null);
+  const [liveBubbles, setLiveBubbles] = useState<Record<string, LiveCommentary>>({});
+  const commentaryCatalogRef = useRef<typeof commentaryCatalog>(commentaryCatalog);
   const socketRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioVolumeRef = useRef(0.85);
   const audioMutedRef = useRef(false);
   const seenEventIdsRef = useRef(new Set<string>());
+  const authoritativeThrowIdsRef = useRef(new Set<string>());
+  const latestRevisionRef = useRef(0);
   const effectQueueRef = useRef<{ event: ThrowAnalysis; kind: ThrowEffectKind }[]>([]);
   const effectRunningRef = useRef(false);
   const acceptedThrowsRef = useRef<ThrowResult[]>([]);
   const effectTimerRef = useRef<number | null>(null);
   const soundRef = useRef<OscillatorNode | null>(null);
+
+  useEffect(() => {
+    commentaryCatalogRef.current = commentaryCatalog;
+  }, [commentaryCatalog]);
 
   useEffect(() => () => {
     const audio = audioContextRef.current;
@@ -664,9 +682,11 @@ export default function LivePage() {
   const clearGameFeedback = () => {
     clearEffects();
     acceptedThrowsRef.current = [];
+    authoritativeThrowIdsRef.current.clear();
     setEvents([]);
     setExpandedThrowIndex(null);
     setWinnerOpen(false);
+    setLiveBubbles({});
   };
 
   useEffect(() => {
@@ -707,7 +727,11 @@ export default function LivePage() {
 
     fetchTrackingSession(savedSessionId)
       .then((savedSession) => {
-        if (!cancelled) setSession(savedSession);
+        const revision = (savedSession as TrackingSession & { revision?: number }).revision ?? 0;
+        if (!cancelled && revision >= latestRevisionRef.current) {
+          latestRevisionRef.current = revision;
+          setSession(savedSession);
+        }
       })
       .catch(() => {
         window.sessionStorage.removeItem(TRACKING_SESSION_STORAGE_KEY);
@@ -735,7 +759,9 @@ export default function LivePage() {
       const joinedSession = await joinTrackingSession(pairingToken);
       window.sessionStorage.setItem(TRACKING_SESSION_STORAGE_KEY, joinedSession.sessionId);
       clearGameFeedback();
+      latestRevisionRef.current = (joinedSession as TrackingSession & { revision?: number }).revision ?? 0;
       seenEventIdsRef.current.clear();
+      authoritativeThrowIdsRef.current.clear();
       setError(null);
       setSession(joinedSession);
     } catch (err) {
@@ -750,8 +776,10 @@ export default function LivePage() {
     socketRef.current = null;
     window.sessionStorage.removeItem(TRACKING_SESSION_STORAGE_KEY);
     setSession(null);
+    latestRevisionRef.current = 0;
     clearGameFeedback();
     seenEventIdsRef.current.clear();
+    authoritativeThrowIdsRef.current.clear();
     setConnectionState('closed');
     setLaneControlMessage(null);
     setCompanionStatus(null);
@@ -880,18 +908,33 @@ export default function LivePage() {
     let cancelled = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const sessionId = session.sessionId;
+    latestRevisionRef.current = (session as TrackingSession & { revision?: number }).revision ?? 0;
     acceptedThrowsRef.current = session.scoreboard?.throws ?? [];
+    authoritativeThrowIdsRef.current = new Set(
+      (session.scoreboard?.throws ?? []).map((item) => item.throwId).filter((id): id is string => Boolean(id)),
+    );
 
     const onAudioGesture = () => { if (!audioMutedRef.current) void unlockAudio(); };
     window.addEventListener('pointerdown', onAudioGesture);
     window.addEventListener('keydown', onAudioGesture);
 
     const applyEvent = (event: LiveEvent) => {
+      const revision = typeof (event as LiveEvent & { revision?: unknown }).revision === 'number'
+        ? (event as LiveEvent & { revision: number }).revision : 0;
+      const eventSessionId = typeof event.payload.sessionId === 'string'
+        ? event.payload.sessionId
+        : typeof event.payload.session?.sessionId === 'string' ? event.payload.session.sessionId : undefined;
+      if (!acceptsLiveEvent(sessionId, eventSessionId, latestRevisionRef.current, revision)) return;
+      latestRevisionRef.current = Math.max(latestRevisionRef.current, revision);
       if (event.type === 'session_snapshot') {
         clearEffects();
         if (event.payload.session) {
           setSession(event.payload.session);
           acceptedThrowsRef.current = event.payload.session.scoreboard?.throws ?? [];
+          authoritativeThrowIdsRef.current = new Set(
+            (event.payload.session.scoreboard?.throws ?? []).map((item) => item.throwId).filter((id): id is string => Boolean(id)),
+          );
+          setLiveBubbles({});
         }
         if (Array.isArray(event.payload.events)) {
           event.payload.events.forEach((item) => {
@@ -912,6 +955,15 @@ export default function LivePage() {
       if (event.payload.session) {
         setSession(event.payload.session);
         acceptedThrowsRef.current = event.payload.session.scoreboard?.throws ?? [];
+        authoritativeThrowIdsRef.current = new Set(
+          (event.payload.session.scoreboard?.throws ?? []).map((item) => item.throwId).filter((id): id is string => Boolean(id)),
+        );
+        const correctedThrows = event.payload.session.scoreboard?.throws ?? [];
+        setLiveBubbles((current) => reconcileLiveCommentary(
+          current,
+          correctedThrows as unknown as Parameters<typeof reconcileLiveCommentary>[1],
+          commentaryCatalogRef.current ?? undefined,
+        ));
       }
       if (event.type === 'companion_connected') {
         setSession((current) => current ? { ...current, companionConnected: true } : current);
@@ -928,6 +980,13 @@ export default function LivePage() {
         setConnectionState('connecting');
         const history = await fetchTrackingEvents(sessionId).catch(() => []);
         if (cancelled) return;
+        const historyRevision = history.reduce((highest, item) => {
+          const revision = typeof (item as LiveEvent & { revision?: unknown }).revision === 'number'
+            ? (item as LiveEvent & { revision: number }).revision : 0;
+          return Math.max(highest, revision);
+        }, 0);
+        if (historyRevision < latestRevisionRef.current) return;
+        latestRevisionRef.current = historyRevision;
         history.forEach((item) => seenEventIdsRef.current.add(item.eventId));
         setEvents(history.slice(-MAX_VISIBLE_EVENTS));
         const socket = new WebSocket(getTrackingWebSocketUrl(sessionId));
@@ -949,8 +1008,29 @@ export default function LivePage() {
           }
           const event = parsed as LiveEvent;
           if (!event.eventId || seenEventIdsRef.current.has(event.eventId)) return;
+          const revision = typeof (event as LiveEvent & { revision?: unknown }).revision === 'number'
+            ? (event as LiveEvent & { revision: number }).revision : 0;
+          const eventSessionId = typeof event.payload.sessionId === 'string'
+            ? event.payload.sessionId
+            : typeof event.payload.session?.sessionId === 'string' ? event.payload.session.sessionId : undefined;
+          if (!acceptsLiveEvent(sessionId, eventSessionId, latestRevisionRef.current, revision)) return;
+          latestRevisionRef.current = revision;
           seenEventIdsRef.current.add(event.eventId);
-          if (isLiveThrow(event)) enqueueThrowEffect(event.payload);
+          if (isLiveThrow(event) && shouldAnimateLiveThrow(event.payload.throwId, authoritativeThrowIdsRef.current)) {
+            enqueueThrowEffect(event.payload);
+            const payload = event.payload as ThrowAnalysis & { throwId?: string; alreadyDownPins?: number[] };
+            const caption = selectLiveCommentary(
+              payload,
+              acceptedThrowsRef.current as unknown as Parameters<typeof selectLiveCommentary>[1],
+              commentaryCatalogRef.current ?? undefined,
+            );
+            setLiveBubbles((current) => {
+              const next = { ...current, [caption.throwId]: caption };
+              const ids = Object.keys(next);
+              ids.slice(0, Math.max(0, ids.length - 20)).forEach((id) => delete next[id]);
+              return next;
+            });
+          }
           applyEvent(event);
         };
         socket.onerror = () => { if (!cancelled) setError('Live-Verbindung konnte nicht stabil aufgebaut werden.'); };
@@ -993,6 +1073,24 @@ export default function LivePage() {
   const scoreboard = session?.scoreboard ?? null;
   const loggedThrows = scoreboard?.throws ?? [];
   const latestLoggedThrow = loggedThrows.at(-1);
+  const latestThrowId = (latestLoggedThrow as typeof latestLoggedThrow & { throwId?: string } | undefined)?.throwId;
+  const liveBubble = latestThrowId ? liveBubbles[latestThrowId] ?? null : null;
+  useEffect(() => {
+    if (!commentaryCatalog || !loggedThrows.length) return;
+    setLiveBubbles((current) => Object.fromEntries(
+      loggedThrows
+        .map((item, index) => {
+          const id = (item as typeof item & { throwId?: string }).throwId;
+          if (!id || !current[id]) return null;
+          return [id, selectLiveCommentary(
+            item as unknown as Parameters<typeof selectLiveCommentary>[0],
+            loggedThrows.slice(0, index) as unknown as Parameters<typeof selectLiveCommentary>[1],
+            commentaryCatalog,
+          )] as const;
+        })
+        .filter((entry): entry is readonly [string, LiveCommentary] => Boolean(entry)),
+    ));
+  }, [commentaryCatalog, loggedThrows]);
   const sessionNameKey = session?.playerNames.join('\u0000') ?? '';
 
   useEffect(() => {
@@ -1046,7 +1144,11 @@ export default function LivePage() {
     try {
       const updated = await resetTrackingSession(session.sessionId);
       clearGameFeedback();
-      setSession(updated);
+      const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+      if (updated.sessionId === session.sessionId && revision >= latestRevisionRef.current) {
+        latestRevisionRef.current = revision;
+        setSession(updated);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Neues Spiel konnte nicht gestartet werden.');
     } finally {
@@ -1097,7 +1199,11 @@ export default function LivePage() {
       if (scoreboard.isFinished) {
         const updated = await resetTrackingSession(session.sessionId);
         clearGameFeedback();
-        setSession(updated);
+        const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+        if (updated.sessionId === session.sessionId && revision >= latestRevisionRef.current) {
+          latestRevisionRef.current = revision;
+          setSession(updated);
+        }
         setEvents([]);
         setExpandedThrowIndex(null);
         setWinnerOpen(false);
@@ -1118,7 +1224,11 @@ export default function LivePage() {
     setSaveMsg(null);
     try {
       const updated = await correctTrackingThrow(session.sessionId, action, pins, throwIndex, fallenPins);
-      setSession(updated);
+      const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+      if (revision >= latestRevisionRef.current) {
+        latestRevisionRef.current = revision;
+        setSession(updated);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Korrektur konnte nicht angewendet werden.');
     } finally {
@@ -1166,7 +1276,11 @@ export default function LivePage() {
           // loop again with what the user actually wants now.
           if (pendingPatternRef.current !== target) continue;
           stagePattern(null);
-          setSession(updated);
+          const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+          if (updated.sessionId === sessionId && session?.sessionId === sessionId && revision >= latestRevisionRef.current) {
+            latestRevisionRef.current = revision;
+            setSession(updated);
+          }
         } catch (err) {
           // Abandon the whole burst and drop the optimistic overlay, so the deck snaps back to
           // server truth instead of showing pins that were never saved.
@@ -1211,7 +1325,11 @@ export default function LivePage() {
     setError(null);
     try {
       const updated = await setTrackingPlayers(session.sessionId, count, nextNames);
-      setSession(updated);
+      const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+      if (updated.sessionId === session.sessionId && revision >= latestRevisionRef.current) {
+        latestRevisionRef.current = revision;
+        setSession(updated);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spielernamen konnten nicht gespeichert werden.');
       setPlayerNameDrafts(currentNames);
@@ -1228,7 +1346,11 @@ export default function LivePage() {
     setRosterBusy(true);
     try {
       const updated = await setTrackingPlayers(session.sessionId, next, nextNames);
-      setSession(updated);
+      const revision = (updated as TrackingSession & { revision?: number }).revision ?? 0;
+      if (updated.sessionId === session.sessionId && revision >= latestRevisionRef.current) {
+        latestRevisionRef.current = revision;
+        setSession(updated);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Spieleranzahl konnte nicht geändert werden.');
     } finally {
@@ -1505,6 +1627,7 @@ export default function LivePage() {
         {audioError && <p className="text-center text-xs font-bold text-coral">{audioError}</p>}
 
         {error && <section className="app-card app-card--warn p-4 text-sm font-bold">{error}</section>}
+        {(commentaryCatalogError || commentaryCatalogStale) && <section role="status" className="app-card app-card--warn p-3 text-sm">Sprüche-Katalog nicht aktuell{commentaryCatalogError ? `: ${commentaryCatalogError}` : '.'} Vorhandene Texte werden weiterverwendet.</section>}
         {saveMsg && <section className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-bold text-emerald-800">{saveMsg}</section>}
 
         <LaneCalibrationPanel
@@ -1602,6 +1725,7 @@ export default function LivePage() {
           <LaneView
             lastThrow={lastThrow}
             throwEffect={throwEffect}
+            liveBubble={liveBubble}
             pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
             onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
@@ -1625,6 +1749,7 @@ export default function LivePage() {
           <LaneView
             lastThrow={lastThrow}
             throwEffect={throwEffect}
+            liveBubble={liveBubble}
             orientation="horizontal"
             pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
             alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}

@@ -51,6 +51,7 @@ from app.routers.auth import router as auth_router
 from app.routers.games import router as games_router
 from app.routers.stats import router as stats_router
 from app.routers.tracking import router as tracking_router
+from app.routers.trash_talk import router as trash_talk_router
 
 settings = get_settings()
 ALLOWED_HOST = "127.0.0.1:8317"
@@ -121,6 +122,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(tracking_router, prefix="/api")
 app.include_router(games_router, prefix="/api")
 app.include_router(stats_router, prefix="/api")
+app.include_router(trash_talk_router, prefix="/api")
 app.mount("/debug/assets", StaticFiles(directory=CLIENT), name="playground-assets")
 
 

@@ -1,5 +1,4 @@
-import messages from '@/data/trash-talk/messages.de.json';
-import fragments from '@/data/trash-talk/fragments.de.json';
+import { getTrashTalkCatalog } from '@/lib/trash-talk-v3';
 import type {
   TrashTalkConditions,
   TrashTalkContext,
@@ -8,9 +7,31 @@ import type {
   TrashTalkSelectOptions,
   TrashTalkTone,
 } from './types';
+import type { TrashTalkCatalogSnapshot } from '@/lib/trash-talk-v3';
 
-const MESSAGE_BANK = messages as TrashTalkMessage[];
-const FRAGMENT_BANK = fragments as TrashTalkFragmentSet[];
+function banksFromCatalog(catalog: TrashTalkCatalogSnapshot | null) {
+  const scenarios = catalog?.scenarios ?? [];
+  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
+  const messages = (catalog?.legacyV2?.messages ?? []).flatMap((metadata): TrashTalkMessage[] => {
+    const scenario = byId.get(metadata.poolId);
+    const templates = scenario?.templates;
+    return scenario && scenario.enabled !== false && Array.isArray(templates) && templates.length > 0
+      ? [{ ...metadata, template: templates[0] ?? '', templates, templateIds: scenario.templateIds } as TrashTalkMessage]
+      : [];
+  });
+  const fragments = (catalog?.legacyV2?.fragments ?? []).flatMap((metadata): TrashTalkFragmentSet[] => {
+    const pools = [metadata.openersPoolId, metadata.coresPoolId, metadata.suffixesPoolId]
+      .map((id) => byId.get(id));
+    if (pools.some((pool) => !pool || pool.enabled === false || pool.templates.length === 0)) return [];
+    return [{
+      ...metadata,
+      openers: pools[0]!.templates,
+      cores: pools[1]!.templates,
+      suffixes: pools[2]!.templates,
+    } as TrashTalkFragmentSet];
+  });
+  return { messages, fragments };
+}
 
 function hashString(value: string): number {
   let hash = 2166136261;
@@ -28,6 +49,13 @@ function seededIndex(length: number, seed: string): number {
 
 function pickSeeded<T>(items: readonly T[], seed: string): T | undefined {
   return items[seededIndex(items.length, seed)];
+}
+
+function pickByStableId<T extends { id: string }>(items: readonly T[], seed: string): T | undefined {
+  return items.reduce<T | undefined>((chosen, item) => {
+    if (!chosen) return item;
+    return hashString(`${seed}|${item.id}`) > hashString(`${seed}|${chosen.id}`) ? item : chosen;
+  }, undefined);
 }
 
 function weightedPick<T extends { weight?: number; id: string }>(items: readonly T[], seed: string): T | undefined {
@@ -289,6 +317,7 @@ function composeFragment(set: TrashTalkFragmentSet, context: TrashTalkContext, s
 }
 
 export function selectTrashTalkV2(context: TrashTalkContext, options: TrashTalkSelectOptions = {}): string | null {
+  const { messages: MESSAGE_BANK, fragments: FRAGMENT_BANK } = banksFromCatalog(getTrashTalkCatalog());
   const language = options.language ?? 'de';
   const maxIntensity = options.maxIntensity ?? 5;
   const scenarios = detectTrashTalkScenarios(context);
@@ -317,7 +346,17 @@ export function selectTrashTalkV2(context: TrashTalkContext, options: TrashTalkS
     ));
 
     const selectedMessage = weightedPick(messageCandidates, `${seed}:${scenario}:message`);
-    if (selectedMessage) return renderTemplate(selectedMessage.template, context);
+    if (selectedMessage) {
+      const templates = selectedMessage.templates;
+      const ids = selectedMessage.templateIds;
+      const template = templates && templates.length > 0
+        ? pickByStableId(
+          templates.map((text, index) => ({ text, id: ids?.[index] ?? `${selectedMessage.id}.${index}` })),
+          `${seed}:${scenario}:message:${selectedMessage.id}`,
+        )?.text ?? ''
+        : selectedMessage.template;
+      return renderTemplate(template, context);
+    }
 
     if (fragmentCandidates.length > 0) {
       const selected = weightedPick(fragmentCandidates, `${seed}:${scenario}:fragment:fallback`);

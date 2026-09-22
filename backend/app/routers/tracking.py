@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from app.live_scoring import ScoreboardResult, compute_scoreboard
+from app.services.live_commentary_context import build_live_commentary_context
 from app.schemas import (
     LiveEvent,
     ThrowCorrection,
@@ -71,6 +72,8 @@ class LiveSession:
         self.calibration_requests: dict[str, CalibrationRequest] = {}
         self.events: list[LiveEvent] = []
         self.seen_client_event_ids: set[str] = set()
+        self.revision = 0
+        self._next_throw_id = 1
 
     def touch(self) -> None:
         """Mark the session active so the inactivity timer restarts."""
@@ -85,7 +88,13 @@ class LiveSession:
         self.throw_log.clear()
         self.events.clear()
         self.seen_client_event_ids.clear()
+        self.revision += 1
         self.touch()
+
+    def new_throw_id(self) -> str:
+        throw_id = f"{self.session_id}:throw-{self._next_throw_id}"
+        self._next_throw_id += 1
+        return throw_id
 
     def scoreboard(self) -> ScoreboardResult:
         normalized_log = self._normalized_throw_log()
@@ -104,7 +113,7 @@ class LiveSession:
         for index, assignment in enumerate(board.assignments):
             if index >= len(throw_log):
                 break
-            fallen = throw_log[index].get("fallenPins") or []
+            fallen = throw_log[index].get("fallenPins")
             grouped.setdefault((assignment.player_index, assignment.frame - 1), []).append(fallen)
             speeds.setdefault((assignment.player_index, assignment.frame - 1), []).append(throw_log[index].get("ballSpeedKmh"))
         for player_index, player in enumerate(board.players):
@@ -112,7 +121,10 @@ class LiveSession:
                 frame["fallenPins"] = grouped.get((player_index, frame_index), [])
                 frame["ballSpeedKmh"] = speeds.get((player_index, frame_index), [])
 
-    def _logged_throws(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _logged_throws(
+        self, board: ScoreboardResult, throw_log: list[dict[str, Any]],
+        contexts: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Expose the current replay log with the same player/frame assignment used for scoring."""
         rows: list[dict[str, Any]] = []
         for index, throw in enumerate(throw_log):
@@ -128,18 +140,21 @@ class LiveSession:
             rows.append(
                 {
                     "index": index,
+                    "throwId": throw.get("throwId") or f"{self.session_id}:legacy-{index}",
                     "player": player,
                     "frame": frame,
                     "throw": throw_in_frame,
                     "pinsKnockedDown": throw.get("pinsKnockedDown"),
-                    "fallenPins": throw.get("fallenPins") or [],
-                    "observedFallenPins": throw.get("observedFallenPins") or throw.get("fallenPins") or [],
-                    "alreadyDownPins": throw.get("alreadyDownPins") or [],
+                    "fallenPins": throw.get("fallenPins"),
+                    "observedFallenPins": throw.get("observedFallenPins"),
+                    "alreadyDownPins": throw.get("alreadyDownPins"),
                     "capturedAt": throw.get("capturedAt"),
                     "manual": bool(throw.get("manual")),
                     "manualCorrection": bool(throw.get("manualCorrection")),
                     "lowConfidence": bool(throw.get("lowConfidence")),
                     "ballSpeedKmh": throw.get("ballSpeedKmh"),
+                    "playerIndex": assignment.player_index if assignment is not None else None,
+                    "commentaryContext": contexts[index] if contexts and index < len(contexts) else None,
                 }
             )
         return rows
@@ -151,7 +166,7 @@ class LiveSession:
         player_index: int,
         frame: int,
         throw_in_frame: int,
-    ) -> set[int]:
+    ) -> set[int] | None:
         for index, assignment in enumerate(board.assignments):
             if index >= len(throw_log):
                 break
@@ -160,10 +175,13 @@ class LiveSession:
                 and assignment.frame == frame
                 and assignment.throw_in_frame == throw_in_frame
             ):
-                return {pin for pin in throw_log[index].get("fallenPins", []) if 1 <= pin <= 10}
+                fallen = throw_log[index].get("fallenPins")
+                if fallen is None:
+                    return None
+                return {pin for pin in fallen if 1 <= pin <= 10}
         return set()
 
-    def _already_down_pins_for_next_throw(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> set[int]:
+    def _already_down_pins_for_next_throw(self, board: ScoreboardResult, throw_log: list[dict[str, Any]]) -> set[int] | None:
         """Pins already down on the *same physical rack* before the next throw.
 
         The companion reports all pins currently down after a delivery. For a second ball, that
@@ -209,7 +227,11 @@ class LiveSession:
         normalized_log_before: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Convert companion-observed fallen pins into newly knocked pins for scoring."""
-        observed_source = metrics.get("observedFallenPins") if "observedFallenPins" in metrics else metrics.get("fallenPins", [])
+        observed_source = metrics.get("observedFallenPins") if "observedFallenPins" in metrics else metrics.get("fallenPins")
+        if observed_source is None:
+            metrics["observedFallenPins"] = None
+            metrics["alreadyDownPins"] = None
+            return metrics
         observed = sorted({pin for pin in observed_source if 1 <= pin <= 10})
         metrics["observedFallenPins"] = observed
         metrics["observedPinsKnockedDown"] = metrics.get("pinsKnockedDown")
@@ -218,6 +240,11 @@ class LiveSession:
             return metrics
 
         already_down = self._already_down_pins_for_next_throw(board_before, normalized_log_before)
+        if already_down is None:
+            # A count-only/manual prior throw does not justify inventing an empty rack.
+            metrics["alreadyDownPins"] = None
+            metrics["fallenPins"] = None
+            return metrics
         actual = sorted(set(observed) - already_down)
         metrics["fallenPins"] = actual
         metrics["pinsKnockedDown"] = len(actual)
@@ -239,8 +266,12 @@ class LiveSession:
                 self.player_count,
                 self.player_names,
             )
-            if entry.get("manual") or entry.get("manualCorrection") or not (entry.get("observedFallenPins") or entry.get("fallenPins")):
-                entry["alreadyDownPins"] = sorted(self._already_down_pins_for_next_throw(board_before, normalized))
+            if entry.get("manual") or entry.get("manualCorrection") or (
+                entry.get("observedFallenPins") is None and entry.get("fallenPins") is None
+            ):
+                if entry.get("observedFallenPins") is not None or entry.get("fallenPins") is not None:
+                    prior_rack = self._already_down_pins_for_next_throw(board_before, normalized)
+                    entry["alreadyDownPins"] = sorted(prior_rack) if prior_rack is not None else None
                 normalized.append(entry)
                 continue
             normalized.append(self._normalize_observed_throw(entry, board_before, normalized))
@@ -256,13 +287,16 @@ class LiveSession:
         self._inject_fallen_pins(board, normalized_log)
         current_index = board.current_player_index
         current_name = board.players[current_index]["name"] if board.players else None
+        contexts = build_live_commentary_context(normalized_log, self.player_count, self.player_names, self.revision)
         scoreboard_model = TrackingScoreboard.model_validate(
             {
                 "playerCount": self.player_count,
                 "players": board.players,
                 "throwCount": len(self.throw_log),
-                "throws": self._logged_throws(board, normalized_log),
+                "throws": self._logged_throws(board, normalized_log, contexts),
                 "isFinished": board.is_finished,
+                "revision": self.revision,
+                "commentaryContext": contexts[-1] if contexts else None,
             }
         )
         return TrackingSessionRead(
@@ -279,6 +313,7 @@ class LiveSession:
             liveClientCount=len(self.live_clients),
             scoreboard=scoreboard_model,
             location=self.location,
+            revision=self.revision,
         )
 
     def companion_snapshot(self) -> TrackingCompanionSessionRead:
@@ -387,6 +422,8 @@ async def _replace_companion_lease(session: LiveSession) -> None:
 
 
 async def _append_and_broadcast(session: LiveSession, event: LiveEvent) -> None:
+    if event.revision != session.revision:
+        event = event.model_copy(update={"revision": session.revision})
     session.events.append(event)
     del session.events[:-MAX_EVENT_HISTORY]
 
@@ -445,7 +482,10 @@ def _analysis_metrics(session: LiveSession, observation: ThrowObservation) -> di
         "clientEventId": observation.client_event_id,
         "capturedAt": observation.captured_at.isoformat(),
         "pinsKnockedDown": observation.pins_knocked_down,
-        "fallenPins": sorted({pin for pin in observation.fallen_pins if 1 <= pin <= 10}),
+        "fallenPins": (
+            sorted({pin for pin in observation.fallen_pins if 1 <= pin <= 10})
+            if observation.fallen_pins is not None else None
+        ),
         "ballSpeedKmh": _speed_from_trajectory(observation),
         "impactBoard": round(impact_board, 2) if impact_board is not None else None,
         "launchBoard": observation.launch_board if observation.launch_board is not None else (trajectory[0].board if trajectory else None),
@@ -468,11 +508,14 @@ def _manual_throw(session: LiveSession, pins: int) -> dict[str, Any]:
     """A minimal throw-log entry for an operator-inserted (missed-by-camera) throw. Only the pin
     count drives scoring; no ball metrics exist for a manual entry."""
     return {
+        "throwId": session.new_throw_id(),
         "sessionId": session.session_id,
         "clientEventId": None,
         "capturedAt": datetime.now(timezone.utc).isoformat(),
         "pinsKnockedDown": pins,
-        "fallenPins": [],
+        "fallenPins": None,
+        "observedFallenPins": None,
+        "alreadyDownPins": None,
         "manual": True,
     }
 
@@ -491,7 +534,9 @@ async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> 
         session.seen_client_event_ids.add(observation.client_event_id)
 
     metrics = _analysis_metrics(session, observation)
+    metrics["throwId"] = session.new_throw_id()
     session.throw_log.append(metrics)
+    session.revision += 1
 
     # Replay the full log so this throw gets assigned to the right player / frame / ball.
     normalized_log = session._normalized_throw_log()
@@ -509,7 +554,12 @@ async def _ingest_throw(session: LiveSession, observation: ThrowObservation) -> 
     else:
         player_name, frame, throw_in_frame = "Spieler 1", 1, 1
 
-    payload = {**metrics, "player": player_name, "frame": frame, "throw": throw_in_frame}
+    contexts = build_live_commentary_context(normalized_log, session.player_count, session.player_names, session.revision)
+    payload = {
+        **metrics, "player": player_name, "frame": frame, "throw": throw_in_frame,
+        "playerIndex": assignment.player_index if assignment is not None else None,
+        "commentaryContext": contexts[-1] if contexts else None,
+    }
     event = _new_event("throw_analyzed", payload)
     await _append_and_broadcast(session, event)
 
@@ -575,6 +625,7 @@ async def set_players(session_id: str, payload: TrackingPlayersUpdate) -> Tracki
         # Preserve roster positions: an empty name at index N should fall back to "Spieler N",
         # not shift later players left.
         session.player_names = [name.strip() for name in payload.player_names[: payload.player_count]]
+    session.revision += 1
     # The score table is rebuilt from the throw log on snapshot(), so just rebroadcast it.
     await _append_and_broadcast(
         session,
@@ -623,21 +674,27 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
     session = await _get_session(session_id)
     session.touch()
     log = session.throw_log
+    changed = False
     if payload.action == "delete_last":
         if log:
             log.pop()
+            changed = True
     elif payload.action == "delete_at":
         if payload.throw_index is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="throwIndex fehlt.")
         if payload.throw_index >= len(log):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wurf nicht gefunden.")
         log.pop(payload.throw_index)
+        changed = True
     elif payload.action == "edit_at_pattern":
         if payload.throw_index is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="throwIndex fehlt.")
         if payload.throw_index >= len(log):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wurf nicht gefunden.")
-        pattern = sorted({pin for pin in payload.fallen_pins if 1 <= pin <= 10})
+        if payload.fallen_pins is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail="edit_at_pattern benötigt ausdrücklich fallenPins (auch [] ist gültig).")
+        pattern = payload.fallen_pins
         log[payload.throw_index] = {
             **log[payload.throw_index],
             "pinsKnockedDown": len(pattern),
@@ -646,20 +703,31 @@ async def correct_throw(session_id: str, payload: ThrowCorrection) -> TrackingSe
             "alreadyDownPins": [],
             "manualCorrection": True,
         }
+        changed = True
     elif payload.action == "edit_last":
         if log and payload.pins_knocked_down is not None:
             log[-1] = {
                 **log[-1],
                 "pinsKnockedDown": payload.pins_knocked_down,
-                "fallenPins": [],
-                "observedFallenPins": [],
-                "alreadyDownPins": [],
+                "fallenPins": None,
+                "observedFallenPins": None,
+                "alreadyDownPins": None,
                 "manualCorrection": True,
             }
+            changed = True
     elif payload.action == "insert_before_last":
-        log.insert(max(0, len(log) - 1), _manual_throw(session, payload.pins_knocked_down or 0))
+        if payload.pins_knocked_down is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Für das Einfügen ist eine bekannte Pinzahl erforderlich.")
+        log.insert(max(0, len(log) - 1), _manual_throw(session, payload.pins_knocked_down))
+        changed = True
     elif payload.action == "insert_at_end":
-        log.append(_manual_throw(session, payload.pins_knocked_down or 0))
+        if payload.pins_knocked_down is None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Für das Einfügen ist eine bekannte Pinzahl erforderlich.")
+        log.append(_manual_throw(session, payload.pins_knocked_down))
+        changed = True
+
+    if changed:
+        session.revision += 1
 
     await _append_and_broadcast(
         session,
@@ -695,15 +763,14 @@ async def tracking_websocket(websocket: WebSocket, session_id: str) -> None:
     session.touch()
     session.live_clients.add(websocket)
     try:
-        await websocket.send_json(
-            _new_event(
+        snapshot_event = _new_event(
                 "session_snapshot",
                 {
                     "session": session.snapshot().model_dump(mode="json", by_alias=True),
                     "events": [event.model_dump(mode="json", by_alias=True) for event in session.events],
                 },
-            ).model_dump(mode="json", by_alias=True)
-        )
+            ).model_copy(update={"revision": session.revision})
+        await websocket.send_json(snapshot_event.model_dump(mode="json", by_alias=True))
         await _append_and_broadcast(session, _new_event("live_client_connected", {"liveClientCount": len(session.live_clients)}))
         while True:
             raw_message = await websocket.receive_text()
