@@ -32,8 +32,8 @@ class TrashTalkJsonTests(unittest.TestCase):
     def test_base_catalog_and_projection(self):
         self.assertEqual([], validate_catalog(read_catalog()))
         core = [item for item in enabled_catalog(self.repo)["scenarios"] if item.get("kind") is None]
-        self.assertEqual(45, len(core))
-        self.assertEqual(159, sum(len(item["templates"]) for item in core))
+        self.assertEqual(57, len(core))
+        self.assertEqual(198, sum(len(item["templates"]) for item in core))
         self.assertTrue(all(len(item["templates"]) >= 2 for item in core))
 
     def test_legacy_projection_preserves_source_order_ids_and_metadata(self):

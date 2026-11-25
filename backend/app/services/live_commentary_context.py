@@ -5,9 +5,15 @@ bounds: unresolved strike/spare bonus balls contribute zero until they are known
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TypedDict
 
 from app.live_scoring import ScoreboardResult, compute_scoreboard
+from app.services.live_pin_patterns import PinDelivery, live_pin_patterns
+
+
+class PersonalPace(TypedDict):
+    kind: Literal["below-usual", "above-usual"]
+    priorFirstBallCount: int
 
 
 def _lower_bound(card: dict[str, Any]) -> int:
@@ -80,7 +86,7 @@ def _unequal_progress(board: ScoreboardResult) -> bool:
 
 
 def build_live_commentary_context(
-    normalized_log: list[dict[str, Any]],
+    normalized_log: list[PinDelivery],
     player_count: int,
     player_names: list[str] | None = None,
     revision: int = 0,
@@ -104,6 +110,13 @@ def build_live_commentary_context(
                  "framePins": None, "before": None, "current": None}
                 for _ in normalized_log]
     full_board = boards[-1]
+    pin_patterns = live_pin_patterns(normalized_log, full_board.assignments)
+    named_pair: tuple[str, str] | None = None
+    if player_count == 2 and len(player_names) >= 2:
+        first_name = " ".join(player_names[0].split())
+        second_name = " ".join(player_names[1].split())
+        if first_name and second_name and first_name.casefold() != second_name.casefold():
+            named_pair = (first_name, second_name)
     full_points = [_lower_bound(card) for card in full_board.players]
     current_unequal = _unequal_progress(full_board)
     for index, current in enumerate(normalized_log):
@@ -140,10 +153,21 @@ def build_live_commentary_context(
                     clearance = {"throwId": previous_item.get("throwId"), "kind": "spare"}
 
         weak: dict[str, Any] | None = None
+        personal_pace: PersonalPace | None = None
+        frame_throws: list[int] = boards[index + 1].players[player_index]["frames"][assignment.frame - 1]["throws"]
         if assignment.throw_in_frame == 1:
-            pins = current.get("pinsKnockedDown")
+            pins = frame_throws[0]
             if pins in (0, 1):
                 weak = {"kind": "first-throw", "pins": pins}
+            prior_frames = before.players[player_index]["frames"][:assignment.frame - 1]
+            prior_count = len(prior_frames)
+            if prior_count >= 3:
+                prior_total = sum(frame["throws"][0] for frame in prior_frames)
+                # Compare exact means. Each cutoff pair guarantees at least a two-pin gap.
+                if pins <= 6 and prior_total >= 8 * prior_count:
+                    personal_pace = {"kind": "below-usual", "priorFirstBallCount": prior_count}
+                elif pins >= 6 and prior_total <= 4 * prior_count:
+                    personal_pace = {"kind": "above-usual", "priorFirstBallCount": prior_count}
         elif assignment.throw_in_frame == 2:
             first = next(
                 (normalized_log[pos].get("pinsKnockedDown") for pos, ass in enumerate(full_board.assignments[:index])
@@ -185,7 +209,10 @@ def build_live_commentary_context(
             "revision": revision,
             "previousClearance": clearance,
             "weakPerformance": weak,
-            "framePins": sum(boards[index + 1].players[player_index]["frames"][assignment.frame - 1]["throws"]),
+            **({"pinPattern": pin_patterns[index]} if index in pin_patterns else {}),
+            **({"opponentName": named_pair[1 - player_index]} if named_pair is not None else {}),
+            **({"personalPace": personal_pace} if personal_pace is not None else {}),
+            "framePins": sum(frame_throws),
             "before": before_standing,
             "current": standing,
             "valid": True,

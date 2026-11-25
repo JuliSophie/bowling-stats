@@ -458,11 +458,11 @@
       ],
       "generationBrief": "Synthetic live event: confirmed strike on a fresh rack, no final game outcome known.",
       "templates": [
-        "Strike. Die Pins haben sich kollektiv abgemeldet.",
-        "Zehn Pins, null Gegenargumente.",
-        "Strike. Kurz, laut und sehr überzeugend.",
-        "Ein Wurf. Die komplette Gästeliste liegt.",
-        "Strike. Aufräumen in einer Bewegung."
+        "{player}, der zweite Wurf kann stempeln gehen. Strike.",
+        "Ein Wurf, zehn um. Für Höflichkeit war offenbar keine Zeit.",
+        "Strike. Der Pinsetter darf den Tatort schon freigeben.",
+        "Zehn Pins beim ersten Versuch. {player}, du hast die Verhandlung abgekürzt.",
+        "Strike. Wer stehen bleiben wollte, hätte das früher anmelden müssen."
       ]
     },
     {
@@ -474,11 +474,11 @@
       ],
       "generationBrief": "Synthetic live event: confirmed spare, no final game outcome known.",
       "templates": [
-        "Spare. Die zweite Chance wurde genutzt.",
-        "Aufgeräumt. Der zweite Wurf zählt eben auch.",
-        "Spare. Erst die Frage, dann die Antwort.",
-        "Alles weg. Ein guter zweiter Eindruck.",
-        "Spare. Keine Pins für später aufgehoben."
+        "Spare. {player}, die Nachbesserung ging auf Garantie.",
+        "Zwei Würfe, alles weg. Das Drama war also freiwillig.",
+        "Spare. Was der erste Wurf liegen ließ, hat der zweite einkassiert.",
+        "{player} räumt im zweiten Anlauf ab. Der Umweg war wohl fürs Publikum.",
+        "Spare. Die Reste hatten nur eine sehr kurze Galgenfrist."
       ]
     },
     {
@@ -491,11 +491,11 @@
       ],
       "generationBrief": "Synthetic live event: frame is open; unknown arrangement and unknown number needed to alter game outcome.",
       "templates": [
-        "Offen. Nicht jeder Frame bekommt ein Happy End.",
-        "Da bleiben Pins und Gesprächsbedarf.",
-        "Dieser Frame lässt noch Wünsche offen.",
-        "Nicht abgeräumt. Die Punktetafel nimmt es zur Kenntnis.",
-        "Offener Frame. Weiter geht's, die Pins bleiben."
+        "Offener Frame. {player}, die stehenden Pins zählen nicht als Deko.",
+        "Kein Spare. Die Reste dürfen sich als Überlebende bezeichnen.",
+        "{player} lässt Pins stehen. Der Pinsetter darf die Schicht zu Ende machen.",
+        "Offen. Die Pins haben den Räumungsbescheid ignoriert.",
+        "Kein Spare. Die stehenden Pins hätten gern noch eine Bewertung."
       ]
     },
     {
@@ -508,11 +508,11 @@
       ],
       "generationBrief": "Generic live fallback for any delivery, including strikes, spares and tenth-frame bonus throws. Only the recorded count is known; do not claim remaining pins, throw ordinal, another delivery or an outcome.",
       "templates": [
-        "{pins} Pins registriert.",
-        "{pins} Pins in diesem Wurf.",
-        "Wurf mit {pins} Pins — Ergebnis notiert.",
-        "{pins} Pins auf der Habenseite.",
-        "{pins} Pins im aktuellen Wurf."
+        "{player}, die Kugel war eindeutig der lauteste Teil dieser Diskussion.",
+        "Pinzahl: {pins}. Für die B-Note ist hier leider keine Spalte.",
+        "Pinzahl: {pins}. Ein Antrag auf Aufrunden liegt nicht vor.",
+        "{player} hat geworfen. Die Bahn nimmt Beschwerden nur in Kugelform entgegen.",
+        "{player}, die Halle ist für Ausreden leider schlecht gedämmt."
       ]
     },
     {
@@ -653,6 +653,153 @@
       "generationBrief": "Zero pins immediately after the verified Strike or Spare. Unique lead before this delivery, now behind in provisional earned-points standings that may include later opponent throws and unequal progress. Every lead assertion must say vorläufig. No causal because wording.",
       "templates": ["Null nach dem {clearance}; inzwischen ist deine vorläufige Führung weg.", "{player}: Nach dem Abräumen kein Pin. Die vorläufige Spitze ist inzwischen weitergezogen.", "{clearance}, dann Paris. Inzwischen hat sich auch deine vorläufige Führung verabschiedet.", "Paris nach dem {clearance}: null Pins, und inzwischen ist die vorläufige Führung weg. Die Ratten applaudieren."],
       "templateIds": ["live.postclearance.zero.lead_lost.1", "live.postclearance.zero.lead_lost.2", "live.postclearance.zero.lead_lost.3", "live.postclearance.zero.lead_lost.4"]
+    },
+    {
+      "id": "live.leave.recurring",
+      "priority": 82,
+      "enabled": true,
+      "bindings": ["pin"],
+      "generationBrief": "First ball leaves the same single pin that this player has already failed to clear at least three times in this game. Keep it dry. Refer only to this game and do not predict the second ball.",
+      "templates": [
+        "Die {pin} steht wieder. Dein Stammgast.",
+        "Mal wieder deinen Standardpin stehen gelassen. Die {pin} natürlich.",
+        "Pin {pin} hat heute offenbar einen Stammplatz.",
+        "Alle weg bis auf die {pin}. Ihr kennt euch ja schon."
+      ]
+    },
+    {
+      "id": "live.spare.strong_side",
+      "priority": 83,
+      "enabled": true,
+      "bindings": ["pin", "side"],
+      "generationBrief": "Verified single-pin spare on the player's stronger side in this game. The side binding is the German adverb links or rechts. Three or more earlier singles on this side were all converted, whereas at least two on the opposite side were missed. No claims about other games, ball trajectory or handedness.",
+      "templates": [
+        "Wieder {side} geräumt. Die Seite kannst du.",
+        "Pin {pin}, einmal {side} abholen. Kennst du schon.",
+        "Die {pin} ist weg. Läuft heute {side}.",
+        "Spare. Deine Standardseite heute? Ganz klar {side}."
+      ]
+    },
+    {
+      "id": "live.throw.first.low",
+      "priority": 22,
+      "enabled": true,
+      "bindings": ["player", "pins", "remaining", "frame"],
+      "generationBrief": "Legal first ball of frame {frame} knocks down 0 to 3, so {remaining} pins remain. Do not infer their positions, a miss, or any later outcome.",
+      "templates": [
+        "Frame {frame}: {remaining} stehen noch. {player}, das war eher die Vorbesichtigung.",
+        "{player}, Pinzahl {pins} zum Auftakt. Der Rest sah keinen Grund, unruhig zu werden.",
+        "{remaining} stehen noch. Großzügig von dir, {player}, so viele Zeugen zu verschonen."
+      ]
+    },
+    {
+      "id": "live.throw.first.mid",
+      "priority": 22,
+      "enabled": true,
+      "bindings": ["player", "pins", "remaining", "frame"],
+      "generationBrief": "Legal first ball of frame {frame} knocks down 4 to 7, so {remaining} pins remain. Do not infer their positions, difficulty, or any later outcome.",
+      "templates": [
+        "{pins} weg, {remaining} stehen. {player}, war das die Kurzversion vom Abräumen?",
+        "Frame {frame}: {pins} Pins weg. Die anderen {remaining} haben offenbar Widerspruch eingelegt.",
+        "{player} nimmt {pins} mit. Die übrigen {remaining} waren wohl nicht im Angebot.",
+        "{remaining} stehen noch. {player}, an der Kasse heißt das Teilzahlung."
+      ]
+    },
+    {
+      "id": "live.throw.first.high",
+      "priority": 22,
+      "enabled": true,
+      "bindings": ["player", "pins", "remaining", "frame"],
+      "generationBrief": "Legal first ball of frame {frame} knocks down 8 or 9, so {remaining} is 2 or 1. Keep wording grammatical for either count. Do not infer pin positions or a later outcome.",
+      "templates": [
+        "{pins} weg. {player}, die Bahn hat das Kleingeld behalten.",
+        "Frame {frame}: fast ein Strike. Der Rest besteht auf einem eigenen Auftritt.",
+        "{player}, {pins} Pins um und trotzdem noch Publikum auf der Bahn."
+      ]
+    },
+    {
+      "id": "live.open.late",
+      "priority": 25,
+      "enabled": true,
+      "bindings": ["player", "pins", "frame"],
+      "generationBrief": "Confirmed open frame in frames 8 through 10; {pins} is the total pinfall in this frame. Do not claim that it affected the result or that another frame follows.",
+      "templates": [
+        "Frame {frame} bleibt offen. {player}, beim Endspurt war das die Handbremse.",
+        "Offen in Frame {frame}. {player}, die Pins haben deinen Schlussspurt nicht unterschrieben.",
+        "Frame {frame}, Pinzahl {pins}, kein Spare. Der Endspurt hat eine Baustelle."
+      ]
+    },
+    {
+      "id": "live.strike.double",
+      "priority": 71,
+      "enabled": true,
+      "bindings": ["player", "frame"],
+      "generationBrief": "Exactly two consecutive verified strikes by the same player, with the second in frame {frame}. Other players may have thrown in between. Do not claim a lead or outcome.",
+      "templates": [
+        "Double für {player}. Der erste Strike war offenbar die Vorwarnung.",
+        "Zwei Strikes am Stück. {player}, das zählt langsam als schlechte Nachricht für die Pins.",
+        "Frame {frame}: Double. Frische Pins, dieselbe kurze Personalbesprechung."
+      ]
+    },
+    {
+      "id": "live.strike.turkey",
+      "priority": 72,
+      "enabled": true,
+      "bindings": ["player", "frame"],
+      "generationBrief": "Exactly three consecutive verified strikes by the same player, with the third in frame {frame}. Do not claim a lead, an outcome, or any opponent by name.",
+      "templates": [
+        "Turkey für {player}. Wer nach zwei Strikes noch Zufall sagte, darf sich setzen.",
+        "Drei Strikes am Stück. {player}, die Pins hätten gern einen anderen Spielplan.",
+        "Frame {frame}: Turkey. Der Pinsetter stellt inzwischen nur noch fürs Protokoll auf."
+      ]
+    },
+    {
+      "id": "live.strike.turkey.opponent",
+      "priority": 73,
+      "enabled": true,
+      "bindings": ["player", "opponent", "frame"],
+      "generationBrief": "Exactly three consecutive verified strikes by {player} with the third in frame {frame}; {opponent} is the other verified named slot in a two-player roster. Do not claim a reaction, relative score, lead, or outcome.",
+      "templates": [
+        "Drei Strikes, {player}. {opponent}, zählst du noch mit oder soll der Pinsetter übernehmen?",
+        "Turkey für {player}. {opponent}, du darfst jetzt gern behaupten, das hättest du kommen sehen.",
+        "Frame {frame}, drittes X in Serie. {opponent}, der Pinsetter nimmt Beschwerden auch ohne Termin."
+      ]
+    },
+    {
+      "id": "live.strike.streak",
+      "priority": 74,
+      "enabled": true,
+      "bindings": ["player", "frame", "streak"],
+      "generationBrief": "At least four consecutive verified strikes by the same player. {streak} is the current consecutive strike count; the current strike was in frame {frame}. Do not claim a lead, record, or outcome.",
+      "templates": [
+        "{streak} Strikes in Folge. {player}, der Pinsetter hätte gern Urlaub.",
+        "Frame {frame}: Strike Nummer {streak} in Serie. Langsam wird die Wiederholung persönlich.",
+        "{player}, {streak} Strikes am Stück. Die Pins können die Beschwerde jetzt gesammelt einreichen."
+      ]
+    },
+    {
+      "id": "live.throw.first.below_usual",
+      "priority": 23,
+      "enabled": true,
+      "bindings": ["player", "pins", "frame", "remaining"],
+      "generationBrief": "First ball with at most six pins and at least two fewer than this roster slot averaged across at least three earlier first balls in this game (prior mean at least eight). Compare only first balls in this game, without claims about permanent skill, pin positions, or outcomes.",
+      "templates": [
+        "Na ja, {player}. {pins} Pins. Für deinen bisherigen Erstwurfschnitt hier eher ein Höflichkeitsbesuch.",
+        "Frame {frame}: {remaining} dürfen stehen bleiben. Deine bisherigen Erstwürfe in diesem Spiel waren weniger zuvorkommend.",
+        "{pins} Pins. Dein bisheriger Erstwurfschnitt schaut kurz peinlich berührt weg."
+      ]
+    },
+    {
+      "id": "live.throw.first.above_usual",
+      "priority": 23,
+      "enabled": true,
+      "bindings": ["player", "pins", "frame", "remaining"],
+      "generationBrief": "First ball with at least six pins and at least two more than this roster slot averaged across at least three earlier first balls in this game (prior mean at most four). A strike is possible. Compare only first balls in this game, without claims about permanent skill, pin positions, or outcomes.",
+      "templates": [
+        "Immerhin, {player}: {pins} Pins. Für deine bisherigen Erstwürfe hier fast schon Angeberei.",
+        "Frame {frame}: {pins} Pins. Dein bisheriger Erstwurfschnitt muss gerade neu rechnen.",
+        "Immerhin {pins}. Die Pins kennen deine ersten Würfe in diesem Spiel sonst freundlicher."
+      ]
     },
     {
       "id": "legacy.v1.score.legendary",

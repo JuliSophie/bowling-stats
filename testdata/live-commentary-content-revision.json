@@ -1,5 +1,5 @@
 {
-  "revision": "live-context-2026-09-20",
+  "revision": "live-context-2026-11-24",
   "originalCoreHash": "26f2faf11250ccf193806b601e22686801ab7bf1f1b75075ac9e8ddb7907114e",
   "originalCoreIds": [
     "score.absolute.legendary",
@@ -54,6 +54,48 @@
         "{pins} Pins auf der Habenseite.",
         "{pins} sind weg. Da ist noch etwas zu tun."
       ]
+    },
+    {
+      "id": "live.strike",
+      "priority": 70,
+      "enabled": true,
+      "bindings": ["player"],
+      "generationBrief": "Synthetic live event: confirmed strike on a fresh rack, no final game outcome known.",
+      "templates": [
+        "Strike. Die Pins haben sich kollektiv abgemeldet.",
+        "Zehn Pins, null Gegenargumente.",
+        "Strike. Kurz, laut und sehr überzeugend.",
+        "Ein Wurf. Die komplette Gästeliste liegt.",
+        "Strike. Aufräumen in einer Bewegung."
+      ]
+    },
+    {
+      "id": "live.spare",
+      "priority": 60,
+      "enabled": true,
+      "bindings": ["player"],
+      "generationBrief": "Synthetic live event: confirmed spare, no final game outcome known.",
+      "templates": [
+        "Spare. Die zweite Chance wurde genutzt.",
+        "Aufgeräumt. Der zweite Wurf zählt eben auch.",
+        "Spare. Erst die Frage, dann die Antwort.",
+        "Alles weg. Ein guter zweiter Eindruck.",
+        "Spare. Keine Pins für später aufgehoben."
+      ]
+    },
+    {
+      "id": "live.open",
+      "priority": 20,
+      "enabled": true,
+      "bindings": ["player", "pins"],
+      "generationBrief": "Synthetic live event: frame is open; unknown arrangement and unknown number needed to alter game outcome.",
+      "templates": [
+        "Offen. Nicht jeder Frame bekommt ein Happy End.",
+        "Da bleiben Pins und Gesprächsbedarf.",
+        "Dieser Frame lässt noch Wünsche offen.",
+        "Nicht abgeräumt. Die Punktetafel nimmt es zur Kenntnis.",
+        "Offener Frame. Weiter geht's, die Pins bleiben."
+      ]
     }
   ],
   "addedScenarioIds": [
@@ -64,10 +106,25 @@
     "live.postclearance.one.leader",
     "live.postclearance.zero.leader",
     "live.postclearance.one.lead_lost",
-    "live.postclearance.zero.lead_lost"
+    "live.postclearance.zero.lead_lost",
+    "live.leave.recurring",
+    "live.spare.strong_side",
+    "live.throw.first.low",
+    "live.throw.first.mid",
+    "live.throw.first.high",
+    "live.open.late",
+    "live.strike.double",
+    "live.strike.turkey",
+    "live.strike.turkey.opponent",
+    "live.strike.streak",
+    "live.throw.first.below_usual",
+    "live.throw.first.above_usual"
   ],
   "reviewedCurrentHashes": {
-    "live.throw": "cd774b95255652e901b1283640a75968697afbd8927b8f70effaaac4858d4a83",
+    "live.throw": "8c28ce76338597d125a30fa9ca0973946a77ea4440b8b698dcf34543987ab9e0",
+    "live.strike": "6d4fd8b64ec2c73df1fa67034e4fe27892648321b48c58a4e9e745cab9f2e1cc",
+    "live.spare": "e80651f34af24198154638b0a52035b07bd428bb4d6749c37ea9cf993af22d1a",
+    "live.open": "2d1a7c369ad7892d98c844abf8a2ae10761cb8756202f327f613d2afee022739",
     "live.postclearance.one": "0fec40d753c2bbfc61bf8d97bb24053bf1e8620ae5c340f5d824861e44f3a9e4",
     "live.postclearance.zero": "0910ad1db40edd514776d6ab3c4f83f42ffbe55ae6772f377bd1b1cb49b370b5",
     "live.weak.first.leader": "f0dc63dcbd5d45015b71bc51965ae9d00e70056799a10c8b2c44ac44f0ba1e25",
@@ -75,6 +132,18 @@
     "live.postclearance.one.leader": "0442d625cf4dbf9615953991ee5ccaf92419fee433d0eae4880ef083e3de9b49",
     "live.postclearance.zero.leader": "eb1a3c3fab28d70dbedcf8180a8771ca00b721c60e0c636b46f1e72fa006bd13",
     "live.postclearance.one.lead_lost": "33287b52d88cba7309fbcfd3461f5d01f798126bc1342b3825afc277f5df67ee",
-    "live.postclearance.zero.lead_lost": "d33b08393f408b122220ddcf3cfb0cb208565910d0517eb05385277fe136eaae"
+    "live.postclearance.zero.lead_lost": "d33b08393f408b122220ddcf3cfb0cb208565910d0517eb05385277fe136eaae",
+    "live.leave.recurring": "c8832806eca9f26ed9823c7bf82502a538cf68ba7c3147717401051269b0fd11",
+    "live.spare.strong_side": "eb837ea7a8d934e9ffb97356aa8d092f4142689fe17d121ea1d98231a9f43ab3",
+    "live.throw.first.low": "267ac04c2bc5d72d70f24679bdd9fa85434f95814640cab9f86edf9b085ae23f",
+    "live.throw.first.mid": "b6d31b3df66086c869c1ce296d9588260d479167f058636731800f90b30528ee",
+    "live.throw.first.high": "07ed6699d1b23884646f948fc10a23e14227e355bf30732a1d6c4fa0517542d5",
+    "live.open.late": "d04913c776f8e833ab3ffba6931b38457f32366daaff5d074955ad9d764c398d",
+    "live.strike.double": "80598a58ed6cf4ef2f1e91a81888f729ed64ef5773fd3cf675b7a83b71302b43",
+    "live.strike.turkey": "8df7afc7220873a5a0d7d352c1fe1ff6eeb87cbf370ffdf8ac86201fd2326117",
+    "live.strike.turkey.opponent": "2587f7d67b63247e318a82657778776970074bd74021c0d70cced136516d48b5",
+    "live.strike.streak": "06ef08a3b37c55984a3a1125d7e3e713929fd0fa736a2a6ed6e23cee7b881e8f",
+    "live.throw.first.below_usual": "591c1a7e50246552ca3e4238cf3d0158daf3282112a425af4360cd33b542e027",
+    "live.throw.first.above_usual": "e63944329496e364234a24a72345137e7e554a8616c7e15ac677f37db408e441"
   }
 }
