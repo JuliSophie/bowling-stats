@@ -23,3 +23,12 @@ export function requestIsCurrent(requestGeneration, currentGeneration, requestOp
     requestOperation === currentOperation &&
     requestSessionId === currentSessionId;
 }
+
+export function boardFromPlotY(y) {
+  return Number((1 + (Math.max(8, Math.min(88, y)) - 8) * 38 / 80).toFixed(1));
+}
+
+export function drawnPath(boards) {
+  if (boards.length !== 3 || !boards.every((board) => Number.isFinite(board) && board >= 1 && board <= 39)) return null;
+  return boards.map((board, index) => ({ distanceM: [0, 9, 18.29][index], board }));
+}

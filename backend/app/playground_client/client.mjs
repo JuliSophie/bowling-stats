@@ -1,11 +1,56 @@
-import { remainingPins, presetAllowed, requestIsCurrent } from './playground-logic.mjs';
+import { boardFromPlotY, drawnPath, remainingPins, presetAllowed, requestIsCurrent } from './playground-logic.mjs';
 
 const API = '/api';
 let session = null, socket = null, busyOwner = null, generation = 0, operation = 0;
+let drawnBoards = [null, null, null], pathSent = false;
 const $ = (id) => document.getElementById(id);
 const log = (message) => { $('log').textContent = `${new Date().toLocaleTimeString()}  ${message}\n${$('log').textContent}`.slice(0, 6000); };
 const state = () => session && `${session.currentPlayer || '–'} · Frame ${session.currentFrame}, Wurf ${session.currentThrow} · ${session.scoreboard?.throwCount ?? 0} Würfe · ${session.scoreboard?.isFinished ? 'Spiel beendet' : 'bereit'}`;
 function remaining() { return remainingPins(session); }
+function canDraw() { return session && busyOwner === null && !session.scoreboard?.isFinished; }
+function renderCurve() {
+  const enabled = Boolean(canDraw());
+  const count = drawnBoards.filter((board) => board !== null).length;
+  $('curve-plot').setAttribute('aria-disabled', String(!enabled));
+  $('curve-clear').disabled = !enabled || count === 0;
+  const labels = ['Abwurf', 'Mitte', 'Pins'];
+  const positions = drawnBoards.map((board, index) =>
+    board === null ? null : `${[24, 120, 216][index]},${8 + (board - 1) * 80 / 38}`);
+  $('curve-line').setAttribute('points', positions.filter(Boolean).join(' '));
+  const dots = drawnBoards.map((board, index) => {
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', [24, 120, 216][index]);
+    circle.setAttribute('cy', board === null ? 48 : 8 + (board - 1) * 80 / 38);
+    circle.setAttribute('r', board === null ? 5 : 7);
+    circle.setAttribute('fill', board === null ? '#fff7ea' : '#b23a48');
+    circle.setAttribute('stroke', '#172033');
+    circle.setAttribute('opacity', board === null ? '.6' : '1');
+    return circle;
+  });
+  $('curve-points').replaceChildren(...dots);
+  ['curve-start', 'curve-middle', 'curve-end'].forEach((id, index) => {
+    $(id).disabled = !enabled;
+    $(id).value = drawnBoards[index] ?? 20;
+  });
+  $('curve-status').textContent = !session ? 'Erst eine Session erstellen.'
+    : session.scoreboard?.isFinished ? 'Spiel beendet. Starte ein neues Spiel.'
+      : busyOwner !== null ? 'Wurf läuft. Die Kurve wird nach Annahme gelöscht.'
+        : count === 3 ? 'Kurve bereit für genau einen Wurf.'
+          : count > 0 ? `${count} von 3 Punkten gesetzt. Fehlt: ${labels.filter((_, index) => drawnBoards[index] === null).join(', ')}.`
+            : pathSent ? 'Kurve gesendet und Punkte gelöscht.'
+              : 'Auf der Bahn tippen oder ziehen – Abwurf, Mitte, Pins. Die Regler gehen auch per Tastatur.';
+}
+function setBoard(index, board) {
+  if (!canDraw()) return;
+  drawnBoards[index] = board;
+  pathSent = false;
+  renderCurve();
+}
+function clearDrawing(sent = false) {
+  drawnBoards = [null, null, null];
+  pathSent = sent;
+  renderCurve();
+}
 function render() {
   $('state').textContent = state() || 'Noch keine Session.';
   $('reset').disabled = !session;
@@ -14,12 +59,15 @@ function render() {
     button.disabled = !session || busyOwner !== null || session.scoreboard?.isFinished ||
       (button.dataset.count && Number(button.dataset.count) > remaining());
   });
+  renderCurve();
 }
 function setSession(next) {
   generation += 1;
   operation += 1;
   socket?.close();
   busyOwner = null;
+  drawnBoards = [null, null, null];
+  pathSent = false;
   session = next;
   if (session) connect(generation);
   render();
@@ -51,7 +99,10 @@ function connect(socketGeneration) {
   socket.onmessage = (event) => {
     if (socketGeneration !== generation || session?.sessionId !== sessionId) return;
     const value = JSON.parse(event.data);
-    if (value.type === 'session_reset') { operation += 1; busyOwner = null; }
+    if (value.type === 'session_reset') {
+      operation += 1; busyOwner = null;
+      drawnBoards = [null, null, null]; pathSent = false;
+    }
     if (value.payload?.session && (socketGeneration === generation)) session = value.payload.session;
     render(); log(value.type);
   };
@@ -63,12 +114,14 @@ async function sendCount(count, requestGeneration, requestOperation) {
       !session || session.scoreboard?.isFinished || count > remaining()) throw new Error('Wurf abgebrochen: Bahnzustand ist nicht mehr passend.');
   const sessionId = session.sessionId;
   const now = new Date().toISOString();
+  const customPath = drawnPath(drawnBoards);
   const event = await request('/tracking/mock-throws', {method:'POST', body:JSON.stringify({
     sessionId, clientEventId:`playground-${now}-${crypto.randomUUID()}`, capturedAt:now,
     pinsKnockedDown:count, ballSpeedKmh:20 + count * 1.3, confidence:.98,
-    path:[{distanceM:0,board:20},{distanceM:9,board:20.5},{distanceM:18.29,board:20}]
+    path:customPath ?? [{distanceM:0,board:20},{distanceM:9,board:20.5},{distanceM:18.29,board:20}]
   })});
   if (!requestIsCurrent(requestGeneration, generation, requestOperation, operation, sessionId, session?.sessionId)) throw new Error('Veraltete Session-Antwort ignoriert.');
+  clearDrawing(Boolean(customPath));
   log(`Wurf akzeptiert: ${event.payload?.pinsKnockedDown ?? count} Pins`);
   await refresh(sessionId, requestGeneration, requestOperation);
 }
@@ -99,6 +152,31 @@ async function preset(label, counts) {
   } catch (error) { if (requestGeneration === generation) log(`${label}: ${error.message}`); }
   finally { if (busyOwner === owner) busyOwner = null; render(); }
 }
+const plot = $('curve-plot');
+const draw = (event) => {
+  if (!canDraw()) return;
+  const rect = plot.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * 240 / rect.width;
+  const y = (event.clientY - rect.top) * 96 / rect.height;
+  setBoard(Math.max(0, Math.min(2, Math.floor(x / 80))), boardFromPlotY(y));
+};
+plot.addEventListener('pointerdown', (event) => {
+  if (!canDraw()) return;
+  plot.setPointerCapture(event.pointerId);
+  draw(event);
+});
+plot.addEventListener('pointermove', (event) => {
+  if (plot.hasPointerCapture(event.pointerId)) draw(event);
+});
+for (const type of ['pointerup', 'pointercancel']) {
+  plot.addEventListener(type, (event) => {
+    if (plot.hasPointerCapture(event.pointerId)) plot.releasePointerCapture(event.pointerId);
+  });
+}
+['curve-start', 'curve-middle', 'curve-end'].forEach((id, index) => {
+  $(id).addEventListener('input', (event) => setBoard(index, Number(event.currentTarget.value)));
+});
+$('curve-clear').onclick = () => { if (canDraw()) clearDrawing(); };
 for (let count=0; count<=10; count++) {
   const button=document.createElement('button'); button.textContent=count; button.dataset.count=count;
   button.title=`${count} Pins`; button.onclick=()=>throwPins(count); $('counts').append(button);
@@ -129,6 +207,7 @@ $('reset').onclick = async () => {
   try {
     const next = await request(`/tracking/sessions/${old.sessionId}/reset`, {method:'POST'});
     if (resetGeneration === generation && resetOperation === operation && busyOwner === owner && session?.sessionId === old.sessionId) {
+      drawnBoards = [null, null, null]; pathSent = false;
       session = next; render(); log('Spiel zurückgesetzt.');
     }
   } catch(error) { if (resetGeneration === generation) log(`Fehler: ${error.message}`); }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { remainingPins, presetAllowed, requestIsCurrent } from './playground-logic.mjs';
+import { boardFromPlotY, drawnPath, remainingPins, presetAllowed, requestIsCurrent } from './playground-logic.mjs';
 
 const session = (throws, frame = 1, currentThrow = throws.length + 1, players = 1) => ({
   playerCount: players, currentFrame: frame, currentThrow,
@@ -28,4 +28,22 @@ test('stale session and operation responses cannot overwrite current state', () 
   assert.equal(requestIsCurrent(1, 2, 4, 4, 'A', 'B'), false);
   assert.equal(requestIsCurrent(1, 1, 4, 5, 'A', 'A'), false);
   assert.equal(requestIsCurrent(1, 1, 4, 4, 'A', 'B'), false);
+});
+
+test('plot height maps top, middle and bottom to lane boards', () => {
+  assert.equal(boardFromPlotY(8), 1);
+  assert.equal(boardFromPlotY(48), 20);
+  assert.equal(boardFromPlotY(88), 39);
+  assert.equal(boardFromPlotY(-10), 1);
+  assert.equal(boardFromPlotY(110), 39);
+});
+
+test('only a complete three-point drawing becomes a ball path', () => {
+  assert.equal(drawnPath([20, null, 30]), null);
+  assert.equal(drawnPath([0, 20, 30]), null);
+  assert.deepEqual(drawnPath([1, 20, 39]), [
+    { distanceM: 0, board: 1 },
+    { distanceM: 9, board: 20 },
+    { distanceM: 18.29, board: 39 },
+  ]);
 });

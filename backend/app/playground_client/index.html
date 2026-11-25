@@ -12,9 +12,20 @@
     input,button { font:inherit; border-radius:8px; padding:9px 11px; border:1px solid #aaa; }
     input { width:100%; box-sizing:border-box; } button { cursor:pointer; background:#172033; color:white; border-color:#172033; }
     button.secondary { background:white; color:#172033; } button:disabled { opacity:.45; cursor:not-allowed; }
+    button:focus-visible, input:focus-visible { outline:2px solid #b23a48; outline-offset:2px; }
     .code { font-size:3rem; letter-spacing:.18em; font-weight:900; color:#b23a48; } .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
     .muted { color:#667085; font-size:.9rem; } .status { min-height:1.4em; } pre { white-space:pre-wrap; max-height:180px; overflow:auto; background:#f7f7f7; padding:10px; }
     .pins button { min-width:42px; } .danger { background:#b23a48; border-color:#b23a48; }
+    .curve-editor { display:grid; gap:8px; max-width:280px; margin:14px 0; }
+    .curve-editor .row { justify-content:space-between; }
+    .curve-editor strong { font-size:.9rem; }
+    .curve-editor button { min-height:44px; }
+    .curve-editor .muted { margin:0; }
+    .curve-plot { display:block; width:100%; aspect-ratio:5/2; border:1px solid #d8d2c8; border-radius:10px; background:#e7d6b8; touch-action:none; cursor:crosshair; }
+    .curve-plot[aria-disabled="true"] { cursor:default; opacity:.55; }
+    .curve-sliders { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+    .curve-sliders label { margin:0; font-size:.8rem; }
+    .curve-sliders input { height:44px; padding:0; border:0; accent-color:#b23a48; }
   </style>
 </head>
 <body>
@@ -32,6 +43,25 @@
   <section>
     <h2>Wurf simulieren</h2>
     <div class="row pins" id="counts"></div>
+    <div class="curve-editor" aria-labelledby="curve-title">
+      <div class="row"><strong id="curve-title">Ballkurve für den nächsten Wurf</strong><button type="button" id="curve-clear" class="secondary" disabled>Neu zeichnen</button></div>
+      <svg id="curve-plot" class="curve-plot" viewBox="0 0 240 96" aria-hidden="true" aria-disabled="true">
+        <line x1="12" y1="8" x2="228" y2="8" stroke="#8f795b" />
+        <line x1="12" y1="88" x2="228" y2="88" stroke="#8f795b" />
+        <line x1="14" y1="8" x2="14" y2="88" stroke="#b23a48" stroke-width="2" />
+        <line x1="24" y1="10" x2="24" y2="86" stroke="#8f795b" stroke-dasharray="2 5" />
+        <line x1="120" y1="10" x2="120" y2="86" stroke="#8f795b" stroke-dasharray="2 5" />
+        <line x1="216" y1="10" x2="216" y2="86" stroke="#8f795b" stroke-dasharray="2 5" />
+        <polyline id="curve-line" fill="none" stroke="#172033" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <g id="curve-points"></g>
+      </svg>
+      <div class="curve-sliders">
+        <label for="curve-start">Abwurf<input id="curve-start" type="range" min="1" max="39" step=".5" value="20" aria-label="Board am Abwurf" disabled></label>
+        <label for="curve-middle">Mitte<input id="curve-middle" type="range" min="1" max="39" step=".5" value="20" aria-label="Board in der Bahnmitte" disabled></label>
+        <label for="curve-end">Pins<input id="curve-end" type="range" min="1" max="39" step=".5" value="20" aria-label="Board am Pin-Deck" disabled></label>
+      </div>
+      <p id="curve-status" class="muted" role="status" aria-live="polite">Erst eine Session erstellen.</p>
+    </div>
     <div class="row" id="presets" style="margin-top:10px"></div>
     <p class="muted">Presets mit mehreren Würfen sind absichtlich nur bei einem Spieler, neuem Frame und voller Bahn aktiv.</p>
     <div class="row" style="margin-top:10px"><button id="reset" class="danger" disabled>Spiel zurücksetzen</button></div>
