@@ -43,3 +43,26 @@ Standardmäßig sind ausschließlich `127.0.0.1:8317` (Backend) und `127.0.0.1:4
 `%LOCALAPPDATA%\BowlingStatsPlayground`; sie werden für Fehlersuche behalten.
 Ein belegter Port oder ein Neustart des Backends erfordert einen neuen Playground-Start
 beziehungsweise eine neue Session. Es werden keine Produktions-`.env`-Dateien verändert.
+
+## Nuxt-Spieleübersicht (isolierter Pilot)
+
+Die Nuxt-Demo ist **nicht** Teil dieses Backend-Playgrounds und verwendet keine
+Backend- oder Produktions-API. Sie wird separat aus `frontend-nuxt` gestartet:
+
+```powershell
+cd frontend-nuxt
+npm install
+npm run dev                 # http://127.0.0.1:4318
+npm run generate            # statische Ausgabe unter .output/public
+npm run preview             # statische SPA lokal auf 127.0.0.1:4318
+```
+
+Die statische Ausgabe kann von einem beliebigen Static Host mit SPA-Fallback
+ausgeliefert werden. `NUXT_PUBLIC_LEGACY_ORIGIN` ist optional und aktiviert nur
+explizite Navigation zur bestehenden Anwendung; ohne diese Variable bleiben
+nicht verfügbare Ziele ehrlich deaktiviert.
+
+Die vollständige Spieleübersicht, ihre Grenzen, der komponentenbezogene
+CSS-Aufbau und die Trennung von statischem Frontend und FastAPI sind in
+[frontend-nuxt/README.md](../frontend-nuxt/README.md) beschrieben. Der Pilot
+ersetzt keine laufende Anwendung und verändert kein Serverskript.

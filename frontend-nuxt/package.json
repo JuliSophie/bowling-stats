@@ -1,0 +1,30 @@
+{
+  "name": "bowling-stats-frontend-nuxt",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "nuxt dev --host 127.0.0.1 --port 4318",
+    "generate": "nuxt generate",
+    "generate:subpath": "set NUXT_APP_BASE_URL=/pilot/&& nuxt generate",
+    "typecheck": "nuxt typecheck",
+    "test": "node --import tsx --test test/*.test.ts",
+    "preview": "serve -s .output/public -l tcp://127.0.0.1:4318",
+    "e2e": "playwright test",
+    "e2e:subpath": "set PLAYWRIGHT_BASE_URL=http://127.0.0.1:4318/pilot/&& playwright test"
+  },
+  "dependencies": {
+    "echarts": "6.1.0",
+    "nuxt": "^4.1.3",
+    "vue": "^3.5.22",
+    "vue-echarts": "8.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.15.21",
+    "serve": "^14.2.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vue-tsc": "^2.2.12"
+  }
+}
