@@ -48,7 +48,7 @@ export default function GamesListPage() {
       <main className="app-main max-w-5xl">
         <div className="flex items-center gap-3">
           <BackButton className="back-button" />
-          <h1 className="text-2xl font-bold text-lane-900">Alle Spiele</h1>
+          <h1 className="text-2xl font-bold text-lane-900">Spieltage &amp; Spiele</h1>
           <span className="text-sm text-lane-600">({games.length})</span>
           <Link href="/stats/trash-talk" className="ml-auto text-sm font-bold text-coral hover:underline">Sprüche & Katalog</Link>
         </div>

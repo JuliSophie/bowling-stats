@@ -48,6 +48,7 @@ export default function GameDayPreviewCard({
     event.stopPropagation();
     setOpen((v) => !v);
   };
+  const gamesPanelId = `games-for-day-${date}`;
 
   return (
     <section className="section-card overflow-hidden">
@@ -62,6 +63,7 @@ export default function GameDayPreviewCard({
               {location} · {sortedGames.length} Spiel{sortedGames.length !== 1 ? 'e' : ''}
             </span>
           </div>
+          <span className="mt-1 block text-xs font-bold text-coral">Tagesauswertung →</span>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {dayPlayers.map((player, index) => (
               <span
@@ -78,29 +80,28 @@ export default function GameDayPreviewCard({
           type="button"
           onClick={toggleOpen}
           aria-expanded={open}
-          aria-label={open ? 'Spiele einklappen' : 'Spiele ausklappen'}
+          aria-controls={gamesPanelId}
+          aria-label={open ? 'Spiele ausblenden' : 'Spiele anzeigen'}
           className="flex shrink-0 items-center px-4 transition hover:bg-lane-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-lane-700/20"
         >
-          <span className={`text-sm font-bold text-lane-400 transition ${open ? 'rotate-180' : ''}`}>▼</span>
+          <span className="text-xs font-bold text-lane-500">{open ? 'Spiele ausblenden' : 'Spiele anzeigen'}</span>
         </button>
       </div>
 
-      {open && (
-        <div className="grid gap-2 border-t border-lane-100 p-3">
-          {sortedGames.map((game, index) => (
-            <GamePreviewCard
-              key={game.id}
-              game={game}
-              allGames={allGames}
-              label={`Spiel ${index + 1}`}
-              showDate={false}
-              showLocation={false}
-              expanded={expandedGameId === game.id}
-              onExpandedChange={(nextExpanded) => onExpandedGameChange?.(nextExpanded ? game.id : null)}
-            />
-          ))}
-        </div>
-      )}
+      <div id={gamesPanelId} hidden={!open} className={`${open ? 'grid' : 'hidden'} gap-2 border-t border-lane-100 p-3`}>
+        {open && sortedGames.map((game, index) => (
+          <GamePreviewCard
+            key={game.id}
+            game={game}
+            allGames={allGames}
+            label={`Spiel ${index + 1}`}
+            showDate={false}
+            showLocation={false}
+            expanded={expandedGameId === game.id}
+            onExpandedChange={(nextExpanded) => onExpandedGameChange?.(nextExpanded ? game.id : null)}
+          />
+        ))}
+      </div>
     </section>
   );
 }

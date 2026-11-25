@@ -68,6 +68,12 @@ export default function GamePreviewCard({
   const { maxScore } = getWinner(game);
   const excitement = calculateGameExcitement(game);
   const lit = excitement ? fireCount(excitement.tensionIndex) : 0;
+  const analysisId = `game-analysis-${game.id}`;
+  const analysisSummary = excitement
+    ? `Spannungsindex: ${excitement.tensionIndex.toFixed(2)}`
+    : game.scores.length < 2
+      ? 'Spannungsindex nicht berechenbar: mindestens zwei Spieler erforderlich.'
+      : 'Spannungsindex nicht berechenbar: lückenhafte Rundendaten.';
 
   const toggleExpanded = (event: React.MouseEvent) => {
     event.preventDefault();
@@ -112,24 +118,24 @@ export default function GamePreviewCard({
               );
             })}
           </div>
+          <p className="mt-2 text-xs font-medium text-lane-600">{analysisSummary}</p>
         </Link>
 
         <button
           type="button"
           onClick={toggleExpanded}
           aria-expanded={isExpanded}
-          aria-label={isExpanded ? 'Chart einklappen' : 'Chart ausklappen'}
-          className="flex shrink-0 items-center px-3 transition hover:bg-lane-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-lane-700/20"
+          aria-controls={analysisId}
+          aria-label={`${isExpanded ? 'Analyse schließen' : 'Analyse ansehen'} für Spiel ${game.id}`}
+          className="flex shrink-0 items-center px-3 text-xs font-bold text-coral transition hover:bg-lane-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-lane-700/20"
         >
-          <span className={combineClasses('text-sm font-bold text-lane-400 transition', isExpanded && 'rotate-180')}>▼</span>
+          <span>{isExpanded ? 'Analyse schließen' : 'Analyse ansehen'}</span>
         </button>
       </div>
 
-      {isExpanded && (
-        <div className="border-t border-lane-100 bg-lane-50/30 p-4">
-          <GameChart game={game} allGames={allGames} highlightPlayer={highlightPlayer} />
-        </div>
-      )}
+      <div id={analysisId} hidden={!isExpanded} className="border-t border-lane-100 bg-lane-50/30 p-4">
+        {isExpanded && <GameChart game={game} allGames={allGames} highlightPlayer={highlightPlayer} />}
+      </div>
     </article>
   );
 }

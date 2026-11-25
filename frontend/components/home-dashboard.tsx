@@ -83,7 +83,7 @@ export default function HomeDashboard() {
               <span aria-hidden="true">→</span>
             </Link>
             <Link href="/stats/games" className="secondary-action justify-center">
-              Spiele ansehen
+              Verlauf ansehen
             </Link>
           </div>
         </div>
@@ -91,7 +91,7 @@ export default function HomeDashboard() {
 
       <aside className="soft-card grid gap-3 p-4">
         <StatTile
-          label="Spiele"
+          label="Verlauf"
           value={loading ? '…' : String(stats.totalGames)}
           hint="gespeicherte Runden"
           href="/stats/games"
@@ -126,7 +126,7 @@ export default function HomeDashboard() {
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <Card href="/upload" icon={<span className="icon-badge bg-coral/20 text-coral">↥</span>} header="Upload" subtext="Neues Bild auswerten" />
-          <Card href="/stats/games" icon={<span className="icon-badge bg-aqua/25 text-lane-800">🎳</span>} header="Spiele" subtext="Scorecards vergleichen" />
+          <Card href="/stats/games" icon={<span className="icon-badge bg-aqua/25 text-lane-800">🎳</span>} header="Verlauf" subtext="Scorecards vergleichen" />
           <Card href="/stats/players" icon={<span className="icon-badge bg-mint/60 text-lane-800">★</span>} header="Bestenliste" subtext="Ranglisten und Bestwerte" />
         </div>
 

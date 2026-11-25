@@ -1,4 +1,4 @@
-import type { FrameData, GameRead, StoredScore } from '@/types';
+import type { FrameData, GameRead, StoredScore } from '../types';
 
 export type GameExcitement = {
   leadChanges: number;

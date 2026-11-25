@@ -1,4 +1,4 @@
-import type { FrameData, GameRead } from '@/types';
+import type { FrameData, GameRead } from '../types';
 
 export type FrameType = 'strike' | 'spare' | 'normal';
 

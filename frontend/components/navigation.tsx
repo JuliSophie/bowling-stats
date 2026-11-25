@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 const NAV_ITEMS = [
   { href: '/', label: 'Home', icon: '⌂' },
   { href: '/live', label: 'Live', icon: '●' },
-  { href: '/stats/games', label: 'Spiele', icon: '🎳' },
+  { href: '/stats/games', label: 'Verlauf', icon: '🎳' },
   { href: '/stats/players', label: 'Bestenliste', icon: '🏆' },
 ];
 
