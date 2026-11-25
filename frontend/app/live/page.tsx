@@ -4,6 +4,8 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 
 import Navigation from '@/components/navigation';
 import LaneCalibrationPanel from '@/components/lane-calibration-panel';
+import LiveBallMotion from '@/components/live-ball-motion';
+import LiveThrowResult, { THROW_EFFECT_DURATION, THROW_TRAVEL_MS, type ActiveThrowEffect } from '@/components/live-throw-result';
 import SplitPatternPopover from '@/components/split-pattern-popover';
 import Card from '@/components/ui/card';
 import {
@@ -11,7 +13,6 @@ import {
   correctTrackingThrow,
   createGame,
   fetchGames,
-  fetchTrackingEvents,
   fetchTrackingSession,
   getTrackingWebSocketUrl,
   joinTrackingSession,
@@ -19,31 +20,14 @@ import {
   setTrackingPlayers,
 } from '@/lib/api';
 import type { BallPathPoint, LiveEvent, ThrowAnalysis, TrackingPlayerCard, TrackingSession } from '@/types';
-import { classifyThrow, isLiveThrow, throwCellKey, type ThrowEffectKind, type ThrowResult } from '@/lib/live-effects';
-import { acceptsLiveEvent, reconcileLiveCommentary, selectLiveCommentary, shouldAnimateLiveThrow, type LiveCommentary } from '@/lib/live-commentary';
-import { useTrashTalkCatalog } from '@/lib/use-trash-talk-catalog';
+import { classifyThrow, isLiveThrow, type ThrowEffectKind, type ThrowResult } from '@/lib/live-effects';
+import { acceptsLiveEvent, liveCommentaryKey, reconcileLiveCommentary, selectLiveCommentary, shouldAnimateLiveThrow, type LiveCommentary, type LiveCommentaryThrow } from '@/lib/live-commentary';
+import type { TrashTalkCatalogState } from '@/lib/use-trash-talk-catalog';
 import { isLaneControlMessage, laneRequest, type CompanionCommand, type CompanionStatus, type LaneControlMessage } from '@/lib/lane-calibration';
 
 const TRACKING_SESSION_STORAGE_KEY = 'bowling-live-session-id';
 const DEFAULT_GAME_LOCATION = 'Squash House';
 const FINAL_THROW_REVIEW_DELAY_MS = 5_000;
-const THROW_EFFECT_ENTER_MS = 1000;
-const THROW_EFFECT_EXIT_MS = 600;
-const THROW_EFFECT_BREATH_OVERLAP_MS = 200;
-const THROW_EFFECT_DURATION: Record<ThrowEffectKind, number> = {
-  throw: 2000,
-  spare: 3000,
-  strike: 3000,
-  double: 4000,
-  turkey: 4000,
-};
-const THROW_EFFECT_CLASS: Record<ThrowEffectKind, string> = {
-  throw: 'live-effect-throw',
-  spare: 'live-effect-spare',
-  strike: 'live-effect-strike',
-  double: 'live-effect-double',
-  turkey: 'live-effect-turkey',
-};
 const MAX_VISIBLE_EVENTS = 30;
 const LIVE_AUDIO_SETTINGS_KEY = 'bowling-live-audio-settings';
 const LANE_LENGTH_M = 18.29;
@@ -57,15 +41,7 @@ const PIN_HEADER_Y_PCT = PIN_DECK_HEIGHT_PCT;
 // deeper rows behind it — so the drawn trajectory ends exactly at pin 1, not short of the deck.
 const PIN_DECK_PIN1_PCT = 6; // small visual inset of pin 1 from the header line, % of deck depth
 const PIN_DECK_ROW_STEP_PCT = 26; // row-to-row spacing, % of deck depth
-// The rack's front envelope is a triangle: pin 1 at the head-pin line, pins 7/10 three rows
-// deeper. An off-centre ball rolls past the header line until it meets that envelope.
 const PIN_ROW_SPACING_M = 0.2637; // 12 in × sin 60°
-const RACK_BACK_DEPTH_M = 3 * PIN_ROW_SPACING_M;
-// Centre → pin 7/10 in boards (1.5 pin spacings expressed in board widths).
-const RACK_HALF_SPREAD_BOARDS = (1.5 * PIN_CENTER_SPACING_IN * BOARD_COUNT) / LANE_WIDTH_IN;
-// Collision reach for the first-hit search: ball centre within (ball + pin radius) of a pin centre.
-const BOARD_WIDTH_M = (LANE_WIDTH_IN * 0.0254) / BOARD_COUNT;
-const HIT_RADIUS_BOARDS = (0.108 + 0.061) / BOARD_WIDTH_M; // ball radius + pin body radius, ≈6 boards
 // Visible gutters on each side of the wood. Boards 1..39 span only the band between them, so a
 // ball at board 2–4 clearly renders ON the lane near the edge instead of appearing "in the gutter".
 const GUTTER_PCT = 7;
@@ -291,24 +267,29 @@ function ballGlyph(frame: TrackingPlayerCard['frames'][number], ballIndex: numbe
  *  foul line on the left — the same lane rotated a quarter-turn. */
 function LaneView({
   lastThrow,
+  animatedThrow,
   orientation = 'vertical',
   pinPattern,
-  alreadyDownPins = [],
+  alreadyDownPins,
   onPinPatternChange,
   pinPatternDisabled,
   throwEffect,
+  compactResult,
   liveBubble,
 }: {
   lastThrow: ThrowAnalysis | undefined;
+  animatedThrow?: ThrowAnalysis;
   orientation?: 'vertical' | 'horizontal';
   pinPattern?: number[];
-  alreadyDownPins?: number[];
+  alreadyDownPins: number[];
   onPinPatternChange?: (next: number[]) => void;
   pinPatternDisabled?: boolean;
   throwEffect?: ReactNode;
+  compactResult?: boolean;
   liveBubble?: LiveCommentary | null;
 }) {
   const horizontal = orientation === 'horizontal';
+  const shownThrow = animatedThrow ?? lastThrow;
   // Distance from the foul line to the pin header, as a percentage of the lane's long axis.
   const headerLengthPct = horizontal ? 100 - PIN_DECK_HEIGHT_PCT : PIN_HEADER_Y_PCT;
 
@@ -340,70 +321,26 @@ function LaneView({
       ? { left: mapDistanceH(distanceM), top: mapBoard(board) }
       : { left: mapBoard(board), top: mapDistanceV(distanceM) };
 
-  const path: BallPathPoint[] = lastThrow?.path ?? [];
-  const curve = lastThrow?.curve;
-  // The path data ends at the head-pin line, but the ball rolls on into the rack until it MEETS a
-  // pin. First-collision search: walk the rows front-to-back and stop at the first pin whose
-  // centre line the ball's centre passes within collision reach (ball radius + pin radius) — not
-  // just the rack's outer triangle, which let the endpoint land "behind" a pin it grazed.
-  const rackHit = (() => {
-    if (path.length < 2) return null;
-    const end = path[path.length - 1];
-    // Robust end direction: pair the last point with one a stretch back — the immediate
-    // neighbour may be a near-duplicate whose slope is noise, which kinked the extension.
-    let ref = path[path.length - 2];
-    for (let i = path.length - 2; i >= 0; i--) {
-      ref = path[i];
-      if (distanceOf(end) - distanceOf(ref) >= 1.5) break;
-    }
-    const dDist = distanceOf(end) - distanceOf(ref);
-    const slope = dDist > 1e-6 ? (end.board - ref.board) / dDist : 0;
-    const ballAt = (depth: number) => end.board + slope * depth;
-    const down = new Set(alreadyDownPins.length ? alreadyDownPins : lastThrow?.alreadyDownPins ?? []);
-    const radiusM = HIT_RADIUS_BOARDS * BOARD_WIDTH_M;
-    const directionX = slope * BOARD_WIDTH_M;
-    const directionLengthSq = directionX * directionX + 1;
-    let firstCollision: { board: number; distanceM: number; travel: number } | null = null;
-    for (const pin of PIN_LAYOUT) {
-      if (down.has(pin.pin)) continue;
-      const pinDepth = (3 - pin.row) * PIN_ROW_SPACING_M;
-      const pinX = (20 + pin.offset * PIN_BOARD_SPACING - end.board) * BOARD_WIDTH_M;
-      const projection = (pinX * directionX + pinDepth) / directionLengthSq;
-      if (projection < 0) continue;
-      const closestX = projection * directionX;
-      const closestDepth = projection;
-      const missSq = (closestX - pinX) ** 2 + (closestDepth - pinDepth) ** 2;
-      if (missSq > radiusM ** 2) continue;
-      const offset = Math.sqrt((radiusM ** 2 - missSq) / directionLengthSq);
-      const travel = Math.max(0, projection - offset);
-      if (!firstCollision || travel < firstCollision.travel) {
-        firstCollision = { board: ballAt(travel), distanceM: LANE_LENGTH_M + travel, travel };
-      }
-    }
-    if (firstCollision) return { board: firstCollision.board, distanceM: firstCollision.distanceM };
-    // Reaches nothing (edge/gutter ball): fall back to the rack's outer envelope.
-    const depth = Math.min(RACK_BACK_DEPTH_M, (Math.abs(ballAt(0) - 20) / RACK_HALF_SPREAD_BOARDS) * RACK_BACK_DEPTH_M);
-    return { board: ballAt(depth), distanceM: LANE_LENGTH_M + depth };
-  })();
-  const polyline =
+  const path: BallPathPoint[] = shownThrow?.path ?? [];
+  const curve = shownThrow?.curve;
+  const trajectory =
     path.length >= 2
-      ? [...path, ...(rackHit ? [rackHit] : [])]
-          .map((p) => {
-            const q = pos(p.board, distanceOf(p));
-            return `${q.left},${q.top}`;
-          })
-          .join(' ')
+      ? path.map((point) => pos(point.board, distanceOf(point)))
       : null;
+  const animationKey = shownThrow ? liveCommentaryKey(shownThrow) : 'last-throw';
   const markers = [
     { key: 'launch', label: 'Start', point: curve?.launch, color: '#16a34a' },
     { key: 'apex', label: 'Hook', point: curve?.apex, color: '#f59e0b' },
-    { key: 'impact', label: 'Pins', point: rackHit ?? curve?.impact, color: '#e11d48' },
   ];
-  const knockedPins = Math.max(0, Math.min(10, lastThrow?.pinsKnockedDown ?? 0));
+  const knockedPins = Math.max(0, Math.min(10, shownThrow?.pinsKnockedDown ?? 0));
   const canEditPins = Boolean(onPinPatternChange) && !pinPatternDisabled;
-  const shownFallenPins = pinPattern ?? lastThrow?.fallenPins ?? null;
+  const shownFallenPins = pinPattern ?? shownThrow?.fallenPins ?? null;
   const newDownSet = shownFallenPins ? new Set(shownFallenPins) : null;
-  const alreadyDownSet = new Set(alreadyDownPins.length ? alreadyDownPins : lastThrow?.alreadyDownPins ?? []);
+  const alreadyDownSet = new Set(alreadyDownPins);
+  const pinCenters = PIN_LAYOUT.map((pin) => ({
+    pin: pin.pin,
+    ...pos(20 + pin.offset * PIN_BOARD_SPACING, LANE_LENGTH_M + (3 - pin.row) * PIN_ROW_SPACING_M),
+  }));
   const boardGuides = [5, 10, 15, 20, 25, 30, 35];
   const arrowDistance = 4.5; // bowling arrows sit ~4.5 m down the lane
   const togglePin = (pin: number) => {
@@ -420,14 +357,16 @@ function LaneView({
 
   return (
     <div className="live-lane-stage">
-      <div className="live-effect-overlay" role="status" aria-live="polite" aria-atomic="true">
+      <div className={`live-effect-overlay ${compactResult ? 'live-effect-overlay--compact' : ''}`} role="status" aria-live="polite" aria-atomic="true">
         {throwEffect}
-        {liveBubble && <div className="live-commentary-bubble">
+      </div>
+      {liveBubble && <div className="live-commentary-overlay" role="status" aria-live="polite">
+        <div className={`live-commentary-bubble ${animatedThrow?.path && animatedThrow.path.length >= 2 ? 'live-commentary-bubble--arriving' : ''}`}>
           <span className="live-commentary-player">{liveBubble.player}</span>{liveBubble.text}
           {(liveBubble.scenario.endsWith('.leader') || liveBubble.scenario.endsWith('.lead_lost')) &&
             <span className="mt-1 block text-xs opacity-70">Vorläufiger Stand: bereits erzielte Punkte inklusive bekannter Boni. Offene Boni und unterschiedlicher Spielfortschritt können die Reihenfolge noch ändern.</span>}
-        </div>}
-      </div>
+        </div>
+      </div>}
       <div className={containerClass} style={{ borderColor: 'var(--lane-edge)' }}>
       {/* Gutters: the wood spans only boards 1–39 between these strips. */}
       <div
@@ -472,7 +411,11 @@ function LaneView({
                 aria-label={`Pin ${pin.pin} ${newDownSet?.has(pin.pin) ? 'entfernen' : 'als gefallen markieren'}`}
                 title={`Pin ${pin.pin}${state === 'new-down' ? ' neu gefallen' : state === 'already-down' ? ' bereits gefallen' : ' steht'}`}
               >
-                <span className={`pointer-events-none ${visualPinClassName}`} />
+                <span
+                  key={animationKey}
+                  className={`pointer-events-none ${visualPinClassName} ${state === 'new-down' && animatedThrow?.fallenPins?.includes(pin.pin) ? 'live-pin-impact' : ''}`}
+                  style={state === 'new-down' && animatedThrow?.fallenPins?.includes(pin.pin) ? { animationDelay: `${THROW_TRAVEL_MS + index * 35}ms` } : undefined}
+                />
               </button>
             );
           }
@@ -499,13 +442,13 @@ function LaneView({
 
       {/* Big transparent speed watermark, sized to the whole lane so it's readable from across the
         room. Sits over the lane wood but under the ball curve (drawn by the svg below). */}
-      {lastThrow?.ballSpeedKmh != null && (
+      {shownThrow?.ballSpeedKmh != null && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center" aria-hidden>
           <span
             className={`font-black leading-none tabular-nums ${horizontal ? 'text-[5rem] xl:text-[7rem]' : 'text-[4rem] sm:text-[7rem]'}`}
             style={{ color: 'var(--foreground)', opacity: 0.18 }}
           >
-            {formatNumber(lastThrow.ballSpeedKmh)}
+            {formatNumber(shownThrow.ballSpeedKmh)}
           </span>
           <span
             className={`font-black tracking-[0.35em] ${horizontal ? 'text-sm' : 'text-xl sm:text-2xl'}`}
@@ -523,19 +466,16 @@ function LaneView({
           const c = pos(b, LANE_LENGTH_M);
           return <line key={b} x1={a.left} y1={a.top} x2={c.left} y2={c.top} style={{ stroke: 'var(--lane-board-line)' }} strokeWidth={0.4} vectorEffect="non-scaling-stroke" />;
         })}
-        {/* the throw */}
-        {polyline && (
-          <polyline
-            points={polyline}
-            fill="none"
-            style={{ stroke: 'var(--lane-path)' }}
-            strokeWidth={3}
-            strokeLinejoin="round"
-            strokeLinecap="round"
-            vectorEffect="non-scaling-stroke"
-          />
-        )}
       </svg>
+      {trajectory && (
+        <LiveBallMotion
+          key={animationKey}
+          points={trajectory}
+          pins={pinCenters}
+          fallenPins={shownFallenPins ?? []}
+          animated={Boolean(animatedThrow)}
+        />
+      )}
 
       {/* bowling arrows */}
       {boardGuides.map((b) => {
@@ -562,7 +502,7 @@ function LaneView({
           <span
             key={m.key}
             className="absolute z-10 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-lg"
-            style={{ left: `${q.left}%`, top: `${q.top}%`, borderColor: m.color, background: m.key === 'impact' ? 'transparent' : m.color }}
+            style={{ left: `${q.left}%`, top: `${q.top}%`, borderColor: m.color, background: m.color }}
             title={m.label}
           />
         );
@@ -570,13 +510,13 @@ function LaneView({
 
       {/* label */}
       <div className={`absolute left-2 ${horizontal ? 'top-2' : 'top-[15%]'} rounded-lg bg-lane-950/70 px-2 py-1 text-[0.7rem] font-black text-amber-50`}>
-        {!lastThrow
+        {!shownThrow
           ? 'Warte auf Wurf…'
-          : lastThrow.isCurve
-            ? `Hook ${formatNumber(lastThrow.curveBoards)} Boards`
+          : shownThrow.isCurve
+            ? `Hook ${formatNumber(shownThrow.curveBoards)} Boards`
             : 'Gerader Wurf'}
       </div>
-      {!polyline && lastThrow && (
+      {!trajectory && shownThrow && (
         <p className="absolute inset-x-2 bottom-6 text-center text-xs font-bold" style={{ color: 'var(--foreground)' }}>
           Keine Kurvendaten für diesen Wurf.
         </p>
@@ -614,10 +554,13 @@ function PinStepper({ value, onChange, disabled }: { value: number; onChange: (v
 }
 
 export default function LivePage() {
-  const { catalog: commentaryCatalog, error: commentaryCatalogError, stale: commentaryCatalogStale } = useTrashTalkCatalog();
   const [session, setSession] = useState<TrackingSession | null>(null);
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [connectionState, setConnectionState] = useState<'connecting' | 'open' | 'closed'>('closed');
+  const [commentaryState, setCommentaryState] = useState<TrashTalkCatalogState>({
+    catalog: null, loading: false, error: null, stale: false,
+  });
+  const { catalog: commentaryCatalog, error: commentaryCatalogError, stale: commentaryCatalogStale } = commentaryState;
   const [restoringSession, setRestoringSession] = useState(true);
   const [pairingToken, setPairingToken] = useState('');
   const [joinBusy, setJoinBusy] = useState(false);
@@ -640,7 +583,7 @@ export default function LivePage() {
   const [audioSettingsLoaded, setAudioSettingsLoaded] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [audioNeedsGesture, setAudioNeedsGesture] = useState(true);
-  const [activeEffect, setActiveEffect] = useState<{ key: string; player: string; kind: ThrowEffectKind; pins: number | null } | null>(null);
+  const [activeEffect, setActiveEffect] = useState<ActiveThrowEffect | null>(null);
   const [liveBubbles, setLiveBubbles] = useState<Record<string, LiveCommentary>>({});
   const commentaryCatalogRef = useRef<typeof commentaryCatalog>(commentaryCatalog);
   const socketRef = useRef<WebSocket | null>(null);
@@ -652,13 +595,44 @@ export default function LivePage() {
   const latestRevisionRef = useRef(0);
   const effectQueueRef = useRef<{ event: ThrowAnalysis; kind: ThrowEffectKind }[]>([]);
   const effectRunningRef = useRef(false);
-  const acceptedThrowsRef = useRef<ThrowResult[]>([]);
+  const acceptedThrowsRef = useRef<(ThrowResult & LiveCommentaryThrow)[]>([]);
   const effectTimerRef = useRef<number | null>(null);
   const soundRef = useRef<OscillatorNode | null>(null);
 
   useEffect(() => {
     commentaryCatalogRef.current = commentaryCatalog;
   }, [commentaryCatalog]);
+
+  useEffect(() => {
+    if (connectionState !== 'open') return;
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void import('@/lib/use-trash-talk-catalog')
+      .then(({ getTrashTalkCatalogState, subscribeTrashTalkCatalog, refreshTrashTalkCatalog }) => {
+        if (!active) return;
+        const sync = () => {
+          const next = getTrashTalkCatalogState();
+          setCommentaryState((current) =>
+            current.catalog === next.catalog && current.error === next.error && current.stale === next.stale
+              ? current : next);
+        };
+        unsubscribe = subscribeTrashTalkCatalog(sync);
+        sync();
+        void refreshTrashTalkCatalog();
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setCommentaryState((current) => ({
+          ...current,
+          error: reason instanceof Error ? reason.message : 'Sprüche-Katalog konnte nicht geladen werden.',
+          stale: current.catalog !== null,
+        }));
+      });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [connectionState]);
 
   useEffect(() => () => {
     const audio = audioContextRef.current;
@@ -815,7 +789,7 @@ export default function LivePage() {
 
   const playThrowSound = (kind: ThrowEffectKind = 'throw') => {
     if (audioMutedRef.current || audioVolumeRef.current === 0) return;
-    const audio = getAudioContext();
+    const audio = audioContextRef.current;
     if (audio && audio.state === 'running') {
       soundRef.current?.stop();
       const now = audio.currentTime;
@@ -852,7 +826,7 @@ export default function LivePage() {
       setAudioError(null);
       return;
     }
-    if (audio) setAudioNeedsGesture(true);
+    setAudioNeedsGesture(true);
   };
 
   const unlockAudio = async () => {
@@ -881,10 +855,9 @@ export default function LivePage() {
     effectRunningRef.current = true;
     const duration = THROW_EFFECT_DURATION[next.kind];
     setActiveEffect({
-      key: throwCellKey(next.event.player, next.event.frame, next.event.throw),
-      player: next.event.player,
+      key: liveCommentaryKey(next.event),
+      event: next.event,
       kind: next.kind,
-      pins: next.event.pinsKnockedDown ?? null,
     });
     effectTimerRef.current = window.setTimeout(() => {
       effectTimerRef.current = null;
@@ -974,21 +947,10 @@ export default function LivePage() {
       setEvents((current) => [...current, event].slice(-MAX_VISIBLE_EVENTS));
     };
 
-    const openSocket = async () => {
+    const openSocket = () => {
       try {
         setError(null);
         setConnectionState('connecting');
-        const history = await fetchTrackingEvents(sessionId).catch(() => []);
-        if (cancelled) return;
-        const historyRevision = history.reduce((highest, item) => {
-          const revision = typeof (item as LiveEvent & { revision?: unknown }).revision === 'number'
-            ? (item as LiveEvent & { revision: number }).revision : 0;
-          return Math.max(highest, revision);
-        }, 0);
-        if (historyRevision < latestRevisionRef.current) return;
-        latestRevisionRef.current = historyRevision;
-        history.forEach((item) => seenEventIdsRef.current.add(item.eventId));
-        setEvents(history.slice(-MAX_VISIBLE_EVENTS));
         const socket = new WebSocket(getTrackingWebSocketUrl(sessionId));
         socketRef.current = socket;
 
@@ -1017,11 +979,12 @@ export default function LivePage() {
           latestRevisionRef.current = revision;
           seenEventIdsRef.current.add(event.eventId);
           if (isLiveThrow(event) && shouldAnimateLiveThrow(event.payload.throwId, authoritativeThrowIdsRef.current)) {
+            const previousThrows = acceptedThrowsRef.current;
             enqueueThrowEffect(event.payload);
             const payload = event.payload as ThrowAnalysis & { throwId?: string; alreadyDownPins?: number[] };
             const caption = selectLiveCommentary(
               payload,
-              acceptedThrowsRef.current as unknown as Parameters<typeof selectLiveCommentary>[1],
+              previousThrows,
               commentaryCatalogRef.current ?? undefined,
             );
             setLiveBubbles((current) => {
@@ -1071,17 +1034,26 @@ export default function LivePage() {
   );
   const lastThrow = throwEvents.at(-1)?.payload as ThrowAnalysis | undefined;
   const scoreboard = session?.scoreboard ?? null;
+  const activeThrowerIndex = activeEffect?.event.playerIndex != null
+    ? activeEffect.event.playerIndex
+    : activeEffect && scoreboard?.players?.filter((player) => player.name === activeEffect.event.player).length === 1
+      ? scoreboard?.players?.find((player) => player.name === activeEffect.event.player)?.index
+      : null;
   const loggedThrows = scoreboard?.throws ?? [];
   const latestLoggedThrow = loggedThrows.at(-1);
-  const latestThrowId = (latestLoggedThrow as typeof latestLoggedThrow & { throwId?: string } | undefined)?.throwId;
-  const liveBubble = latestThrowId ? liveBubbles[latestThrowId] ?? null : null;
+  const displayedLoggedThrow = activeEffect
+    ? loggedThrows.find((item) => liveCommentaryKey(item) === activeEffect.key)
+    : latestLoggedThrow;
+  const displayedThrow = activeEffect?.event ?? latestLoggedThrow;
+  const displayedThrowId = displayedThrow ? liveCommentaryKey(displayedThrow) : undefined;
+  const liveBubble = displayedThrowId ? liveBubbles[displayedThrowId] ?? null : null;
   useEffect(() => {
     if (!commentaryCatalog || !loggedThrows.length) return;
     setLiveBubbles((current) => Object.fromEntries(
       loggedThrows
         .map((item, index) => {
-          const id = (item as typeof item & { throwId?: string }).throwId;
-          if (!id || !current[id]) return null;
+          const id = liveCommentaryKey(item);
+          if (!current[id]) return null;
           return [id, selectLiveCommentary(
             item as unknown as Parameters<typeof selectLiveCommentary>[0],
             loggedThrows.slice(0, index) as unknown as Parameters<typeof selectLiveCommentary>[1],
@@ -1358,40 +1330,7 @@ export default function LivePage() {
     }
   };
 
-  const throwEffect = activeEffect ? (
-    <div
-      key={activeEffect.key}
-      className={`live-effect-banner ${THROW_EFFECT_CLASS[activeEffect.kind]}`}
-      style={{
-        animationDuration: `${THROW_EFFECT_ENTER_MS}ms, ${THROW_EFFECT_EXIT_MS}ms`,
-        animationDelay: `0ms, ${THROW_EFFECT_DURATION[activeEffect.kind] - THROW_EFFECT_EXIT_MS}ms`,
-      }}
-    >
-      <div
-        className="live-effect-breath"
-        style={{ animationDelay: `${Math.max(0, THROW_EFFECT_ENTER_MS - THROW_EFFECT_BREATH_OVERLAP_MS)}ms` }}
-      >
-        {activeEffect.kind !== 'throw' && (
-          <svg className="live-effect-crown" viewBox="0 0 120 84" aria-hidden="true">
-            {[{ x: 22, y: 24 }, { x: 60, y: 12 }, { x: 98, y: 24 }].map(({ x, y }) => (
-              <polygon
-                key={x}
-                className="live-effect-star"
-                transform={`translate(${x} ${y})`}
-                points="0,-9 2.6,-3.1 9,-2.8 4.2,1.5 5.6,8 0,4.6 -5.6,8 -4.2,1.5 -9,-2.8 -2.6,-3.1"
-              />
-            ))}
-            <path d="M12 40 33 54 60 28 87 54 108 40 99 71H21Z" />
-            <path d="M22 77H98V82H22Z" />
-          </svg>
-        )}
-        <span className="live-effect-result">
-          {activeEffect.kind === 'throw' ? activeEffect.pins ?? '–' : `${activeEffect.kind.toUpperCase()}!`}
-        </span>
-        <strong className="live-effect-player">{activeEffect.player}</strong>
-      </div>
-    </div>
-  ) : null;
+  const throwEffect = activeEffect ? <LiveThrowResult key={activeEffect.key} effect={activeEffect} /> : null;
 
   // Live-data blocks, shared between the narrow (side-by-side) and wide (stacked) layouts.
   const aktuellCard = (
@@ -1576,7 +1515,7 @@ export default function LivePage() {
           </div>
 
           {/* Operator controls: start a fresh game, or set how many bowlers are on the lane. */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={leaveSession}
@@ -1724,12 +1663,14 @@ export default function LivePage() {
         <section className="grid grid-cols-[42%_1fr] gap-3 sm:gap-5 lg:hidden">
           <LaneView
             lastThrow={lastThrow}
+            animatedThrow={activeEffect?.event}
             throwEffect={throwEffect}
+            compactResult={activeEffect?.kind === 'throw'}
             liveBubble={liveBubble}
-            pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
-            alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
-            onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
-            pinPatternDisabled={!latestLoggedThrow}
+            pinPattern={displayedLoggedThrow ? patternFor(displayedLoggedThrow.index, displayedLoggedThrow.fallenPins ?? []) : activeEffect?.event.fallenPins ?? []}
+            alreadyDownPins={displayedLoggedThrow?.alreadyDownPins ?? activeEffect?.event.alreadyDownPins ?? []}
+            onPinPatternChange={(pattern) => displayedLoggedThrow && editThrowPattern(displayedLoggedThrow.index, pattern)}
+            pinPatternDisabled={!displayedLoggedThrow}
           />
 
           <div className="flex flex-col gap-3">
@@ -1748,13 +1689,15 @@ export default function LivePage() {
           {lowConfidenceBadge}
           <LaneView
             lastThrow={lastThrow}
+            animatedThrow={activeEffect?.event}
             throwEffect={throwEffect}
+            compactResult={activeEffect?.kind === 'throw'}
             liveBubble={liveBubble}
             orientation="horizontal"
-            pinPattern={latestLoggedThrow ? patternFor(latestLoggedThrow.index, latestLoggedThrow.fallenPins ?? []) : []}
-            alreadyDownPins={latestLoggedThrow?.alreadyDownPins ?? []}
-            onPinPatternChange={(pattern) => latestLoggedThrow && editThrowPattern(latestLoggedThrow.index, pattern)}
-            pinPatternDisabled={!latestLoggedThrow}
+            pinPattern={displayedLoggedThrow ? patternFor(displayedLoggedThrow.index, displayedLoggedThrow.fallenPins ?? []) : activeEffect?.event.fallenPins ?? []}
+            alreadyDownPins={displayedLoggedThrow?.alreadyDownPins ?? activeEffect?.event.alreadyDownPins ?? []}
+            onPinPatternChange={(pattern) => displayedLoggedThrow && editThrowPattern(displayedLoggedThrow.index, pattern)}
+            pinPatternDisabled={!displayedLoggedThrow}
           />
         </section>
 
@@ -1779,7 +1722,7 @@ export default function LivePage() {
                 {(scoreboard?.players ?? []).map((player) => (
                   <tr key={player.index} className={player.isCurrent ? 'live-current-player-row' : ''}>
                     <td className="relative h-10 border border-lane-200 px-2 py-1 font-medium text-lane-900 whitespace-nowrap">
-                      {activeEffect?.player === player.name && (
+                      {activeEffect && activeThrowerIndex === player.index && (
                         <span key={activeEffect.key} className="live-thrower-highlight" aria-hidden="true" />
                       )}
                       {player.isCurrent && <span className="mr-1 text-coral">▸</span>}
@@ -1824,14 +1767,14 @@ export default function LivePage() {
                       return (
                         <td key={fIdx} className={`h-10 border border-lane-200 px-0 py-0 align-top ${bgClass}`}>
                           <div className="relative flex h-5 border-b border-lane-100 text-[0.65rem] leading-5">
-                            <span className={`relative h-full w-1/2 border-r border-lane-100 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 1) ? 'live-throw-cell' : ''}`}>
+                            <span className={`relative h-full w-1/2 border-r border-lane-100 px-1 text-center ${activeThrowerIndex === player.index && activeEffect?.event.frame === fIdx + 1 && activeEffect.event.throw === 1 ? 'live-throw-cell' : ''}`}>
                               {frame ? ballGlyph(frame, 0) : ''}
                               {split && (
                                 <SplitPatternPopover standingPins={split.standingPins} converted={split.converted} />
                               )}
                             </span>
-                            <span className={`h-full w-1/2 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 2) ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 1) : ''}</span>
-                            {fIdx === 9 && <span className={`h-full w-1/2 border-l border-lane-100 px-1 text-center ${activeEffect?.key === throwCellKey(player.name, fIdx + 1, 3) ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 2) : ''}</span>}
+                            <span className={`h-full w-1/2 px-1 text-center ${activeThrowerIndex === player.index && activeEffect?.event.frame === fIdx + 1 && activeEffect.event.throw === 2 ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 1) : ''}</span>
+                            {fIdx === 9 && <span className={`h-full w-1/2 border-l border-lane-100 px-1 text-center ${activeThrowerIndex === player.index && activeEffect?.event.frame === fIdx + 1 && activeEffect.event.throw === 3 ? 'live-throw-cell' : ''}`}>{frame ? ballGlyph(frame, 2) : ''}</span>}
                           </div>
                           <div className="h-5 px-1 text-center text-lane-600 leading-5">{frame?.cumulative ?? ''}</div>
                         </td>

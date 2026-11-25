@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyThrow, throwCellKey } from './live-effects.ts';
+import { classifyThrow, strikeStreakLength, throwCellKey } from './live-effects.ts';
 
 const throwEvent = (player, frame, throwNumber, pinsKnockedDown) => ({
   sessionId: 'test',
@@ -26,6 +26,25 @@ test('only consecutive strikes become double/turkey', () => {
   const open = throwEvent('Anna', 3, 1, 8);
   assert.equal(classifyThrow(strike2, [strike1]), 'double');
   assert.equal(classifyThrow(throwEvent('Anna', 4, 1, 10), [strike1, strike2, open]), 'strike');
+});
+
+test('streak length counts this bowler across other players and stops at an open frame', () => {
+  const strike = (frame) => ({ ...throwEvent('Alex', frame, 1, 10), playerIndex: 0 });
+  const rival = { ...throwEvent('Alex', 1, 1, 10), playerIndex: 1 };
+  assert.equal(strikeStreakLength(strike(4), [strike(1), rival, strike(2), strike(3)]), 4);
+  assert.equal(strikeStreakLength(strike(4), [strike(1), strike(2), { ...throwEvent('Alex', 3, 1, 8), playerIndex: 0 }]), 1);
+  assert.equal(strikeStreakLength({ ...throwEvent('Alex', 1, 2, 10), playerIndex: 0 }, [
+    { ...throwEvent('Alex', 1, 1, 0), playerIndex: 0 },
+  ]), 0);
+});
+
+test('same-named roster slots do not share strikes or spares', () => {
+  const first = { ...throwEvent('Alex', 1, 1, 10), playerIndex: 0 };
+  const other = { ...throwEvent('Alex', 1, 1, 10), playerIndex: 1 };
+  assert.equal(classifyThrow(other, [first]), 'strike');
+  assert.equal(classifyThrow({ ...throwEvent('Alex', 2, 1, 10), playerIndex: 0 }, [first, other]), 'double');
+  const prior = { ...throwEvent('Alex', 3, 1, 9), playerIndex: 0 };
+  assert.equal(classifyThrow({ ...throwEvent('Alex', 3, 2, 1), playerIndex: 1 }, [prior]), 'throw');
 });
 
 test('cell keys identify the thrower, not the next current player', () => {

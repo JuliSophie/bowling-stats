@@ -218,6 +218,10 @@ export type LiveCommentaryContext = {
   version: 1;
   revision: number;
   valid?: boolean;
+  readonly opponentName?: string | null;
+  readonly personalPace?: { readonly kind: 'below-usual' | 'above-usual'; readonly priorFirstBallCount: number } | null;
+  readonly pinPattern?: { readonly kind: 'recurring-leave'; readonly pin: number } |
+    { readonly kind: 'strong-side-spare'; readonly pin: number; readonly side: 'left' | 'right' };
   previousClearance: { throwId?: string; kind: 'strike' | 'spare' } | null;
   weakPerformance: { kind: 'first-throw' | 'open-frame'; pins?: number; framePins?: number } | null;
   framePins?: number | null;

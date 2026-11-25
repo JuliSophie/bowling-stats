@@ -1,3 +1,8 @@
+import type { LiveCommentaryContext } from '@/types';
+import { strikeStreakLength } from './live-effects.ts';
+import { evidenceFor, evidenceShapeValid, standing, isCanonicalSplit, equalSets } from './live-commentary-evidence.ts';
+import { selectTemplate } from './live-commentary-templates.ts';
+
 export type LiveCommentaryThrow = {
   throwId?: string;
   player?: string;
@@ -7,20 +12,7 @@ export type LiveCommentaryThrow = {
   fallenPins?: number[] | null;
   alreadyDownPins?: number[] | null;
   playerIndex?: number | null;
-  commentaryContext?: LiveCommentaryContext | null;
-};
-
-type LiveStandingContext = {
-  position?: 'unique-leader' | 'tied-leader' | 'behind' | null;
-  points?: number;
-};
-type LiveCommentaryContext = {
-  version?: 1;
-  previousClearance?: { throwId?: string; kind: 'strike' | 'spare' } | null;
-  weakPerformance?: { kind: 'first-throw' | 'open-frame' } | null;
-  before?: LiveStandingContext | null;
-  current?: LiveStandingContext | null;
-  valid?: boolean;
+  commentaryContext?: Partial<LiveCommentaryContext> | null;
 };
 
 export type LiveCommentaryCatalog = {
@@ -46,6 +38,12 @@ export type LiveCommentary = {
   pins: number | null;
   pin?: number;
 };
+
+export function liveCommentaryKey(event: Pick<LiveCommentaryThrow, 'throwId' | 'playerIndex' | 'player' | 'frame' | 'throw'>) {
+  return event.throwId ?? (event.playerIndex != null
+    ? `\u0000${event.playerIndex}:${event.frame ?? 0}:${event.throw ?? 0}`
+    : `${event.player ?? ''}:${event.frame ?? 0}:${event.throw ?? 0}`);
+}
 
 export function acceptsLiveRevision(currentRevision: number, incomingRevision: number) {
   return incomingRevision >= currentRevision;
@@ -74,88 +72,27 @@ export function reconcileLiveCommentary(
 ) {
   return Object.fromEntries(
     throws.map((item, index) => {
-      const id = item.throwId;
-      if (!id || !current[id]) return null;
+      const id = liveCommentaryKey(item);
+      if (!current[id]) return null;
       return [id, selectLiveCommentary(item, throws.slice(0, index), catalog)] as const;
     }).filter((entry): entry is readonly [string, LiveCommentary] => Boolean(entry)),
   );
 }
 
-const pins = new Set(Array.from({ length: 10 }, (_, index) => index + 1));
-function validSet(value: number[] | null | undefined) {
-  if (!Array.isArray(value)) return null;
-  if (!value.every((pin) => Number.isInteger(pin) && pins.has(pin))) return null;
-  const result = new Set(value);
-  return result.size === value.length ? result : null;
-}
-
-function evidenceFor(item: LiveCommentaryThrow) {
-  const fallen = validSet(item.fallenPins);
-  const alreadyDown = item.alreadyDownPins == null ? new Set<number>() : validSet(item.alreadyDownPins);
-  if (!alreadyDown) return null;
-  if (!fallen || [...fallen].some((pin) => alreadyDown.has(pin))) return null;
-  const count = item.pinsKnockedDown;
-  if (count == null || count !== fallen.size) return null;
-  return { fallen, alreadyDown };
-}
-
-function evidenceShapeValid(item: LiveCommentaryThrow) {
-  const hasEvidence = item.fallenPins != null || item.alreadyDownPins != null;
-  return !hasEvidence || evidenceFor(item) !== null;
-}
-
-function standing(item: LiveCommentaryThrow) {
-  const evidence = evidenceFor(item);
-  if (!evidence) return null;
-  return new Set([...pins].filter((pin) => !evidence.fallen.has(pin) && !evidence.alreadyDown.has(pin)));
-}
-
-function isCanonicalSplit(standingPins: Set<number>) {
-  return standingPins.size === 2 && standingPins.has(7) && standingPins.has(10);
-}
-
-function equalSets(left: Set<number>, right: Set<number>) {
-  return left.size === right.size && [...left].every((pin) => right.has(pin));
-}
-
-function hash(value: string) {
-  let h = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    h ^= value.charCodeAt(index);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function rendezvous(seed: string, candidates: Array<{ id: string; text: string }>) {
-  return candidates
-    .map((candidate) => ({ ...candidate, score: hash(`${seed}|${candidate.id}`) }))
-    .sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-}
-
-function render(template: string, bindings: Record<string, string>) {
-  const placeholders = [...template.matchAll(/\{\{?\s*([a-zA-Z][\w]*)\s*\}?\}/g)].map((match) => match[1]);
-  if (placeholders.some((name) => !(name in bindings))) return null;
-  const unknown = template.replace(/\{\{?\s*[a-zA-Z][\w]*\s*\}?\}/g, '').match(/[{}]/);
-  if (unknown) return null;
-  return template.replace(/\{\{?\s*([a-zA-Z][\w]*)\s*\}?\}/g, (_, name: string) => bindings[name]);
-}
-
-function selectTemplate(scenario: string, throwId: string, bindings: Record<string, string>, catalog?: LiveCommentaryCatalog, allowLegacyGeneric = false) {
-  const entry = catalog?.scenarios?.find((item) => item.id === scenario);
-  const legacyEntry = catalog?.scenarios?.find((item) =>
-    item.kind === 'legacy-live' && item.legacyLiveScenario === scenario);
-  const sourceEntry = entry ?? legacyEntry;
-  if (scenario === 'live.throw' && sourceEntry?.kind === 'legacy-live' && !allowLegacyGeneric) return null;
-  const source = sourceEntry
-    ? (sourceEntry.enabled === false ? [] : sourceEntry.templates ?? [])
-    : [];
-  // Projected legacy pools keep their original rendezvous keys even after filtering.
-  const ids = sourceEntry?.templateSelectionIds
-    ?? (sourceEntry?.kind === 'legacy-live' ? [] : sourceEntry?.templateIds ?? []);
-  const candidates = source.map((text, index) => ({ text: render(text, bindings), id: ids[index] ?? `${scenario}.${index + 1}` }))
-    .filter((item): item is { text: string; id: string } => Boolean(item.text));
-  return rendezvous(`${throwId}|${scenario}`, candidates)?.text ?? null;
+function liveStrikeStreak(event: LiveCommentaryThrow, history: LiveCommentaryThrow[]) {
+  if (event.playerIndex == null || typeof event.player !== 'string'
+    || typeof event.frame !== 'number' || typeof event.throw !== 'number') return 0;
+  const previous = history.flatMap((item) =>
+    liveCommentaryKey(item) !== liveCommentaryKey(event)
+      && item.playerIndex != null && typeof item.player === 'string'
+      && typeof item.frame === 'number' && typeof item.throw === 'number'
+      ? [{ player: item.player, playerIndex: item.playerIndex, frame: item.frame,
+        throw: item.throw, pinsKnockedDown: item.pinsKnockedDown }]
+      : []);
+  return strikeStreakLength({
+    player: event.player, playerIndex: event.playerIndex, frame: event.frame,
+    throw: event.throw, pinsKnockedDown: event.pinsKnockedDown,
+  }, previous);
 }
 
 /** Deterministic selection based only on the throw, its relevant prior context, and the active catalog. */
@@ -164,13 +101,13 @@ export function selectLiveCommentary(
   history: LiveCommentaryThrow[] = [],
   catalog?: LiveCommentaryCatalog,
 ): LiveCommentary {
-  const throwId = event.throwId ?? `${event.player ?? ''}:${event.frame ?? 0}:${event.throw ?? 0}`;
+  const throwId = liveCommentaryKey(event);
   const player = event.player?.trim() || 'Spieler';
   const count = Number.isInteger(event.pinsKnockedDown) ? event.pinsKnockedDown! : null;
   const currentEvidence = evidenceFor(event);
   const sameFrame = history.filter((item) => (
-    event.playerIndex != null && item.playerIndex != null
-      ? item.playerIndex === event.playerIndex && item.frame === event.frame
+    event.playerIndex != null || item.playerIndex != null
+      ? event.playerIndex != null && item.playerIndex === event.playerIndex && item.frame === event.frame
       : item.player === event.player && item.frame === event.frame
   ));
   const prior = sameFrame.find((item) => item.throw === 1);
@@ -238,18 +175,82 @@ export function selectLiveCommentary(
     scenario = current?.position === 'unique-leader' ? `${weakPrefix}.leader` : scenario;
   }
 
-  const bindings = { player, pins: count == null ? '–' : String(count),
+  const baseScenario = scenario;
+  const frame = Number.isInteger(event.frame) && event.frame! >= 1 && event.frame! <= 10 ? event.frame : null;
+  const opponent = context?.version === 1 && context.valid === true
+    && typeof context.opponentName === 'string'
+    && context.opponentName.trim()
+    && context.opponentName.trim().toLocaleLowerCase('de-DE') !== player.toLocaleLowerCase('de-DE')
+    ? context.opponentName.trim() : null;
+  const streak = (scenario === 'live.strike' || scenario === 'live.bonus') && count === 10 && evidenceIsValid
+    ? liveStrikeStreak(event, history) : 0;
+  const bindings: Record<string, string> = { player, pins: count == null ? '–' : String(count),
     ...(clearance === null ? {} : { clearance: clearance === 'strike' ? 'Strike' : 'Spare' }),
-    ...(pin === undefined ? {} : { pin: String(pin) }) };
-  const allowLegacyGeneric = event.throw === 1 && count !== null && count >= 0 && count < 10
-    && Number.isInteger(event.frame) && event.frame! >= 1 && event.frame! <= 10 && evidenceIsValid;
-  let text = selectTemplate(scenario, throwId, bindings, catalog, allowLegacyGeneric);
-  if (!text && scenario !== 'live.throw') {
-    const neutral = selectTemplate('live.throw', throwId, bindings, catalog, allowLegacyGeneric);
-    if (neutral) {
-      scenario = 'live.throw';
-      text = neutral;
+    ...(pin === undefined ? {} : { pin: String(pin) }),
+    ...(frame == null ? {} : { frame: String(frame) }),
+    ...(event.throw === 1 && count != null && count < 10 ? { remaining: String(10 - count) } : {}),
+    ...(opponent ? { opponent } : {}),
+    ...(streak >= 4 ? { streak: String(streak) } : {}) };
+  const pattern = context?.version === 1 && context.valid === true ? context.pinPattern : undefined;
+  if (pattern && currentEvidence && evidenceIsValid && sameRackEvidenceIsConsistent) {
+    let specific: string | undefined;
+    switch (pattern.kind) {
+      case 'recurring-leave':
+        if (scenario === 'live.leave.single' && pin === pattern.pin) specific = 'live.leave.recurring';
+        break;
+      case 'strong-side-spare':
+        if (scenario === 'live.spare' && event.throw === 2 && currentEvidence.alreadyDown.size === 9
+          && currentEvidence.fallen.has(pattern.pin)
+          && ((pattern.side === 'left' && [2, 4, 7, 8].includes(pattern.pin))
+            || (pattern.side === 'right' && [3, 6, 9, 10].includes(pattern.pin)))) specific = 'live.spare.strong_side';
+        break;
+      default: pattern satisfies never;
+    }
+    if (specific) {
+      const specificBindings: Record<string, string> = { ...bindings, pin: String(pattern.pin) };
+      if (pattern.kind === 'strong-side-spare') specificBindings.side = pattern.side === 'left' ? 'links' : 'rechts';
+      const text = selectTemplate(specific, throwId, specificBindings, catalog);
+      if (text) return { text, scenario: specific, throwId, player, pins: count, pin: pattern.pin };
     }
   }
+  if (scenario === 'live.throw' && event.throw === 1 && frame != null
+    && count != null && count >= 0 && count < 10 && evidenceIsValid
+    && (!context?.previousClearance || (context.version === 1 && context.valid === true))) {
+    const pace = context?.version === 1 && context.valid === true
+      && context.personalPace && context.personalPace.priorFirstBallCount >= 3
+      ? context.personalPace.kind : null;
+    scenario = pace === 'below-usual' ? 'live.throw.first.below_usual'
+      : pace === 'above-usual' ? 'live.throw.first.above_usual'
+        : count <= 3 ? 'live.throw.first.low'
+          : count <= 7 ? 'live.throw.first.mid' : 'live.throw.first.high';
+  } else if (scenario === 'live.open' && frame != null && frame >= 8) {
+    scenario = 'live.open.late';
+  } else if (streak >= 4) {
+    scenario = 'live.strike.streak';
+  } else if (streak === 3) {
+    scenario = opponent ? 'live.strike.turkey.opponent' : 'live.strike.turkey';
+  } else if (streak === 2) {
+    scenario = 'live.strike.double';
+  }
+
+  const allowLegacyGeneric = event.throw === 1 && count !== null && count >= 0 && count < 10
+    && Number.isInteger(event.frame) && event.frame! >= 1 && event.frame! <= 10 && evidenceIsValid;
+  const candidates = [scenario];
+  if (scenario === 'live.strike.turkey.opponent') candidates.push('live.strike.turkey');
+  if (scenario === 'live.throw.first.below_usual' || scenario === 'live.throw.first.above_usual') {
+    candidates.push(count != null && count <= 3 ? 'live.throw.first.low'
+      : count != null && count <= 7 ? 'live.throw.first.mid' : 'live.throw.first.high');
+  }
+  if (scenario !== baseScenario) candidates.push(baseScenario);
+  if (baseScenario !== 'live.throw') candidates.push('live.throw');
+  let text: string | null = null;
+  for (const candidate of candidates) {
+    text = selectTemplate(candidate, throwId, bindings, catalog, allowLegacyGeneric);
+    if (text) {
+      scenario = candidate;
+      break;
+    }
+  }
+  if (!text) scenario = baseScenario;
   return { text: text ?? 'Wurf registriert.', scenario, throwId, player, pins: count, ...(pin === undefined ? {} : { pin }) };
 }

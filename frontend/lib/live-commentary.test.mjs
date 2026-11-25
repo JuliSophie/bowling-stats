@@ -110,6 +110,50 @@ test('correction replaces the same stable bubble and deletion removes it', () =>
   assert.deepEqual(reconcileLiveCommentary(replaced, []), {});
 });
 
+test('commentary without a throw ID survives a score update under its fallback key', () => {
+  const throwWithoutId = event({ throwId: undefined, pinsKnockedDown: 4 });
+  const caption = selectLiveCommentary(throwWithoutId);
+
+  const updated = reconcileLiveCommentary({ [caption.throwId]: caption }, [throwWithoutId]);
+
+  assert.equal(updated['Anna:1:1']?.throwId, 'Anna:1:1');
+});
+
+test('same-named roster slots keep separate commentary without throw IDs', () => {
+  const fallenPins = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const first = event({
+    throwId: undefined, player: 'Alex', playerIndex: 0, frame: 4, pinsKnockedDown: 9,
+    fallenPins, alreadyDownPins: [],
+    commentaryContext: { version: 1, valid: true, pinPattern: { kind: 'recurring-leave', pin: 10 } },
+  });
+  const second = event({
+    throwId: undefined, player: 'Alex', playerIndex: 1, frame: 4, pinsKnockedDown: 9,
+    fallenPins, alreadyDownPins: [],
+  });
+  const catalog = { scenarios: [
+    { id: 'live.leave.recurring', templates: ['Die {pin} steht wieder.'] },
+    { id: 'live.leave.single', templates: ['Pin {pin} wartet.'] },
+  ] };
+  const recurring = selectLiveCommentary(first, [], catalog);
+  const ordinary = selectLiveCommentary(second, [], catalog);
+
+  const updated = reconcileLiveCommentary({
+    [recurring.throwId]: recurring,
+    [ordinary.throwId]: ordinary,
+  }, [first, second], catalog);
+
+  assert.notEqual(recurring.throwId, ordinary.throwId);
+  assert.equal(updated[recurring.throwId]?.scenario, 'live.leave.recurring');
+  assert.equal(updated[ordinary.throwId]?.scenario, 'live.leave.single');
+});
+
+test('an unknown roster slot cannot give another Alex a spare', () => {
+  const prior = event({ throwId: 'prior', player: 'Alex', playerIndex: undefined, frame: 4, throw: 1, pinsKnockedDown: 9 });
+  const current = event({ throwId: 'current', player: 'Alex', playerIndex: 1, frame: 4, throw: 2, pinsKnockedDown: 1 });
+
+  assert.equal(selectLiveCommentary(current, [prior]).scenario, 'live.open');
+});
+
 test('revision gate rejects stale events but accepts a reset session revision', () => {
   assert.equal(acceptsLiveRevision(20, 19), false);
   assert.equal(acceptsLiveRevision(0, 0), true);
@@ -120,4 +164,34 @@ test('lifecycle gate rejects stale and switched-session events before processing
   assert.equal(acceptsLiveEvent('session-b', 'session-b', 0, 0), true);
   assert.equal(acceptsLiveEvent('session-b', 'session-b', 4, 3), false);
   assert.equal(acceptsLiveEvent('session-b', undefined, 4, 5), true);
+});
+
+test('pin patterns select enabled catalog variants only on a matching physical delivery', () => {
+  const down = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const leave = event({ pinsKnockedDown: 9, fallenPins: down, alreadyDownPins: [] });
+  const spare = event({ throw: 2, pinsKnockedDown: 1, fallenPins: [10], alreadyDownPins: down });
+  const recurring = { kind: 'recurring-leave', pin: 10 };
+  const strong = { kind: 'strong-side-spare', pin: 10, side: 'right' };
+  const scenarios = [
+    { id: 'live.leave.recurring', templates: ['Stammgast {pin}.'] },
+    { id: 'live.spare.strong_side', templates: ['{side}: {pin}.'] },
+    { id: 'live.spare', templates: ['Spare.'] },
+    { id: 'live.leave.single', templates: ['Pin {pin}.'] },
+  ];
+  for (const [row, pinPattern, expected, text] of [
+    [leave, recurring, 'live.leave.recurring', 'Stammgast 10.'],
+    [spare, strong, 'live.spare.strong_side', 'rechts: 10.'],
+    [leave, { ...recurring, pin: 7 }, 'live.leave.single', 'Pin 10.'],
+    [spare, { ...strong, side: 'left' }, 'live.spare', 'Spare.'],
+    [{ ...spare, fallenPins: null, alreadyDownPins: null }, strong, 'live.spare', 'Spare.'],
+  ]) {
+    const history = row.throw === 2 ? [leave] : [];
+    const selected = selectLiveCommentary({ ...row, commentaryContext: { version: 1, valid: true, pinPattern } }, history, { scenarios });
+    assert.equal(selected.scenario, expected);
+    assert.equal(selected.text, text);
+  }
+  const proven = { ...leave, commentaryContext: { version: 1, valid: true, pinPattern: recurring } };
+  const disabled = scenarios.map(s => ({ ...s, enabled: s.id !== 'live.leave.recurring' }));
+  assert.equal(selectLiveCommentary(proven, [], { scenarios: disabled }).scenario, 'live.leave.single');
+  assert.equal(selectLiveCommentary({ ...proven, commentaryContext: { ...proven.commentaryContext, valid: false } }, [], { scenarios }).scenario, 'live.leave.single');
 });

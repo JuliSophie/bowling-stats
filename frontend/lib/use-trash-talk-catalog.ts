@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { fetchTrashTalkCatalog, type TrashTalkCatalog } from '@/lib/api';
-import { isCompatibleCatalog, setTrashTalkCatalog } from '@/lib/trash-talk-v3';
+import { setTrashTalkCatalog } from '@/lib/trash-talk-v3';
 
 const REVALIDATE_AFTER_MS = 10_000;
 export type TrashTalkCatalogState = {
@@ -32,10 +32,9 @@ export function refreshTrashTalkCatalog(force = false): Promise<void> {
   inflight = fetchTrashTalkCatalog()
     .then((result) => {
       if (result.validation.errors.length > 0) throw new Error(result.validation.errors.join(' · '));
-      if (!isCompatibleCatalog(result.catalog)) throw new Error('Inkompatibler Trash-Talk-Katalog.');
+      setTrashTalkCatalog(result.catalog);
       fetchedAt = Date.now();
       state = { catalog: result.catalog, loading: false, error: null, stale: false };
-      setTrashTalkCatalog(result.catalog);
       notify();
     })
     .catch((reason: unknown) => {
